@@ -360,7 +360,7 @@ def test_an_undecidable_conditional_keeps_the_variables_it_depends_on():
     answer `n*IF(k > 0, k, 0)`, treating the summand as independent of `k`.
     """
     assert simp("SUM(IF(k > 0, k, 0), k, 1, n)") == "SUM(IF(k > 0, k, 0), k, 1, n)"
-    assert simp("DIF(IF(x > 0, x^2, 0), x)") == "DIF(IF(x > 0, x^2, 0), x)"
+    assert simp("DIF(IF(x > 0, x^2, 0), x)") == "IF(x > 0, 2*x, 0)"
 
 
 def test_a_decided_conditional_simplifies_the_branch_it_took():

@@ -95,6 +95,7 @@ __all__ = [
     "Commanded",
     "Environment",
     "Suspended",
+    "branched",
     "divisors",
     "evaluate",
     "evaluated",
@@ -444,9 +445,12 @@ class _Evaluator(Converter):
         if value is not None:
             argument = env.supplied.get(name)
             if argument is not None and argument.value is value:
+                # The value was evaluated with the substitutions made then, so only
+                # those made since apply to it.
                 rewritten = argument.rewritten(env.written)
-                if rewritten is not None:
-                    return argument.at(rewritten, env.writing)
+                if rewritten is None:
+                    return value
+                return argument.at(rewritten, env.writing)
             return _over(value, env.written)
         if name not in env.bound and name not in env.expanding:
             assigned = env.context.assigned(name)
@@ -467,6 +471,9 @@ class _Evaluator(Converter):
 
     def operand(self, value: sp.Basic) -> sp.Basic:
         return _value_of(value)
+
+    def _operands(self, node: Node) -> list[sp.Basic]:
+        return [_assigned_value(operand) for operand in super()._operands(node)]
 
     def _label(self, node: Node) -> sp.Basic:
         """The value of label `#3`, or the label itself if unknown or self-referential."""
@@ -505,9 +512,22 @@ class _Evaluator(Converter):
         In a called function's body it is performed for good, and evaluates to the
         value; taking a value away evaluates to the assignment. FIT_.MTH's `[y_ :=,
         FIT_AUX5(...)] SUB 2` makes `y_` a variable again before using it.
+
+        An assignment that is only stated doesn't follow a value of its target that
+        refers to the target itself: that value is what the session stored for this
+        very assignment, so `a := a + 7` simplifies to itself, not to `a := a + 14`.
         """
         target, *values = node.children
-        written = [self.convert(child) for child in values]
+        evaluator: _Evaluator = self
+        if (
+            target.kind is Kind.NAME
+            and self.performed is None
+            and not self.performs()
+            and _refers_to(self.context.assigned(str(target.value)), str(target.value))
+        ):
+            expanding = self.env.expanding | {str(target.value)}
+            evaluator = self.within(replace(self.env, expanding=expanding))
+        written = [evaluator.convert(child) for child in values]
         if target.kind is Kind.NAME and self.performs():
             name = self._target(str(target.value))
             if name is not None and name not in SETTINGS:
@@ -518,6 +538,10 @@ class _Evaluator(Converter):
                     return written[-1] if written else assignment
         if self.performed is not None and written and target.kind is Kind.NAME:
             self.performed[str(target.value)] = written[-1]
+            return written[-1]
+        if written and (self.env.expanding or self.env.labels) and not self.env.writing:
+            # In the value of a variable or label followed here, an assignment is a
+            # value like any other: with `home := [x := 0, y := 0]`, `home` is `[0, 0]`.
             return written[-1]
         plain = Converter(self.context)
         return Assign(plain.convert(target), sp.Symbol(str(node.value)), *written)
@@ -615,7 +639,10 @@ class _Evaluator(Converter):
         if name == "APPROX" and 1 <= len(arguments) <= 2 and not self.env.writing:
             values = self._approximating(arguments)
         else:
-            values = [_value_of(self.convert(argument)) for argument in arguments]
+            values = [
+                _assigned_value(_value_of(self.convert(argument)))
+                for argument in arguments
+            ]
         if name == "SUBS" and not self.env.writing:
             return self._substitution(values)
         derived = self._derived(name, values)
@@ -854,6 +881,7 @@ class _Evaluator(Converter):
         outer = evaluator if name in BINDING_THROUGHOUT else self
         limits = [_value_of(outer.convert(argument)) for argument in rest]
         taken = {
+            **self._assigned_to(names),
             **_taken(self.env.written, names),
             **{
                 self.symbol(name): self.env.bindings[name]
@@ -871,8 +899,28 @@ class _Evaluator(Converter):
             value = self._substituted_limit(body, index, limits, inner)
             if value is not None:
                 return _over(value, taken)
-        values = [_value_of(evaluator.convert(body)), index, *limits]
+        values = [_assigned_value(_value_of(evaluator.convert(body))), index, *limits]
         return _over(self._worked(self.call(name, values), values), taken)
+
+    def _assigned_to(self, names: frozenset[str]) -> dict[sp.Basic, sp.Basic]:
+        """The values of the session variables among the names a binding binds.
+
+        The binding works with its variable symbolic, and the variable's value is
+        substituted into the result, as for `_taken`: with `x := z*SQRT(t)`, `DIF(x^2,
+        x)` is `2*z*SQRT(t)`.
+        """
+        env = self.env
+        values = {}
+        for name in names:
+            if name in env.bound or name in env.bindings or name in env.expanding:
+                continue
+            if env.context.assigned(name) is None:
+                continue
+            value = _value_of(self.convert(Node(Kind.NAME, 0, 0, (), name)))
+            symbol = self.symbol(name)
+            if value != symbol:
+                values[symbol] = value
+        return values
 
     def _substituted_limit(
         self, body: Node, index: sp.Basic, limits: list[sp.Basic], inner: Environment
@@ -977,7 +1025,7 @@ class _Evaluator(Converter):
         def at(*values: sp.Basic) -> sp.Basic:
             variables = list(index.args) if isinstance(index, Vector) else [index]
             written = dict(zip(variables, values, strict=True))
-            return self.within(_at(inner, written)).convert(body)
+            return _assigned_value(self.within(_at(inner, written)).convert(body))
 
         try:
             if name in ("ITERATE", "ITERATES"):
@@ -1173,6 +1221,44 @@ class Suspended(AppliedUndef):
             return _resumed(cls, written)
         except Exception:
             return None
+
+
+def branched(found: Suspended) -> sp.Piecewise | None:
+    """The suspended conditional `found` as a `Piecewise` of its evaluated branches, or
+    None if it can't be one.
+
+    This is for calculus on a function defined by cases, `DIF(IF(x < 0, -x, x), x)`,
+    which works on each branch where its test picks it. A conditional in a branch is
+    suspended in turn. A test that assigns, or isn't a condition, gives None, as does
+    a branch that fails to evaluate.
+    """
+    cls = type(found)
+    test_node, *branches = cls.node.children[1:]
+    if not 1 <= len(branches) <= 2:
+        return None
+    written = {
+        variable: value
+        for variable, value in zip(cls.variables, found.args, strict=True)
+        if variable != value
+    }
+    env = _at(cls.environment, written) if written else cls.environment
+    try:
+        with _deep():
+            performed: dict[str, sp.Basic] = {}
+            test = _value_of(_Evaluator(env, performed).convert(test_node))
+            if performed:
+                return None
+            arms = [_Evaluator(env).convert(branch) for branch in branches]
+        condition = as_condition(test)
+        if not isinstance(condition, sp.logic.boolalg.Boolean) or isinstance(
+            condition, sp.Expr
+        ):
+            return None
+        if len(arms) == 1:
+            return sp.Piecewise((arms[0], condition))
+        return sp.Piecewise((arms[0], condition), (arms[1], True))
+    except Exception:
+        return None
 
 
 def _resumes(value: sp.Basic) -> bool:
@@ -1723,6 +1809,26 @@ def _vector_value(value: sp.Basic) -> sp.Basic:
     """`value`, unwrapped from `Commanded` if what it wraps is a vector."""
     if isinstance(value, Commanded) and isinstance(value.args[0], Vector):
         return _value_of(value)
+    return value
+
+
+def _refers_to(value: Node | None, name: str) -> bool:
+    """Whether the tree `value` mentions the variable `name`."""
+    if value is None:
+        return False
+    if value.kind is Kind.NAME and str(value.value) == name:
+        return True
+    return any(_refers_to(child, name) for child in value.children)
+
+
+def _assigned_value(value: sp.Basic) -> sp.Basic:
+    """The value of an assignment used as an operand or argument, else `value`.
+
+    An assignment within an expression stands for the value it assigns: `DIF(c := x^2,
+    x)` is `2*x`, and `2*(c := 3)` is 6.
+    """
+    if isinstance(value, Assign) and len(value.args) == 3:
+        return value.args[2]
     return value
 
 

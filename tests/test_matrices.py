@@ -104,6 +104,13 @@ VECTORS = [
     ("[1, 2] + [1, 2, 3] - ([1, 2] + [1, 2, 3])", "[0, 0] + [0, 0, 0]"),
     ("DET([1, 2] + [1, 2, 3])", "DET([1, 2] + [1, 2, 3])"),
     ("[1, 2] + 5", "[1, 2] + 5"),
+    # A scalar added to a square matrix is a multiple of the identity, so a polynomial
+    # in a matrix has its constant term: Cayley-Hamilton gives the zero matrix.
+    ("[[1, 2], [3, 4]] + 7", "[[8, 2], [3, 11]]"),
+    ("[[1, -2], [2, 3]]^2 - 4*[[1, -2], [2, 3]] + 7", "[[0, 0], [0, 0]]"),
+    ("[[1, 2], [3, 4], [5, 6]] + 7", "[[1, 2], [3, 4], [5, 6]] + 7"),
+    # Like `FLOOR`, the remainder of a vector is taken element by element.
+    ("MOD([[7, 11], [3, 8]], 2)", "[[1, 1], [1, 0]]"),
     # Only square matrices have powers and inverses to divide by.
     ("[[1, 2, 3], [4, 5, 6]]^(-1)", "[[1, 2, 3], [4, 5, 6]]^(-1)"),
     ("[[1, 2, 3], [4, 5, 6]]^2", "[[1, 2, 3], [4, 5, 6]]^2"),
@@ -507,6 +514,8 @@ SELECTED = [
     ("SELECT(k = y, k, [x, y])", "[y]"),
     # A test that isn't a truth value is not true.
     ("SELECT(k - 1, k, 1, 3)", "[]"),
+    # A vector of numbers is not a number.
+    ("SELECT(k /= 0, k, [0, [1, 1], 0])", "[[1, 1]]"),
 ]
 
 
@@ -567,6 +576,8 @@ ITERATION = [
     # manual says and Derive does: SOLVE.MTH's `NEWTON` called without its count.
     ("ITERATES(1/x, x, 2, n)", "[2, 1/2, 2]"),
     ("ITERATE(1/x, x, 2, n)", "?"),
+    # Exact numbers may take hundreds of steps to settle.
+    ("ITERATE(FLOOR(x, 2), x, 10^100)", "0"),
     # An uncounted iteration that never repeats stays unevaluated (Derive runs until
     # memory runs out), whether its iterates grow in size, in digits (Newton's method
     # for SQRT(3), exactly) or in neither.
@@ -618,6 +629,13 @@ def test_a_parameter_a_counted_call_differentiates_is_taken_as_supplied():
     context = Context(functions={"NEWTON": newton})
     assert simp("NEWTON(x^2 - 3, x, 2, 3)", context) == "[2, 7/4, 97/56, 18817/10864]"
     assert simp("NEWTON(t^2 - 3, t, 2, 3)", context) == "[2, 7/4, 97/56, 18817/10864]"
+
+
+def test_a_function_iterated_over_its_own_variable_is_applied_once_per_step():
+    # The argument is evaluated with the iterate substituted, and the parameter stands
+    # for that value: it isn't substituted into a second time.
+    context = Context(functions={"F": (("x",), parse("x^2"))})
+    assert simp("ITERATES(F(x), x, x, 3)", context) == "[x, x^2, x^4, x^8]"
 
 
 # -- statistics ---------------------------------------------------------------
@@ -827,9 +845,14 @@ DECOMPOSITION = [
     ("QUOTIENT(SIN(x), SIN(x)^2)", "0"),
     ("REMAINDER(SIN(x), SIN(x)^2)", "SIN(x)"),
     ("QUOTIENT(SIN(x), x)", "SIN(x)/x"),
+    # A third argument names the variable to divide in.
+    ("QUOTIENT(x^2 + y, x + y, y)", "1"),
+    ("REMAINDER(x^2 + y, x + y, y)", "x^2 - x"),
     # The manual's gcd example, and gcd of numbers.
     ("POLY_GCD(x^3 + 3*x^2 + 5*x + 6, x^3 + 2*x - 3)", "x^2 + x + 3"),
     ("POLY_GCD(12, 18)", "6"),
+    # Powers whose exponents differ by an integer have a common factor.
+    ("POLY_GCD(x^(n + 1), x^n)", "x^n"),
 ]
 
 

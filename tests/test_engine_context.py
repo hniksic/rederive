@@ -259,6 +259,18 @@ def test_an_assignment_keeps_the_name_it_defines():
     assert written("u := u + 1", context) == same_as("u := 5 + 1")
 
 
+def test_an_assignment_does_not_follow_the_value_it_gave_its_target():
+    # The stored value of `a := a + 7` is that very assignment's, so following it would
+    # add 7 again.
+    context = Context(assignments={"a": parse("a + 7")})
+    assert written("a := a + 7", context) == same_as("a := a + 7")
+
+
+def test_an_assignment_in_a_followed_value_is_its_value():
+    context = Context(assignments={"h": parse("[x := 0, y := 0]")})
+    assert written("h", context) == same_as("[0, 0]")
+
+
 def test_a_declaration_keeps_the_variable_it_declares():
     context = Context(assignments={"x": parse("5")})
     assert written("x :epsilon Real", context) == same_as("x :epsilon Real")

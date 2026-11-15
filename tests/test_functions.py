@@ -403,6 +403,13 @@ def test_plus_or_minus_simplifies_its_argument_and_seals_it_in():
     assert simp("±1 + 1") == "±1 + 1"
 
 
+def test_each_plus_or_minus_has_a_sign_of_its_own():
+    # Two of them may add up or cancel; a square is one sign twice.
+    assert simp("SIGN(0) + SIGN(0)") == "?"
+    assert simp("SIGN(0)*SIGN(0)") == "±1"
+    assert simp("SIGN(0)^2") == "1"
+
+
 # -- numerator and denominator -------------------------------------------------
 
 #: Derive reads both off the simplified argument's product structure: factors with

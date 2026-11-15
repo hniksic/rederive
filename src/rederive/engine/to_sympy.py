@@ -1336,10 +1336,12 @@ def added(terms: list[sp.Basic]) -> sp.Basic:
 
     As in Derive, only the lengths matter, so the elements' sums follow the same rule:
     `[[1, 2], [3, 4]] + [1, 2]` is `[[1, 2] + 1, [3, 4] + 2]`. The scalars are added
-    together too. Vectors of different lengths, or a vector and a scalar, have no sum,
-    so a term is kept for each length and one for the scalars: `[1, 2] + 2` stays, as
-    in Derive, and so does `[1, 2] + [1, 2, 3]`. With more than one vector term, they
-    are kept in order of first appearance, after the scalars.
+    together too. A square matrix plus a scalar `c` is the matrix plus `c` times the
+    identity, so a polynomial in a matrix has its constant term: `[[1, 2], [3, 4]] + 7`
+    is `[[8, 2], [3, 11]]`. Vectors of different lengths, or another vector and a
+    scalar, have no sum, so a term is kept for each length and one for the scalars:
+    `[1, 2] + 2` stays, as in Derive, and so does `[1, 2] + [1, 2, 3]`. With more than
+    one vector term, they are kept in order of first appearance, after the scalars.
     """
     terms = _added_terms(terms)
     if not any(isinstance(term, Vector) for term in terms):
@@ -1354,8 +1356,30 @@ def added(terms: list[sp.Basic]) -> sp.Basic:
     sums = [_summed(vectors) for vectors in lengths.values()]
     scalar = _scalar_sum(scalars)
     if len(sums) == 1:
-        return sums[0] if scalar == 0 else sp.Add(scalar, sums[0])
+        if scalar == 0:
+            return sums[0]
+        shifted = _shifted_diagonal(sums[0], scalar)
+        return sp.Add(scalar, sums[0]) if shifted is None else shifted
     return Added(*sums) if scalar == 0 else Added(scalar, *sums)
+
+
+def _shifted_diagonal(matrix: Vector, scalar: sp.Basic) -> Vector | None:
+    """`matrix + scalar*I` for a square matrix of expressions and a certain scalar, or
+    None if they aren't."""
+    sympy_matrix = matrix_of(matrix)
+    if sympy_matrix is None or not sympy_matrix.is_square or not _scalar(scalar):
+        return None
+    return Vector(
+        *(
+            Vector(
+                *(
+                    _scalar_sum([element, scalar]) if column == row else element
+                    for column, element in enumerate(elements.args)
+                )
+            )
+            for row, elements in enumerate(matrix.args)
+        )
+    )
 
 
 def _scalar_sum(terms: list[sp.Basic]) -> sp.Basic:
@@ -1363,6 +1387,17 @@ def _scalar_sum(terms: list[sp.Basic]) -> sp.Basic:
     on_sides = _on_sides(_scalar_sum, terms)
     if on_sides is not None:
         return on_sides
+    ambiguous = [
+        part
+        for term in terms
+        if isinstance(term, sp.Expr)
+        for part in sp.Add.make_args(term)
+        if part.has(PlusMinus)
+    ]
+    if len(ambiguous) > 1:
+        # Each `+-` is a sign of its own, so two of them may add or cancel:
+        # `SIGN(0) + SIGN(0)` is any of -2, 0 and 2.
+        return sp.nan
     return sp.Add(*(_arithmetic(term) for term in terms))
 
 
@@ -1425,13 +1460,27 @@ def multiplied(factors: list[sp.Basic]) -> sp.Basic:
         for factor in factors
     ):
         try:
-            return sp.Mul(*(_arithmetic(factor) for factor in factors))
+            return _ambiguous_product([_arithmetic(factor) for factor in factors])
         except Exception:
             pass
     result = factors[0]
     for factor in factors[1:]:
         result = _times(result, factor)
     return result
+
+
+def _ambiguous_product(factors: list[sp.Basic]) -> sp.Basic:
+    """The product of scalar factors, two or more `+-u` taken as one.
+
+    Each `+-` is a sign of its own, so `SIGN(0)*SIGN(0)` is `+-1`, not the square
+    `SIGN(0)^2`, which is 1.
+    """
+    parts = [part for factor in factors for part in sp.Mul.make_args(factor)]
+    signs = [part for part in parts if isinstance(part, PlusMinus)]
+    if len(signs) < 2:
+        return sp.Mul(*factors)
+    rest = [part for part in parts if not isinstance(part, PlusMinus)]
+    return sp.Mul(*rest) * PlusMinus(sp.Mul(*(sign.args[0] for sign in signs)))
 
 
 def _times(left: sp.Basic, right: sp.Basic) -> sp.Basic:
@@ -2230,16 +2279,30 @@ def _floor(conv: Converter, args: list) -> sp.Basic:
 
 
 def _mod(conv: Converter, args: list) -> sp.Basic:
-    """`MOD(m, n)` is `m - n FLOOR(m, n)`; `MOD(m, 0)` is `m`."""
+    """`MOD(m, n)` is `m - n FLOOR(m, n)`; `MOD(m, 0)` is `m`. A vector `m` is reduced
+    element-wise."""
     value, modulus = _with_unit_default(args)
+    if isinstance(value, Vector):
+        return mapped(value, lambda element: _mod(conv, [element, modulus]))
     if modulus.is_zero:
         return value
+    if (
+        isinstance(value, Power)
+        and isinstance(modulus, sp.Integer)
+        and all(isinstance(part, sp.Integer) for part in value.args)
+        and value.args[1] >= 0
+    ):
+        # A power too big to build has a remainder all the same, by modular powering.
+        base, exponent = value.args
+        return sp.Integer(pow(int(base), int(exponent), int(modulus)))
     return value - modulus * sp.floor(value / modulus)
 
 
 def _mods(conv: Converter, args: list) -> sp.Basic:
     """`MODS(m, n)` lands in [-n/2, n/2): `m - n FLOOR(m + n/2, n)`."""
     value, modulus = _with_unit_default(args)
+    if isinstance(value, Vector):
+        return mapped(value, lambda element: _mods(conv, [element, modulus]))
     if modulus.is_zero:
         return value
     return value - modulus * sp.floor((value + modulus / 2) / modulus)
@@ -2565,17 +2628,22 @@ def _side(index: int) -> Handler:
 
 
 def _quotient(conv: Converter, args: list) -> sp.Basic:
-    """`QUOTIENT(u, v)`: the polynomial quotient of `u` by `v`."""
+    """`QUOTIENT(u, v)` and `QUOTIENT(u, v, x)`: the polynomial quotient of `u` by
+    `v`."""
     return _divided(args)[0]
 
 
 def _remainder(conv: Converter, args: list) -> sp.Basic:
-    """`REMAINDER(u, v)`: the polynomial remainder of `u` by `v`."""
+    """`REMAINDER(u, v)` and `REMAINDER(u, v, x)`: the polynomial remainder of `u` by
+    `v`."""
     return _divided(args)[1]
 
 
 def _divided(args: list) -> tuple[sp.Basic, sp.Basic]:
-    """Polynomial division in the main variable, with other variables as coefficients.
+    """Polynomial division in the main variable, or in the variable given as a third
+    argument, with other variables as coefficients.
+
+    `QUOTIENT(x^2 + y, x + y, y)` is 1 with remainder `x^2 - x`, dividing in `y`.
 
     Other variables act as field coefficients: `QUOTIENT(x*y + 1, y)` is `x + 1/y` with
     no remainder, since in `x` the divisor is a constant.
@@ -2588,6 +2656,14 @@ def _divided(args: list) -> tuple[sp.Basic, sp.Basic]:
     `QUOTIENT(SIN(x), x)` is `SIN(x)/x`, the divisor being a coefficient. Both match
     Derive.
     """
+    if len(args) == 3:
+        numerator, denominator, variable = args
+        if isinstance(variable, Vector) or not isinstance(variable, sp.Expr):
+            raise TypeError("not a variable")
+        try:
+            return sp.div(numerator, denominator, variable)
+        except sp.PolynomialError as error:
+            raise TypeError("not polynomials in the variable") from error
     numerator, denominator = args
     try:
         generators = sp.parallel_poly_from_expr((numerator, denominator))[1].gens
@@ -2601,9 +2677,50 @@ def _polynomial_gcd(conv: Converter, args: list) -> sp.Basic:
     """`POLY_GCD(u, v)`: the greatest common divisor of two polynomials.
 
     Numbers are constant polynomials, so `POLY_GCD(12, 18)` is 6.
+
+    Powers of one base whose exponents differ by integers are multiples of one
+    generator: `POLY_GCD(x^(n + 1), x^n)` is `x^n`, since `x^(n + 1)` is `x*x^n`.
     """
     left, right = args
-    return sp.gcd(left, right)
+    written, generators = _over_common_powers((left, right))
+    if not generators:
+        return sp.gcd(left, right)
+    return sp.gcd(*written).xreplace(generators)
+
+
+def _over_common_powers(
+    sides: tuple[sp.Basic, ...],
+) -> tuple[list[sp.Basic], dict[sp.Symbol, sp.Basic]]:
+    """`sides` with each power of a symbolic exponent written as a power of the base
+    times a generator, and the generators' values.
+
+    The powers of one base whose exponents differ by integers share a generator, the
+    power of the least exponent: `x^(n + 1)` and `x^(n - 1)` become `x^2*g` and `g`,
+    with `g` standing for `x^(n - 1)`. Empty if no two powers share one.
+    """
+    groups: dict[tuple[sp.Basic, sp.Basic], list[sp.Pow]] = {}
+    for side in sides:
+        for power in side.atoms(sp.Pow):
+            if power.exp.is_number:
+                continue
+            shift, rest = power.exp.as_coeff_Add()
+            if not shift.is_Integer:
+                rest, shift = power.exp, sp.Integer(0)
+            groups.setdefault((power.base, rest), []).append(power)
+    replacements: dict[sp.Basic, sp.Basic] = {}
+    generators: dict[sp.Symbol, sp.Basic] = {}
+    for (base, rest), powers in groups.items():
+        if len(set(powers)) < 2:
+            continue
+        shifts = {power: power.exp - rest for power in powers}
+        least = min(shifts.values())
+        generator = sp.Dummy("g")
+        generators[generator] = base ** (rest + least)
+        for power, shift in shifts.items():
+            replacements[power] = base ** (shift - least) * generator
+    if not generators:
+        return list(sides), {}
+    return [side.xreplace(replacements) for side in sides], generators
 
 
 def _variables(conv: Converter, args: list) -> sp.Basic:
@@ -2628,11 +2745,19 @@ def _dif(conv: Converter, args: list) -> sp.Basic:
     `INT(INT(u, x), x)`, since sympy has no head for a negative-order derivative.
 
     Vectors and matrices are differentiated element-wise and keep their shape:
-    `DIF([1, 1], x)` is `[0, 0]`, where sympy would give the scalar 0.
+    `DIF([1, 1], x)` is `[0, 0]`, where sympy would give the scalar 0. Both sides of an
+    equation are differentiated: `DIF(y = x^2, x)` is `0 = 2*x`.
     """
     _variable(args[1])
     if isinstance(args[0], Vector):
         return mapped(args[0], lambda element: _dif(conv, [element, *args[1:]]))
+    if isinstance(args[0], sp.Equality):
+        if len(args) == 3 and args[2].is_Integer and args[2].is_negative:
+            raise TypeError("no antiderivative of an equation")
+        sides = [_dif(conv, [side, *args[1:]]) for side in args[0].args]
+        return sp.Eq(*sides, evaluate=False)
+    if isinstance(args[0], Relational):
+        raise TypeError("no derivative of an inequality")
     if len(args) == 2:
         return sp.Derivative(args[0], args[1], evaluate=False)
     expression, variable, order = args
@@ -2739,7 +2864,7 @@ def _summation(conv: Converter, args: list) -> sp.Basic:
     expression, index, low, high = args
     if isinstance(expression, Vector):
         return mapped(expression, lambda e: _summation(conv, [e, index, low, high]))
-    return sp.Sum(expression, (index, low, high))
+    return sp.Sum(_indexed(expression, index), (index, low, high))
 
 
 def _product(conv: Converter, args: list) -> sp.Basic:
@@ -2761,7 +2886,28 @@ def _product(conv: Converter, args: list) -> sp.Basic:
     if distributed is not None:
         return distributed
     expression, index, low, high = args
-    return sp.Product(expression, (index, low, high))
+    return sp.Product(_indexed(expression, index), (index, low, high))
+
+
+def _indexed(expression: sp.Basic, index: sp.Basic) -> sp.Basic:
+    """`expression` with each subscript by `index` made a `Subscript` of it.
+
+    `x SUB i` is otherwise a symbol of its own, which a sum over `i` would take for a
+    constant: `SUM(x SUB i, i, 1, n)` is a sum of `n` different terms, not `n*x SUB i`.
+    """
+    if type(index) is not sp.Symbol or not isinstance(expression, sp.Basic):
+        return expression
+    suffix = f" SUB {index.name}"
+    found = {
+        symbol: Subscript(
+            sp.Symbol(symbol.name[: -len(suffix)], **symbol.assumptions0), index
+        )
+        for symbol in expression.free_symbols
+        if isinstance(symbol, sp.Symbol)
+        and symbol.name.endswith(suffix)
+        and " SUB " not in symbol.name[: -len(suffix)]
+    }
+    return expression.xreplace(found) if found else expression
 
 
 def _from_one(args: list) -> list:
@@ -3667,13 +3813,16 @@ def _until_repeated(
     doesn't repeat within the bounds below raises, leaving the call as written.
     """
     iterates = [_state(names, values)]
-    shown = [_as_shown(iterates[-1], conv.context)]
-    for _ in range(_ITERATIONS):
+    shown = {_as_shown(iterates[-1], conv.context)}
+    for count in range(_RATIONAL_ITERATIONS):
+        if count >= _ITERATIONS and not all(value.is_Rational for value in values):
+            break
         values = _updated(conv, step, names, values)
         iterates.append(_state(names, values))
-        shown.append(_as_shown(iterates[-1], conv.context))
-        if shown[-1] in shown[:-1]:
+        latest = _as_shown(iterates[-1], conv.context)
+        if latest in shown:
             return iterates
+        shown.add(latest)
         if outsized(iterates[-1]):
             break
     raise ValueError("comes round to nothing")
@@ -3682,8 +3831,12 @@ def _until_repeated(
 #: Limits for an uncounted iteration: the number of steps and the size of an iterate.
 #: Both are needed, since a non-repeating sequence usually blows up faster than a step
 #: limit catches (repeated squaring passes 30000 digits in 17 steps). Converging
-#: iterations come nowhere near either.
+#: iterations come nowhere near either. An iteration over exact numbers costs little
+#: per step, whose numbers the size limit bounds, so it may run longer, settling as
+#: slowly as halving `10^100` down to 0 does; a symbolic iterate can grow by a level of
+#: nesting every step, making each step slower than the last.
 _ITERATIONS = 100
+_RATIONAL_ITERATIONS = 10_000
 _ITERATE_BITS = 100_000
 _ITERATE_OPERATIONS = 1000
 

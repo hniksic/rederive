@@ -145,8 +145,12 @@ def solutions(
 
 
 def _unnamed(answer: sp.Basic) -> bool:
-    """Whether `answer` holds a call the notation has no name for."""
-    return any(spelling(call) is None for call in answer.atoms(sp.Function))
+    """Whether `answer` holds a call the notation has no name for. A `Piecewise` is
+    written as an `IF`."""
+    return any(
+        spelling(call) is None and not isinstance(call, sp.Piecewise)
+        for call in answer.atoms(sp.Function)
+    )
 
 
 def solution_variables(
@@ -205,6 +209,8 @@ def _solutions(
     real: bool,
 ) -> tuple[sp.Basic, ...]:
     equations = equations_of(expression)
+    if equations is None and isinstance(expression, sp.And):
+        equations = equations_of(Vector(*expression.args))
     if equations is not None:
         return _system(equations, context, variables, constants, real)
     return _scalar(expression, context, variables, bounds, divisors, constants, real)
@@ -297,6 +303,9 @@ def _equation(
                 return False
             return polynomial or not _fails(residual, variable, value)
 
+        if not polynomial and isinstance(found, sp.FiniteSet):
+            guarded = [_guarded(residual, variable, value) for value in found.args]
+            found = sp.FiniteSet(*(value for value in guarded if value is not None))
         entries = _entries(found, variable, context, constants, admissible)
         if entries is not None and not any(_unnamed(entry) for entry in entries):
             return entries
@@ -335,12 +344,65 @@ def _values(residual: sp.Basic, variable: sp.Symbol) -> sp.Set | None:
     except Exception:
         return None
     if found.has(sp.ConditionSet):
+        found = _candidates_checked(found, residual, variable)
+    if found.has(sp.ConditionSet):
         rewritten = _exponential(residual, variable)
         if rewritten is not None:
             found = rewritten
     if isinstance(found, sp.ConditionSet):
         return _inverted(residual, variable)
     return found
+
+
+def _candidates_checked(
+    found: sp.Set, residual: sp.Basic, variable: sp.Symbol
+) -> sp.Set:
+    """`found` with each condition set over finitely many candidates decided, where
+    each candidate is proved a solution or not one by substituting it.
+
+    For `x^(2/3) - 2*x^(1/3) - 35 = 0` solveset offers -125 under a condition, from
+    the quadratic in `x^(1/3)`, which the principal cube root of -125 doesn't meet.
+    A candidate undecided either way leaves the condition set as it is.
+    """
+
+    def decided(part: sp.Set) -> sp.Set:
+        if not isinstance(part, sp.ConditionSet):
+            return part
+        if not isinstance(part.base_set, sp.FiniteSet):
+            return part
+        kept = []
+        for value in part.base_set.args:
+            vanishes = _vanishes_at(residual, variable, value)
+            if vanishes is None:
+                return part
+            if vanishes:
+                kept.append(value)
+        return sp.FiniteSet(*kept)
+
+    if isinstance(found, sp.Union):
+        return sp.Union(*(decided(part) for part in found.args))
+    return decided(found)
+
+
+def _vanishes_at(
+    residual: sp.Basic, variable: sp.Symbol, value: sp.Basic
+) -> bool | None:
+    """Whether `residual` is proved zero (True) or nonzero (False) at `value`, or None.
+
+    A number is also split into its real and imaginary parts, which decides sums of
+    roots of unity: at -125, `x^(2/3) - 2*x^(1/3) - 35` is `-105/2 + 15*SQRT(3)*#i/2`.
+    """
+    if _satisfies(residual, variable, value):
+        return True
+    if _fails(residual, variable, value):
+        return False
+    try:
+        left = residual.xreplace({variable: value})
+        if left.free_symbols:
+            return None
+        return sp.expand_complex(left).is_zero
+    except Exception:
+        return None
 
 
 def _has_absolute(residual: sp.Basic, variable: sp.Symbol) -> bool:
@@ -627,6 +689,45 @@ def _fails(residual: sp.Basic, variable: sp.Symbol, value: sp.Basic) -> bool:
         return False
 
 
+def _guarded(
+    residual: sp.Basic, variable: sp.Symbol, value: sp.Basic
+) -> sp.Basic | None:
+    """A candidate of an equation with a root of the variable, under the condition on
+    its parameter for which it is a solution, or None if it is a solution for none.
+
+    Squaring away a root can bring in a value that solves the equation only for some
+    values of a parameter: `SQRT(x) = a` gives `a^2`, which is a solution where `a >=
+    0`, so the answer is `IF(a >= 0, a^2)`. The condition is found by solving the
+    substituted equation for a single real parameter, exactly; anything else leaves
+    the candidate as it is.
+    """
+    radical = any(
+        power.has(variable) and not power.exp.is_integer
+        for power in residual.atoms(sp.Pow)
+    )
+    parameters = value.free_symbols
+    if not radical or len(parameters) != 1:
+        return value
+    (parameter,) = parameters
+    if parameter.is_real is not True:
+        return value
+    try:
+        check = sp.simplify(residual.xreplace({variable: value}))
+        if check.is_zero:
+            return value
+        holds = sp.solveset(check, parameter, sp.S.Reals)
+        if holds.has(sp.ConditionSet):
+            return value
+        if holds is sp.S.EmptySet:
+            return None
+        if holds == sp.S.Reals:
+            return value
+        condition = holds.as_relational(parameter)
+    except Exception:
+        return value
+    return sp.Piecewise((value, condition))
+
+
 def _divides_by_zero(
     divisors: tuple[sp.Basic, ...], variable: sp.Symbol, value: sp.Basic
 ) -> bool:
@@ -715,9 +816,17 @@ def _remaining(inside: sp.Set, excluded: sp.Set) -> list[sp.Basic] | None:
     """The members of `inside` that aren't provably members of `excluded`.
 
     For `SOLVE(1 - 2*m/r = 0, r)` sympy answers `Complement({2*m}, {0})`. Undecidable
-    isn't excluded, so the answer is the original's `r = 2*m`. Only finite sets are
-    handled; a family minus a member has no notation.
+    isn't excluded, so the answer is the original's `r = 2*m`.
+
+    A family minus another, as where the equation's divisor vanishes at `2*n*pi`, is
+    represented by the member nearest the origin, unless that member is excluded:
+    a family minus some of its members has no notation.
     """
+    if isinstance(inside, sp.ImageSet) and not isinstance(excluded, sp.FiniteSet):
+        members = _members(inside)
+        if members is None or any(_provably_holds(excluded, value) for value in members):
+            return None
+        return members
     if not isinstance(inside, sp.FiniteSet) or not isinstance(excluded, sp.FiniteSet):
         return None
     return [value for value in inside.args if not _provably_holds(excluded, value)]
@@ -948,6 +1057,8 @@ def _system(
     chosen = _chosen(joined, context, variables, len(equations))
     if not chosen:
         return _unsolvable(joined, context)
+    if not all(isinstance(equation, sp.Equality) for equation in equations):
+        return _inequalities(equations, chosen, context, constants)
     residuals = [_residual(equation) for equation in equations]
     solved = _linear(residuals, chosen, constants)
     if solved is None:
@@ -969,6 +1080,31 @@ def _system(
         )
         for mapping in solved
     )
+
+
+def _inequalities(
+    relations: tuple[Relational, ...],
+    chosen: tuple[sp.Symbol, ...],
+    context: Context,
+    constants: _Constants,
+) -> tuple[sp.Basic, ...]:
+    """A system with an inequality in it, solved into ranges of a single variable.
+
+    `[x > 1, x < 3]` is `1 < x < 3`. A system in several variables is a region, which no
+    list of solutions describes: it is left unsolved.
+    """
+    joined = Vector(*relations)
+    if len(chosen) != 1:
+        return _unsolvable(joined, context)
+    (variable,) = chosen
+    try:
+        reduced = sp.reduce_inequalities(
+            [_evaluated(relation) for relation in relations], [variable]
+        )
+    except Exception:
+        return _unsolvable(joined, context)
+    entries = _reduced(reduced, variable, context, constants)
+    return _unsolvable(joined, context) if entries is None else entries
 
 
 def _linear(

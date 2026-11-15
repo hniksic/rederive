@@ -115,8 +115,13 @@ EXTRANEOUS = [
     ("SQRT(x + 5) = x - 1", ["x = 4"]),
     ("SQRT(2*x + 3) = x", ["x = 3"]),
     ("SQRT(x) = -2", []),
+    # The candidate holds for some values of a parameter.
+    ("SQRT(x) = a", ["x = IF(a >= 0, a^2)"]),
     # The principal cube root of -8 is `1 + SQRT(3)*#i`, so there is no solution.
     ("x^(1/3) = -2", []),
+    # As a quadratic in `x^(1/3)` this offers -125 too, whose principal cube root is
+    # not -5.
+    ("x^(2/3) - 2*x^(1/3) - 35 = 0", ["x = 343"]),
 ]
 
 
@@ -439,6 +444,11 @@ def test_an_inequality_that_always_holds_is_an_identity():
     assert sol("x^2 >= 0") == ["x = @1"]
 
 
+def test_inequalities_in_several_variables_are_left_unsolved():
+    # The solutions are a region, which no list of values describes.
+    assert sol("[x + y > 0, x - y < 0]", ("x", "y")) == ["[x + y > 0, x - y < 0]"]
+
+
 def test_an_unsolved_inequality_keeps_its_operator():
     """The residual of a `<` is still a `<`, not an equation."""
     assert sol("x^3 < SIN(x)") == ["x^3 - SIN(x) < 0"]
@@ -517,6 +527,9 @@ EXCLUSIONS = [
     ("x^2*(x - 2)/(x - 2) = 0", "x", ["x = 0"]),
     # `r = 2*m` divides by zero only for one value of `m`, so it isn't provably excluded.
     ("(1 - 2*m/r)*r/r = 0", "r", ["r = 2*m"]),
+    # The divisor vanishes on a family of its own, which excludes no member of the
+    # solution families.
+    ("4/(3*(COS(t) - 1)) + 4 = 0", "t", ["t = -ACOS(2/3)", "t = ACOS(2/3)"]),
 ]
 
 
@@ -564,6 +577,8 @@ SYSTEMS = [
     ("[a - 1, b - 2]", ("a", "b"), ["[a = 1, b = 2]"]),
     ("[x - y, y = 2]", ("x", "y"), ["[x = 2, y = 2]"]),
     ("[0, 0]", ("x", "y"), ["[x = @1, y = @2]"]),
+    # A conjunction of equations is a system too.
+    ("x + y = 3 AND x - y = 1", ("x", "y"), ["[x = 2, y = 1]"]),
 ]
 
 

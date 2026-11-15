@@ -331,6 +331,17 @@ def test_a_complex_number_is_approximated_part_by_part(text, expected, context):
     assert simp(text, context) == expected
 
 
+def test_a_function_of_a_function_value_gets_the_digits_it_needs():
+    # `TAN(11 + 30*#i)` is within `10^-26` of the arctangent's pole at `#i`.
+    assert simp("ATAN(TAN(11 + 30*#i))", APPROXIMATE) == "-1.56637 + 30*#i"
+
+
+def test_an_approximated_solution_stays_a_relation():
+    # `x` is real, but a complex root is a solution soLve found, not `false`.
+    answer = simp("SOLVE(x^6 + x^5 + x^4 + x^3 + x^2 + x + 1 = 0, x)", APPROXIMATE)
+    assert answer.count("x = ") == 6
+
+
 #: A root of `x^1000 = 12`, written in radicals the way soLve writes it.
 ROOT_OF_TWELVE = (
     "12^(1/1000)*(SQRT(2)*SQRT(5/8 - SQRT(5)/8)/2 + SQRT(10)/8 + SQRT(2)/8"

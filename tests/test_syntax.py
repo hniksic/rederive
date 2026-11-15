@@ -290,6 +290,12 @@ def test_parsing_a_definition_leaves_its_parameters_undeclared():
     assert sexpr("mx+mf", state) == "(+ (juxt m x) (juxt m f))"
 
 
+def test_a_parameter_named_like_a_built_in_function_is_an_error():
+    # In the body the name would still be the function: `int + 1` applies `INT`.
+    with pytest.raises(DeriveSyntaxError):
+        parse("FF(int):=int+1")
+
+
 def test_a_parameter_hands_back_the_variable_it_shadowed():
     # The user's `tera`, with its value and domain, is restored after the definition
     # uses the name as a parameter.

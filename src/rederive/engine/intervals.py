@@ -758,12 +758,42 @@ def _inverted(head: sp.Basic, box: _Box) -> sp.Basic:
     `ASIN(SIN(t))` is `t` over `[-pi/2, pi/2]` and `pi - t` over `[pi/2, 3*pi/2]`; on
     branch `k` it is `(-1)^k*(t - k*pi)`. Arc cosine branches start at multiples of
     pi, and arc tangent branches are the open intervals of width pi centered on them.
+
+    A real `t` that may be on more than one branch gets the branch as a function of
+    `t` (see `_on_any_branch`).
     """
     inner = head.args[0]
     function = {sp.asin: sp.sin, sp.acos: sp.cos, sp.atan: sp.tan}[type(head)]
     if not isinstance(inner, function):
         return head
     angle = inner.args[0]
+    branched = _on_one_branch(head, angle, box)
+    if branched is not head or angle.is_extended_real is not True:
+        return branched
+    return _on_any_branch(head, angle, box)
+
+
+def _on_any_branch(head: sp.Basic, angle: sp.Basic, box: _Box) -> sp.Basic:
+    """`ASIN(SIN(t))`, `ACOS(COS(t))` or `ATAN(TAN(t))` for any real `t`.
+
+    With `k = FLOOR(t/pi + 1/2)`, the branch nearest `t`, `ATAN(TAN(t))` is
+    `t - k*pi` and `ASIN(SIN(t))` is `(-1)^k*(t - k*pi)`, while `ACOS(COS(t))` is
+    `ABS(t - 2*pi*FLOOR(t/(2*pi) + 1/2))`. Each holds for every real `t` (where
+    `TAN(t)` is defined), including the ends of the branches. A floor the box settles
+    is settled here: `ACOS(COS(x))` over `(-1, 1)` is `ABS(x)`.
+    """
+    pi = sp.pi
+    if isinstance(head, sp.acos):
+        turns = _step(sp.floor(angle / (2 * pi) + sp.S.Half), box)
+        return sp.Abs(angle - 2 * pi * turns)
+    turns = _step(sp.floor(angle / pi + sp.S.Half), box)
+    reduced = angle - turns * pi
+    return reduced if isinstance(head, sp.atan) else sp.S.NegativeOne**turns * reduced
+
+
+def _on_one_branch(head: sp.Basic, angle: sp.Basic, box: _Box) -> sp.Basic:
+    """The inverse `head` of its function at `angle`, where the box keeps `angle` on
+    one branch, or `head` itself."""
     reach = box.range_of(angle)
     if reach is None or not (reach.low.is_finite and reach.high.is_finite):
         return head

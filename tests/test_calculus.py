@@ -99,6 +99,8 @@ CALCULUS = [
     ("INT(y = x, x, 0, 1)", "y = 1/2"),
     ("INT(y = x, x)", "INT(y = x, x)"),
     ("DIF(y = x, x, -1)", "DIF(y = x, x, -1)"),
+    # A derivative of an equation differentiates both sides.
+    ("DIF(y = x^2, x)", "0 = 2*x"),
     ("LIM(SIN(x)/x, x, 0)", "1"),
     # An omitted point is zero, for every variable of a vector.
     ("LIM(SIN(x)/x, x)", "1"),
@@ -188,6 +190,18 @@ def test_a_summation_formula_keeps_the_shape_it_comes_in(text, expected):
     `test_a_polynomial_is_not_factored_for_having_a_common_factor`).
     """
     assert simp(text) == expected
+
+
+def test_a_variable_with_a_value_is_differentiated_in_then_given_its_value():
+    context = Context(assignments={"x": parse("z*SQRT(t)")})
+    assert simp("DIF(x^2, x)", context) == "2*SQRT(t)*z"
+
+
+def test_a_sum_over_the_elements_of_a_sequence_is_split_by_term():
+    # `y SUB i` is a different term at each `i`, so it isn't a constant of the sum.
+    assert simp("SUM(x SUB i, i, 1, n)") == "SUM(x SUB i, i, 1, n)"
+    answer = simp("SUM((y SUB i - b)^2, i, 1, n)")
+    assert answer.count("SUM(") == 2 and "b^2*n" in answer
 
 
 def test_a_range_that_stops_between_two_terms_is_written_out():
@@ -665,6 +679,17 @@ def test_an_infinite_product_is_the_limit_of_its_partial_products(text, expected
     and then its limit, which gives the answer Derive prints.
     """
     assert simp(text) == expected
+
+
+def test_a_function_defined_by_cases_is_differentiated_and_limited_case_by_case():
+    # Each side of a point takes the case holding along it, and a case holding only at
+    # the point plays no part.
+    cases = "IF(x < 1, 2*x + 1, IF(x <= 2, x^2, 4))"
+    assert simp(f"DIF({cases}, x)") == "IF(x < 1, 2, IF(x <= 2, 2*x, 0))"
+    assert simp(f"LIM({cases}, x, 1, 1)") == "1"
+    assert simp(f"LIM({cases}, x, 1, -1)") == "3"
+    assert simp(f"LIM({cases}, x, 1)") == "?"
+    assert simp("LIM(IF(x = 0, 5, x*SIN(1/x)), x, 0)") == "0"
 
 
 def test_a_two_sided_limit_whose_sides_disagree_is_plus_or_minus():

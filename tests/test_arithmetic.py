@@ -167,6 +167,10 @@ def test_an_integer_function_agrees_with_python(text, value):
     assert simp(text) == str(value)
 
 
+def test_the_remainder_of_a_power_too_big_to_build_is_taken_by_modular_powering():
+    assert simp("MOD(7777777^7777777, 100000)") == str(pow(7777777, 7777777, 100000))
+
+
 # -- approximation ------------------------------------------------------------
 
 #: The digits the oracle works to, far beyond any precision asked for below.

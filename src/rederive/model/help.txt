@@ -317,8 +317,8 @@ Number theory functions:
   GCD(...), LCM(...) the greatest common divisor, the least common multiple
   PRIME(n)           whether n is prime
   NEXT_PRIME(n)      the least prime above n
-  QUOTIENT(u, v)     the integer quotient of u by v
-  REMAINDER(u, v)    the remainder of u divided by v
+  QUOTIENT(u, v), QUOTIENT(u, v, x)  the polynomial quotient of u by v, in x
+  REMAINDER(u, v), REMAINDER(u, v, x)  the remainder of u divided by v, in x
   POLY_GCD(u, v)     the greatest common divisor of two polynomials
 
 Expression decomposition functions:

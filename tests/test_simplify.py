@@ -591,20 +591,35 @@ INTERVALS = [
     ("ASIN(SIN(x))", "x", "x :epsilon Real (-1, 1)"),
     ("ASIN(SIN(x))", "x", "x :epsilon Real [-pi/2, pi/2]"),
     ("ASIN(SIN(x))", "pi - x", "x :epsilon Real (2, 4)"),
-    ("ASIN(SIN(x))", "ASIN(SIN(x))", "x :epsilon Real (1, 2)"),
+    # Across the end of a branch, the branch is a function of the angle.
+    (
+        "ASIN(SIN(x))",
+        "(x - pi*FLOOR(x/pi + 1/2))*(-1)^FLOOR(x/pi + 1/2)",
+        "x :epsilon Real (1, 2)",
+    ),
     ("ACOS(COS(x))", "x", "x :epsilon Real (0, 3)"),
     ("ACOS(COS(x))", "-x", "x :epsilon Real (-3, 0)"),
     ("ACOS(COS(x))", "2*pi - x", "x :epsilon Real (4, 6)"),
-    ("ACOS(COS(x))", "ACOS(COS(x))", "x :epsilon Real (-1, 1)"),
+    ("ACOS(COS(x))", "ABS(x)", "x :epsilon Real (-1, 1)"),
     ("ATAN(TAN(x))", "x", "x :epsilon Real (-1, 1)"),
     ("ATAN(TAN(x))", "x - pi", "x :epsilon Real (2, 4)"),
-    ("ATAN(TAN(x))", "ATAN(TAN(x))", "x :epsilon Real (1, 2)"),
+    ("ATAN(TAN(x))", "x - pi*FLOOR(x/pi + 1/2)", "x :epsilon Real (1, 2)"),
 ]
 
 
 @pytest.mark.parametrize(("text", "expected", "declaration"), INTERVALS, ids=str)
 def test_an_interval_settles_what_a_sign_alone_cannot(text, expected, declaration):
     assert simp(text, declared(declaration)) == expected
+
+
+def test_an_inverse_undoes_its_function_on_whichever_branch_a_real_angle_is():
+    # The branch nearest the angle is `FLOOR(x/pi + 1/2)`, right at its ends too:
+    # `ASIN(SIN(pi/2))` is `pi/2`, where `SIGN(COS(x))` in place of the power would
+    # be ambiguous. A complex angle has no such branches.
+    assert simp("ATAN(TAN(x))") == "x - pi*FLOOR(x/pi + 1/2)"
+    assert simp("ASIN(SIN(x))") == "(x - pi*FLOOR(x/pi + 1/2))*(-1)^FLOOR(x/pi + 1/2)"
+    assert simp("ACOS(COS(x))") == "ABS(x - 2*pi*FLOOR(x/(2*pi) + 1/2))"
+    assert simp("ASIN(SIN(z))", declared("z :epsilon Complex")) == "ASIN(SIN(z))"
 
 
 def test_two_declared_intervals_are_asked_together():
@@ -950,7 +965,11 @@ TRIGONOMETRY = [
     ("pi*COS(x)/180", "pi*COS(x)/180", Context(angle=Angle.DEGREE)),
     ("INT(SIN(x), x)", "-180*COS(x)/pi", Context(angle=Angle.DEGREE)),
     ("INT(1/(1 + x^2), x)", "pi*ATAN(x)/180", Context(angle=Angle.DEGREE)),
-    ("ASIN(SIN(x))", "ASIN(SIN(x))", Context(angle=Angle.DEGREE)),
+    (
+        "ASIN(SIN(x))",
+        "(pi*x - 180*pi*FLOOR(x/180 + 1/2))*(-1)^FLOOR(x/180 + 1/2)/pi",
+        Context(angle=Angle.DEGREE),
+    ),
     ("APPROX(SIN(x) + ASIN(y))", "SIN(x) + ASIN(y)", Context(angle=Angle.DEGREE)),
     ("APPROX(2*ASIN(y))", "2*ASIN(y)", Context(angle=Angle.DEGREE)),
     # A phase is an angle, in the same unit as the inverse trig functions.
@@ -1621,6 +1640,10 @@ INERT = [
 @pytest.mark.parametrize(("text", "expected"), INERT, ids=str)
 def test_a_definition_keeps_its_shape_and_simplifies_its_value(text, expected):
     assert simp(text) == expected
+
+
+def test_an_assignment_within_an_expression_stands_for_its_value():
+    assert simp("DIF(c := x^2, x)") == "2*x"
 
 
 #: Calls to functions declared without a body. Each must come back unchanged, so

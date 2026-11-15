@@ -410,13 +410,23 @@ def _rounded(
     )
     if contained is not None:
         return contained
+
+    def walk(part: sp.Basic) -> sp.Basic:
+        if isinstance(part, sp.Rational | sp.Float):
+            return part if part in approximate else simplest_rational(part, digits)
+        if not isinstance(part, sp.Basic) or not part.args:
+            return part
+        args = tuple(walk(arg) for arg in part.args)
+        if args == part.args:
+            return part
+        if isinstance(part, Relational):
+            # Rebuilt unevaluated, or assumptions would decide it: `x = -0.900968 +
+            # 0.433883*#i` for real `x` is a solution soLve found, not `false`.
+            return part.func(*args, evaluate=False)
+        return part.func(*args)
+
     try:
-        return expression.replace(
-            lambda part: isinstance(part, sp.Rational | sp.Float)
-            and part not in approximate,
-            lambda part: simplest_rational(part, digits),
-            simultaneous=False,
-        )
+        return walk(expression)
     except Exception:
         return expression
 
@@ -591,6 +601,9 @@ def _evaluated(part: sp.Basic, digits: int) -> tuple[sp.Basic, sp.Basic] | None:
     parts = _parts(value)
     if parts is None:
         return None
+    composed = _composed(part)
+    if composed:
+        parts = _settled_parts(part, digits, parts)
     size = max(abs(parts[0]), abs(parts[1]))
     if not size:
         return parts
@@ -601,7 +614,51 @@ def _evaluated(part: sp.Basic, digits: int) -> tuple[sp.Basic, sp.Basic] | None:
         extra = int(sp.ceiling(sp.log(size / smaller, 10)))
         if extra > 0:
             parts = _parts(_evalf(part, digits + extra)) or parts
+            if composed:
+                parts = _settled_parts(part, digits + extra, parts)
     return parts
+
+
+def _composed(part: sp.Basic) -> bool:
+    """Whether `part` applies a function to a value of a function.
+
+    Sympy tracks the error of arithmetic, but takes a function at a value only as
+    precise as it was given: `ATAN(TAN(11 + 30*#i))` takes the arctangent next to its
+    pole at `#i`, where the digits `TAN` gave are far too few.
+    """
+    return any(
+        argument.has(sp.Function)
+        for call in _atoms(part, sp.Function)
+        for argument in call.args
+    )
+
+
+def _settled_parts(
+    part: sp.Basic, digits: int, parts: tuple[sp.Basic, sp.Basic]
+) -> tuple[sp.Basic, sp.Basic]:
+    """The parts of `part`, evaluated again at more digits until two evaluations agree
+    to `digits`. At `MAX_DIGITS` the last evaluation is kept.
+    """
+    working = digits
+    while working < MAX_DIGITS:
+        working = min(2 * working + GUARD, MAX_DIGITS)
+        again = _parts(_evalf(part, working))
+        if again is None:
+            return parts
+        if _agree(parts, again, digits):
+            return parts
+        parts = again
+    return parts
+
+
+def _agree(
+    one: tuple[sp.Basic, sp.Basic], other: tuple[sp.Basic, sp.Basic], digits: int
+) -> bool:
+    """Whether two evaluations of a complex number agree to `digits` significant
+    digits of its magnitude."""
+    size = max(abs(part) for part in (*one, *other))
+    tolerance = size * sp.Rational(1, 10**digits)
+    return all(abs(a - b) <= tolerance for a, b in zip(one, other))
 
 
 #: Below this, an exponent is taken to give 0 when integrating over an infinite range.

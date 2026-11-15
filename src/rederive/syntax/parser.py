@@ -581,10 +581,16 @@ class Parser:
         It's declared in the caller's state directly, so the body can use it; whether it
         is reported in `declarations` is up to `_release`. `shadowed` collects each name's
         previous binding, so `_release` can restore a session variable of the same name.
+
+        A built-in function's name is no parameter: in the body it would still be the
+        function, so `FF(int) := int + 1` would apply `INT` to `+1`.
         """
         token = self.lexer.name_run_at(self.pos)
-        self.pos = token.end
         canonical = self.lexer.new_variable(token.value)
+        state = self.lexer.state
+        if canonical in names.BUILTIN_FUNCTIONS and state.is_function(canonical):
+            raise self.error(token.start, "a parameter")
+        self.pos = token.end
         shadowed.append(self.lexer.state.binding(canonical))
         self.lexer.state.declare(VariableDeclaration(canonical))
         return Node(Kind.NAME, token.start, token.end, (), canonical, _surface(token))

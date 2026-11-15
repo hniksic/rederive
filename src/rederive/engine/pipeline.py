@@ -58,6 +58,8 @@ from rederive.engine.context import (
 from rederive.engine.evaluate import (
     Commanded,
     Environment,
+    Suspended,
+    branched,
     cancelled_over_roots,
     evaluate,
     limit_by_substitution,
@@ -86,6 +88,7 @@ from rederive.engine.to_sympy import (
     Logical,
     MovingLimit,
     PlusMinus,
+    Subscript,
     ambiguous_products,
     Vector,
     as_condition,
@@ -865,6 +868,9 @@ def _decide_simplified(test: sp.Basic, context: Context) -> bool | None:
     """
     if _against_a_relation(test):
         return None
+    verdict = _vector_against_a_number(test)
+    if verdict is not None:
+        return verdict
     verdict = _decide(test, context)
     if verdict is not None:
         return verdict
@@ -879,6 +885,24 @@ def _decide_simplified(test: sp.Basic, context: Context) -> bool | None:
     if simplified is sp.false:
         return False
     return None
+
+
+def _vector_against_a_number(test: sp.Basic) -> bool | None:
+    """Whether a test equating a vector of numbers with a number holds: it never does.
+
+    Only a test is decided so: a vector of numbers is not a number, so `SELECT(k /= 0,
+    k, [0, [1, 1], 0])` keeps `[1, 1]`. The equation simplified on its own stands (see
+    `_equated`). None for any other test.
+    """
+    if not isinstance(test, (sp.Eq, sp.Ne)):
+        return None
+    vectors = [isinstance(side, Vector) for side in test.args]
+    if vectors.count(True) != 1:
+        return None
+    vector, number = test.args if vectors[0] else reversed(test.args)
+    if vector.free_symbols or not getattr(number, "is_number", False):
+        return None
+    return isinstance(test, sp.Ne)
 
 
 def _against_a_lone_variable(test: sp.Basic, context: Context) -> bool:
@@ -1000,6 +1024,10 @@ def _worked_out(head: sp.Basic, context: Context) -> sp.Basic:
         return _limit(head)
     if isinstance(head, Antidifference):
         return _antidifference(head, context)
+    if isinstance(head, sp.Derivative):
+        cases = _by_cases(head.expr, set(head.variables))
+        if cases is not None:
+            head = head.func(cases, *head.variable_count, evaluate=False)
     try:
         value = head.doit(deep=False)
     except Exception:
@@ -1014,6 +1042,34 @@ def _worked_out(head: sp.Basic, context: Context) -> sp.Basic:
         # which left raw grow to hundreds of thousands of characters.
         return over_one_denominator(_flat_between_jumps(value))
     return value
+
+
+def _by_cases(expression: sp.Basic, variables: set) -> sp.Basic | None:
+    """`expression` with each suspended conditional in `variables` written as the
+    `Piecewise` of its branches (see `branched`), or None if it has none.
+
+    Calculus in a variable works on each case where its test picks it, so a function
+    defined by cases has a derivative and one-sided limits. A conditional in a branch
+    is written out too, to a few levels.
+    """
+
+    def in_variables(found: sp.Basic) -> bool:
+        return isinstance(found, Suspended) and bool(found.free_symbols & variables)
+
+    changed = False
+    for _ in range(_CASE_LEVELS):
+        found = [part for part in expression.atoms(Suspended) if in_variables(part)]
+        cases = {part: branched(part) for part in found}
+        cases = {part: value for part, value in cases.items() if value is not None}
+        if not cases:
+            break
+        expression = expression.xreplace(cases)
+        changed = True
+    return expression if changed else None
+
+
+#: How deep `_by_cases` writes out conditionals in the branches of conditionals.
+_CASE_LEVELS = 4
 
 
 def _constant_exponents(expression: sp.Basic) -> sp.Basic:
@@ -1177,6 +1233,10 @@ def _summation(head: sp.Sum) -> sp.Basic:
     term by term like any other sum: `SOLVE.MTH`'s three-term Lagrange expansion is
     `3*y^3/2 - y^2 + y` in the manual (9.1, p.230), not factored.
     """
+    if not _counted(head):
+        split = _split_over_sequence(head)
+        if split is not None:
+            return split
     value = attempt(head, lambda s: s.doit(deep=False))
     if value is None:
         return _undecided(head)
@@ -1189,6 +1249,34 @@ def _summation(head: sp.Sum) -> sp.Basic:
         entries = attempt(value, lambda v: v.func(*map(_factored, v.args)))
         return value if entries is None else entries
     return _factored(value)
+
+
+def _split_over_sequence(head: sp.Sum) -> sp.Basic | None:
+    """A sum over the elements of an unknown sequence, split into a sum per term.
+
+    `SUM((y SUB i - b)^2, i, 1, n)` is `SUM(y SUB i^2, i, 1, n) - 2*b*SUM(y SUB i, i, 1,
+    n) + b^2*n`: the summand is expanded, each term's factors free of the index are
+    taken out, and the terms without a subscript get their closed forms. None if the
+    summand has no subscript by the index, or splitting leaves it as it was.
+    """
+    if len(head.limits) != 1 or len(head.limits[0]) != 3:
+        return None
+    index = head.limits[0][0]
+    if not any(index in part.args for part in head.function.atoms(Subscript)):
+        return None
+    expanded = attempt(head.function, sp.expand)
+    if expanded is None:
+        return None
+    total = []
+    for term in sp.Add.make_args(expanded):
+        factor, varying = term.as_independent(index, as_Add=False)
+        part = sp.Sum(varying, head.limits[0])
+        if not varying.atoms(Subscript):
+            part = _summation(part)
+        total.append(factor * part)
+    if len(total) == 1 and total[0] == head:
+        return None
+    return sp.Add(*total)
 
 
 def _counted(head: sp.Sum | sp.Product) -> bool:
@@ -1629,6 +1717,9 @@ def _limit(head: sp.Limit) -> sp.Basic:
     an integral it can't do.
     """
     expression, variable, point, direction = head.args
+    by_cases = _limit_by_cases(expression, variable, point, str(direction))
+    if by_cases is not None:
+        return by_cases
     substituted = limit_by_substitution(expression, variable, point)
     if substituted is not None:
         return substituted
@@ -1664,6 +1755,100 @@ def _limit(head: sp.Limit) -> sp.Basic:
         value = forced(value, sp.simplify)
     split = attempt(value, lambda v: _split_on_a_sign(v, head))
     return value if split is None else split
+
+
+def _limit_by_cases(
+    expression: sp.Basic, variable: sp.Basic, point: sp.Basic, direction: str
+) -> sp.Basic | None:
+    """The limit of a function defined by cases, or None if it isn't one or the limit
+    can't be found this way.
+
+    From each side, the case that holds all along that side of the point decides the
+    limit: for `IF(x < 1, 2*x + 1, x^2)` at 1 that is 1 from above and 3 from below,
+    and a two-sided limit whose sides differ is `?`, or `+-u` for sides `u` and `-u`.
+    A case holding only at the point, as in `IF(x = 0, 5, x*SIN(1/x))`, plays no part.
+    Which case holds is decided exactly, from the set of values each test holds for.
+    """
+    cases = _by_cases(expression, {variable})
+    if cases is None:
+        if not expression.has(sp.Piecewise):
+            return None
+        cases = expression
+    folded = attempt(cases, sp.piecewise_fold)
+    if not isinstance(folded, sp.Piecewise):
+        return None
+    if point is sp.S.Infinity:
+        sides = ["-"]
+    elif point is sp.S.NegativeInfinity:
+        sides = ["+"]
+    else:
+        sides = ["+", "-"] if direction == "+-" else [direction]
+    values = []
+    for side in sides:
+        value = _one_sided_by_cases(folded, variable, point, side)
+        if value is None:
+            return None
+        values.append(value)
+    if len(values) == 2 and values[0] != values[1]:
+        difference = attempt(values[0] - values[1], sp.expand)
+        if difference is None or not difference.is_number or difference.is_zero is None:
+            return None
+        if not difference.is_zero:
+            opposite = attempt(values[0] + values[1], sp.expand)
+            return PlusMinus(values[0]) if opposite == 0 else sp.nan
+    return values[0]
+
+
+def _one_sided_by_cases(
+    cases: sp.Piecewise, variable: sp.Basic, point: sp.Basic, side: str
+) -> sp.Basic | None:
+    """The limit of `cases` from one side of `point`, or None (see `_limit_by_cases`)."""
+    for arm, test in cases.args:
+        holds = _holds_beside(test, variable, point, side)
+        if holds is None:
+            return None
+        if not holds:
+            continue
+        if arm is sp.nan:
+            return sp.nan
+        asked = sp.Limit(arm, variable, point, dir=side)
+        value = _limit(asked)
+        return None if value == asked or value.has(sp.Limit) else value
+    return sp.nan
+
+
+def _holds_beside(
+    test: sp.Basic, variable: sp.Basic, point: sp.Basic, side: str
+) -> bool | None:
+    """Whether `test` holds all along one side of `point` near it (True), nowhere near
+    it on that side (False), or neither or undecided (None)."""
+    if test is sp.true:
+        return True
+    if test.free_symbols != {variable} or not variable.is_extended_real:
+        return None
+    try:
+        holding = test.as_set().intersect(sp.S.Reals)
+        failing = sp.S.Reals - holding
+        if _absent_beside(failing, point, side):
+            return True
+        if _absent_beside(holding, point, side):
+            return False
+    except Exception:
+        return None
+    return None
+
+
+def _absent_beside(values: sp.Set, point: sp.Basic, side: str) -> bool:
+    """Whether `values` has no points on one side of `point` near it, as decided exactly."""
+    if point is sp.S.Infinity:
+        return values is sp.S.EmptySet or (values.sup < sp.oo) is sp.true
+    if point is sp.S.NegativeInfinity:
+        return values is sp.S.EmptySet or (values.inf > -sp.oo) is sp.true
+    if side == "+":
+        near = values.intersect(sp.Interval.open(point, sp.oo))
+        return near is sp.S.EmptySet or (near.inf > point) is sp.true
+    near = values.intersect(sp.Interval.open(-sp.oo, point))
+    return near is sp.S.EmptySet or (near.sup < point) is sp.true
 
 
 def _symbolic_powers_combined(expression: sp.Basic, variable: sp.Basic) -> sp.Basic:
