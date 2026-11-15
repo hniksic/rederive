@@ -23,6 +23,11 @@ terminal UIO over over a SymPy-based engine. Python 3.14+, managed with `uv`.
   internal rule or a design decision is not a capability. Edit it only for a new
   built-in or a difference a user would notice and want explained, in a line or two.
 - Don't edit `README.md` unless asked to.
+- Update a document where a change makes it wrong or incomplete by its own standard: a
+  new built-in gets an entry where the built-ins are listed, a changed command gets its
+  description corrected. Don't add a paragraph to give a change a mention: if the
+  document has no existing place for the fact, it doesn't cover that kind of fact. What
+  changed is described in the commit message.
 - Worktrees start from the local HEAD, never from a remote ref (local branches have
   unpushed commits). Don't use the harness's worktree features (`isolation: "worktree"`,
   `EnterWorktree`, `--worktree`); run `git worktree add <path> -b <name> HEAD` yourself,
