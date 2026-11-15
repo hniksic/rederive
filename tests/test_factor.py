@@ -405,6 +405,14 @@ def test_a_factor_head_is_factored_where_it_stands():
     )
 
 
+def test_arithmetic_on_a_factored_equation_applies_to_both_sides():
+    """As on any equation; the factored form is kept where nothing is done to it."""
+    assert simplify(parse("3*FACTOR(x^2 - 1 = 0)"), Context()).text == (
+        "3*(x + 1)*(x - 1) = 0"
+    )
+    assert simplify(parse("1 + FACTOR(x^2 - 1 = x)"), Context()).text == "x^2 = x + 1"
+
+
 def test_a_factor_head_in_a_sum_is_the_sum_s_to_write():
     """A sum is written in normal form regardless of its terms, so a factored polynomial
     in it is multiplied out; a factored number is not a polynomial and stays. Checked

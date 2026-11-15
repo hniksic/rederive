@@ -443,6 +443,17 @@ class _Evaluator(Converter):
             operand = mapped(operand, _vector_value)
         return super()._transpose(operand)
 
+    def over_equations(
+        self, build: Callable[[list[sp.Basic]], sp.Basic], operands: list[sp.Basic]
+    ) -> sp.Basic | None:
+        """`Converter.over_equations`, seeing through the `Commanded` wrapper of one.
+
+        Arithmetic on a command's answer that is an equation applies to both sides like
+        arithmetic on any equation: with `q := FACTOR(x^2 - 1 = 0)`, `2*q` is an
+        equation, not a product of 2 and the wrapped one.
+        """
+        return super().over_equations(build, [_equation_value(o) for o in operands])
+
     # -- names --------------------------------------------------------------
 
     def _name(self, node: Node) -> sp.Basic:
@@ -1953,6 +1964,13 @@ def _vector_value(value: sp.Basic) -> sp.Basic:
     """`value`, unwrapped from `Commanded` if what it wraps is a vector."""
     if isinstance(value, Commanded) and isinstance(value.args[0], Vector):
         return _value_of(value)
+    return value
+
+
+def _equation_value(value: sp.Basic) -> sp.Basic:
+    """`value`, unwrapped from `Commanded` if what it wraps is an equation."""
+    if isinstance(value, Commanded) and isinstance(value.args[0], sp.Equality):
+        return value.args[0]
     return value
 
 
