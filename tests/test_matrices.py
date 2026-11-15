@@ -24,6 +24,22 @@ def test_a_conditional_whose_branches_are_vectors_simplifies_elementwise():
 def test_a_symbolic_power_of_a_matrix_is_its_closed_form():
     # A unipotent matrix to a symbolic power is a polynomial in `n`.
     assert simp("[[1, 1], [0, 1]]^n") == "[[1, n], [0, 1]]"
+    # A diagonalizable one is a sum of powers of its eigenvalues, each coefficient
+    # written over a rational denominator.
+    assert simp("[[1, 1], [1, 0]]^n") == (
+        "[[(5 - SQRT(5))*(1/2 - SQRT(5)/2)^n/10 + (SQRT(5) + 5)*(SQRT(5)/2 + 1/2)^n/10,"
+        " SQRT(5)*(SQRT(5)/2 + 1/2)^n/5 - SQRT(5)*(1/2 - SQRT(5)/2)^n/5],"
+        " [SQRT(5)*(SQRT(5)/2 + 1/2)^n/5 - SQRT(5)*(1/2 - SQRT(5)/2)^n/5,"
+        " (5 - SQRT(5))*(SQRT(5)/2 + 1/2)^n/10 + (SQRT(5) + 5)*(1/2 - SQRT(5)/2)^n/10]]"
+    )
+
+
+def test_a_matrix_root_is_simplified_like_a_matrix_power():
+    # SQRT of a square matrix is its power to 1/2, whose entries are simplified.
+    assert simp("SQRT([[10, 7], [7, 17]])") == "[[3, 1], [1, 4]]"
+    assert simp("SQRT([[5, 4], [4, 5]])") == simp("[[5, 4], [4, 5]]^(1/2)")
+    assert simp("SQRT([[5, 4], [4, 5]])") == "[[2, 1], [1, 2]]"
+    assert simp("SQRT([[1, 2, 3], [4, 5, 6]])") == "[[1, 2, 3], [4, 5, 6]]^(1/2)"
 
 
 def test_an_integer_power_of_a_vector_is_a_power_of_its_dot_square():

@@ -179,6 +179,20 @@ def test_numbers_and_algebra(text, expected):
     assert simp(text) == expected
 
 
+def test_a_terms_surd_coefficient_is_rationalized_beside_other_terms():
+    # Each term's numeric coefficient is rationalized as the term alone would be,
+    # without putting the sum over one denominator.
+    assert simp("x/(SQRT(2) + 1) + y") == "(SQRT(2) - 1)*x + y"
+    assert simp("SQRT(2)/(SQRT(2) - 1)*x^2 + x") == "(SQRT(2) + 2)*x^2 + x"
+    assert (
+        simp(
+            "(SQRT(5) + 3)*(SQRT(5)/2 + 1/2)^n/(SQRT(5) + 5)"
+            " - (SQRT(5) - 5)*(-1)^n*(SQRT(5)/2 - 1/2)^n/10"
+        )
+        == "(5 - SQRT(5))*(1/2 - SQRT(5)/2)^n/10 + (SQRT(5) + 5)*(SQRT(5)/2 + 1/2)^n/10"
+    )
+
+
 def test_a_polynomial_is_not_factored():
     # Factoring is the Factor command's job. Simplify leaves the sum alone even
     # though the product is shorter.
@@ -284,6 +298,19 @@ RATIONAL_FORM = [
 @pytest.mark.parametrize(("text", "expected"), RATIONAL_FORM, ids=str)
 def test_a_sum_of_ratios_is_written_over_one_denominator(text, expected):
     assert simp(text) == expected
+
+
+def test_a_shared_denominator_is_the_least_common_one():
+    # Denominators that share a factor are not just multiplied together.
+    assert (
+        simp("x/(a^2 + 2*a + 1) + y/(a^2 + 2*a + 1) + 1/(a + 1)")
+        == "(x + y + a + 1)/(a^2 + 2*a + 1)"
+    )
+    assert simp("x/(b^2 - 1) + y/(b^2 - 1) + z/(b + 1)") == "(x + y + z*(b - 1))/(b^2 - 1)"
+    assert simp("TAYLOR(ATAN(x), x, a, 2)") == (
+        "(a^4*ATAN(a) + 2*a^2*ATAN(a) + ATAN(a) - a*x^2 + x*(3*a^2 + 1) - 2*a^3 - a)"
+        "/(a^4 + 2*a^2 + 1)"
+    )
 
 
 #: A quotient's numerator has its common factor pulled out, as Derive's gcd leaves

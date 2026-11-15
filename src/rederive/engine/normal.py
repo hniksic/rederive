@@ -359,13 +359,24 @@ class _Writer:
         numerator, denominator = sp.fraction(sp.together(sp.Add(*parts)))
         if denominator == 1:
             return total
-        numerator = self.written(numerator.xreplace(holder.held))
-        if not denominator.free_symbols and isinstance(numerator, sp.Add):
+        numerator = numerator.xreplace(holder.held)
+        bottoms = list(sp.Mul.make_args(denominator))
+        if denominator.free_symbols:
+            # `together` multiplies the terms' denominators, which needn't be coprime:
+            # over `a^2 + 1` and `a^4 + 2*a^2 + 1` the least common one is the second.
+            try:
+                cancelled = _cancelled([numerator], bottoms)
+            except Exception:
+                cancelled = None
+            if cancelled is not None:
+                numerator, bottoms = sp.Mul(*cancelled[0]), cancelled[1]
+        numerator = self.written(numerator)
+        if not any(bottom.free_symbols for bottom in bottoms) and isinstance(
+            numerator, sp.Add
+        ):
             # Keep the number outside, or sympy would multiply it into the sum.
-            return _keep_coeff(1 / denominator, numerator)
-        return _quotient(
-            list(sp.Mul.make_args(numerator)), list(sp.Mul.make_args(denominator))
-        )
+            return _keep_coeff(1 / sp.Mul(*bottoms), numerator)
+        return _quotient(list(sp.Mul.make_args(numerator)), bottoms)
 
     def _main(self, total: sp.Basic) -> sp.Basic | None:
         """The most main generator of `total`, by the order list.

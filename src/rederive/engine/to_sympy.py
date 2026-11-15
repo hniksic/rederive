@@ -1959,8 +1959,13 @@ def _extremum(func: Callable[..., sp.Basic]) -> Handler:
 
 
 def _sqrt(conv: Converter, args: list) -> sp.Basic:
-    """`SQRT(u)`, taken whatever the sign of a power in `u` under Branch Any."""
+    """`SQRT(u)`, taken whatever the sign of a power in `u` under Branch Any.
+
+    A vector's root is its power to 1/2, so a square matrix has its matrix root.
+    """
     argument = _one(args)
+    if isinstance(argument, Vector):
+        return power(argument, sp.S.Half)
     if conv.context.branch is Branch.ANY:
         root = any_root(argument, sp.S.Half)
         if root is not None:

@@ -3572,6 +3572,55 @@ def _flat_value(constant: sp.Basic) -> sp.Basic:
     return constant
 
 
+def _rationalized(expression: sp.Basic) -> sp.Basic:
+    """Each constant over square roots of rationals written over a rational denominator,
+    where that is shorter, including the constant part of a product.
+
+    Rationalizing the whole expression puts a sum's terms over one denominator, which
+    is longer, so the coefficients of a sum's terms are taken one by one: the term
+    `(SQRT(5) - 5)*(1/2 - SQRT(5)/2)^n/(5*(SQRT(5) - 1))` is
+    `-SQRT(5)*(1/2 - SQRT(5)/2)^n/5` beside other terms just as it is alone.
+    """
+    return expression.replace(
+        lambda part: isinstance(part, sp.Add | sp.Mul), _rationalized_part
+    )
+
+
+def _rationalized_part(part: sp.Add | sp.Mul) -> sp.Basic:
+    if part.is_number:
+        return _rationalized_value(part)
+    if not isinstance(part, sp.Mul):
+        return part
+    constants = [factor for factor in part.args if factor.is_number]
+    if len(constants) < 2:
+        return part
+    value = sp.Mul(*constants)
+    rational = _rationalized_value(value)
+    if rational is value:
+        return part
+    return rational * sp.Mul(*[factor for factor in part.args if not factor.is_number])
+
+
+def _rationalized_value(constant: sp.Basic) -> sp.Basic:
+    """`constant` with a rational denominator if it is rational arithmetic over square
+    roots of positive rationals with a root in a denominator, and that is shorter."""
+    generators: set[sp.Basic] = set()
+    orders: dict[sp.Pow, int] = {}
+    if not _over_radicals(constant, generators, orders) or not generators:
+        return constant
+    if any(order != 2 or not root.base.is_Rational for root, order in orders.items()):
+        return constant
+    _, denominator = sp.fraction(sp.together(constant))
+    if denominator.is_Rational or len(generators) > _SURDS:
+        return constant
+    candidate = sp.radsimp(constant)
+    if sp.fraction(candidate)[1].is_Rational and sp.count_ops(
+        candidate
+    ) < sp.count_ops(constant):
+        return candidate
+    return constant
+
+
 def _radical_field(constant: sp.Basic) -> tuple[tuple[sp.Basic, ...] | None, int]:
     """The roots of rationals in `constant` and a degree bound, or None if it isn't a
     nested radical over them.
@@ -5819,6 +5868,8 @@ _IDENTITIES = (
           "SQRT(5 + SQRT(24)) is SQRT(2) + SQRT(3): each radical denested"),
     _Rule("flattened", _flattened, _gated,
           "a constant over nested radicals reduced in the field its surds span"),
+    _Rule("rationalized", _rationalized, _gated,
+          "the coefficient 1/(SQRT(2) + 1) of a term is SQRT(2) - 1"),
     _Rule("trigonometric constants", _trigonometric_constants, _gated,
           "COS(pi/9)*COS(2*pi/9)*COS(4*pi/9) is 1/8: values of rational angles"),
     _Rule("conjugate products", _conjugate_products, _gated,
