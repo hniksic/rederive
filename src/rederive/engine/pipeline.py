@@ -2827,6 +2827,57 @@ def _over_roots(expression: sp.Basic) -> sp.Basic:
 _OVER_ROOTS_SIZE = 200
 
 
+def _radicals(expression: sp.Basic) -> set[sp.Basic]:
+    """The roots in `expression`: powers to a fraction that isn't an integer."""
+    return {
+        power
+        for power in expression.atoms(sp.Pow)
+        if power.exp.is_Rational and not power.exp.is_Integer
+    }
+
+
+def _conjugate_products(expression: sp.Basic) -> sp.Basic:
+    """Two sums in a product multiplied out where that leaves fewer roots and is shorter.
+
+    `(SQRT(x + 1) - SQRT(x))*(SQRT(x + 1) + SQRT(x))` is `1` and `(SQRT(a) + 1)*(SQRT(a)
+    - 1)` is `a - 1`: factors conjugate over a root multiply to a difference of squares,
+    which the normal form, keeping a product of sums as it is, doesn't form. Multiplying
+    out is ring arithmetic and `SQRT(u)^2` is `u` for every `u`, so this holds wherever
+    the factors are defined. Factors are paired in equal integer powers, so a
+    denominator `1/((SQRT(a) + 1)*(SQRT(a) - 1))` pairs too. A product of sums without
+    roots, such as `(x - 1)*(x + 1)`, stays factored.
+    """
+
+    def paired(product: sp.Mul) -> sp.Basic:
+        factors = [factor.as_base_exp() for factor in product.args]
+        for i, (first, power) in enumerate(factors):
+            if not first.is_Add or not power.is_Integer or not _radicals(first):
+                continue
+            for j in range(i + 1, len(factors)):
+                second, other = factors[j]
+                if not second.is_Add or other != power or not _radicals(second):
+                    continue
+                written = sp.Mul(first, second)
+                multiplied = sp.expand(written)
+                roots = _radicals(first) | _radicals(second)
+                if len(_radicals(multiplied)) >= len(roots) or sp.count_ops(
+                    multiplied
+                ) >= sp.count_ops(written):
+                    continue
+                rest = [b**e for k, (b, e) in enumerate(factors) if k not in (i, j)]
+                return paired_or_not(sp.Mul(multiplied**power, *rest))
+        return product
+
+    def paired_or_not(node: sp.Basic) -> sp.Basic:
+        return paired(node) if node.is_Mul else node
+
+    if not isinstance(expression, sp.Expr) or not _radicals(expression):
+        return expression
+    if sp.count_ops(expression) > _OVER_ROOTS_SIZE:
+        return expression
+    return expression.replace(lambda e: isinstance(e, sp.Mul), paired)
+
+
 def _over_surds(expression: sp.Basic) -> sp.Basic:
     """A quotient cancelled over the field its numeric roots span.
 
@@ -5693,6 +5744,8 @@ _IDENTITIES = (
           "a constant over nested radicals reduced in the field its surds span"),
     _Rule("trigonometric constants", _trigonometric_constants, _gated,
           "COS(pi/9)*COS(2*pi/9)*COS(4*pi/9) is 1/8: values of rational angles"),
+    _Rule("conjugate products", _conjugate_products, _gated,
+          "(SQRT(a) + 1)*(SQRT(a) - 1) is a - 1: conjugates over a root multiplied out"),
     _Rule("over roots", _over_roots, _gated,
           "a quotient in x and SQRT(y) cancels: (x*SQRT(y) + y)/(x + SQRT(y)) is SQRT(y)"),
     _Rule("over surds", _over_surds, _gated,

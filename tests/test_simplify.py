@@ -448,6 +448,24 @@ def test_a_quotient_cancels_over_the_numeric_roots_in_it():
     assert simp(f"FACTOR({text})") == "(x + 1)*(x - 3)/(x - SQRT(2))"
 
 
+#: Sums in a product whose product has fewer roots are multiplied out where that is
+#: shorter, wherever the product stands; sums without roots stay factored.
+CONJUGATE_PRODUCTS = [
+    ("(SQRT(a^2 + 1) + a)*(SQRT(a^2 + 1) - a)", "1"),
+    ("x*(SQRT(x + 1) - SQRT(x))*(SQRT(x + 1) + SQRT(x))", "x"),
+    ("(SQRT(x^2 + y^2) - x)*(SQRT(x^2 + y^2) + x)", "y^2"),
+    ("LN((SQRT(a) + 1)*(SQRT(a) - 1))", "LN(a - 1)"),
+    ("(x^(1/3) - 1)*(x^(2/3) + x^(1/3) + 1)", "x - 1"),
+    ("(SQRT(x) + 1)*(SQRT(x) + 2)", "(SQRT(x) + 1)*(SQRT(x) + 2)"),
+    ("(x - 1)*(x + 1)", "(x + 1)*(x - 1)"),
+]
+
+
+@pytest.mark.parametrize(("text", "expected"), CONJUGATE_PRODUCTS, ids=str)
+def test_a_product_of_conjugates_over_a_root_is_multiplied_out(text, expected):
+    assert simp(text) == expected
+
+
 #: Exponentials of fractional multiples of one exponent are powers of one exponential,
 #: and the quotient cancels in it; so does a power of a perfect-power base.
 OVER_EXPONENTIALS = [
