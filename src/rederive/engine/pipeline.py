@@ -948,13 +948,19 @@ def _against_a_relation(test: sp.Basic) -> bool:
 
 
 def _truths(test: sp.Basic, context: Context) -> list[sp.Basic]:
-    """Forms of `test` worth checking, easiest first."""
+    """Forms of `test` worth checking, easiest first.
+
+    A difference that is a number is also multiplied out, which a complex one needs:
+    `(2 + 3*#i)^2 = 1` is decided by `-6 + 12*#i` being nonzero.
+    """
     if not isinstance(test, Relational):
         return [test]
     readings = [test, attempt(test, lambda t: t.func(t.lhs, t.rhs))]
     difference = attempt(test, lambda t: _rewritten(t.lhs - t.rhs, context))
     if difference is not None:
         readings.append(attempt(test, lambda t: t.func(difference, 0)))
+        if difference.is_number and not difference.is_Number:
+            readings.append(attempt(test, lambda t: t.func(sp.expand(difference), 0)))
     return [reading for reading in readings if reading is not None]
 
 

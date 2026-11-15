@@ -40,6 +40,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 import sympy as sp
+from sympy.core.mul import _keep_coeff
 
 from rederive.engine.boundary import DEFAULT_AMOUNT, Amount
 from rederive.engine.shape import attempt as _attempt
@@ -152,7 +153,19 @@ def _trivial(expression: sp.Expr, generators: tuple[sp.Symbol, ...]) -> sp.Expr:
             *(sp.exp(term) for term in sp.Add.make_args(sp.expand(exponent)))
         ),
     )
-    return _joined_exponentials(sp.factor_terms(sp.together(split)))
+    return _joined_exponentials(_over_common_denominator(split))
+
+
+def _over_common_denominator(expression: sp.Expr) -> sp.Expr:
+    """`expression` as one quotient, with the content of each side pulled out.
+
+    A numeric denominator stays apart from the sum it divides, which sympy would
+    otherwise distribute back over the terms: `x^2/4 + 3` is `(x^2 + 12)/4`.
+    """
+    numerator, denominator = sp.fraction(sp.together(expression))
+    top, bottom = sp.factor_terms(numerator), sp.factor_terms(denominator)
+    coefficient, rest = bottom.as_coeff_Mul()
+    return _keep_coeff(1 / coefficient, top / rest)
 
 
 def _is_exponential(factor: sp.Basic) -> bool:
@@ -186,7 +199,8 @@ def _squarefree(expression: sp.Expr, generators: tuple[sp.Symbol, ...]) -> sp.Ex
     top = sp.sqf(numerator, *generators)
     if denominator == 1:
         return top
-    return top / sp.sqf(denominator, *generators)
+    coefficient, rest = sp.sqf(denominator, *generators).as_coeff_Mul()
+    return _keep_coeff(1 / coefficient, top / rest)
 
 
 def _rational(expression: sp.Expr, generators: tuple[sp.Symbol, ...]) -> sp.Expr:

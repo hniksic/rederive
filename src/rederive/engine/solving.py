@@ -526,7 +526,7 @@ def _roots_unwritten_in_root(residual: sp.Basic, variable: sp.Symbol) -> bool:
         return False
     root = sp.Dummy()
     order = math.lcm(*(int(exponent.q) for exponent in exponents))
-    expanded = sp.expand(residual)
+    expanded = sp.expand(sp.fraction(sp.together(residual))[0])
     powers = {
         part: root ** (part.exp * order)
         for part in expanded.atoms(sp.Pow)

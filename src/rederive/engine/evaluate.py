@@ -52,6 +52,7 @@ from functools import cached_property
 
 import sympy as sp
 from sympy.core.function import AppliedUndef, UndefinedFunction
+from sympy.core.mul import _keep_coeff
 from sympy.core.relational import Relational
 
 from rederive.engine.approximation import carried
@@ -148,6 +149,9 @@ class Environment:
     `simplify` simplifies the argument of a built-in in `_SIMPLIFIED_ARGUMENTS`;
     without it the argument is taken as evaluated.
 
+    `values` holds the values of assigned variables worked out so far, shared by the
+    whole evaluation (see `_assigned`).
+
     `writing` means only substitute names, used to display an undecidable
     conditional: no call is entered and no test decided, so branches stay as written.
     `defining` means a definition is being shown, so the calls its body enters perform
@@ -171,6 +175,7 @@ class Environment:
     writing: bool = False
     defining: bool = False
     suspended: dict[sp.Basic, type] = field(default_factory=dict, compare=False)
+    values: dict[tuple, sp.Basic] = field(default_factory=dict, compare=False)
 
     def decides(self, test: sp.Basic) -> bool | None:
         """Whether `test` holds, or None if undecided (including if deciding raises)."""
@@ -456,13 +461,57 @@ class _Evaluator(Converter):
         if name not in env.bound and name not in env.expanding:
             assigned = env.context.assigned(name)
             if assigned is not None:
-                deeper = replace(env, bindings={}, expanding=env.expanding | {name})
-                return self.within(deeper).convert(assigned)
+                return self._assigned(name, assigned)
         if not env.writing:
             digits = _digits_setting(name, env.context)
             if digits is not None:
                 return digits
         return self._written(super()._name(node))
+
+    def _assigned(self, name: str, assigned: Node) -> sp.Basic:
+        """The value of assigned variable `name`, `assigned` evaluated.
+
+        A value is worked out once for a given environment and reused: an iteration
+        step may refer to a chain of assigned variables, each several times, so
+        evaluating each reference anew is exponential in the length of the chain. An
+        assignment performed meanwhile, or a different environment, means evaluating
+        it again, and a value that itself assigns or defines is never reused.
+        """
+        env = self.env
+        performed = self.context.performed.nodes
+        try:
+            if _defines(assigned):
+                raise TypeError("performs when evaluated")
+            key = (
+                name,
+                id(assigned),
+                id(self.context),
+                len(performed),
+                env.tested,
+                env.bound,
+                env.parameters,
+                env.expanding,
+                env.labels,
+                env.depth,
+                env.writing,
+                env.defining,
+                tuple(env.written.items()),
+                frozenset(env.supplied),
+                id(env.decide),
+                id(env.work_out),
+                id(env.command),
+                id(env.simplify),
+            )
+            hash(key)
+        except TypeError:
+            key = None
+        if key is not None and key in env.values:
+            return env.values[key]
+        deeper = replace(env, bindings={}, expanding=env.expanding | {name})
+        value = self.within(deeper).convert(assigned)
+        if key is not None and len(self.context.performed.nodes) == key[3]:
+            env.values[key] = value
+        return value
 
     def _written(self, symbol: sp.Basic) -> sp.Basic:
         return self.env.written.get(symbol, symbol)
@@ -668,14 +717,24 @@ class _Evaluator(Converter):
 
     def _simplified(self, values: list[sp.Basic]) -> list[sp.Basic]:
         """`values` simplified, as Derive simplifies a built-in's arguments, where
-        `Environment.simplify` is supplied. A value that fails to simplify is kept."""
+        `Environment.simplify` is supplied. A value that fails to simplify is kept.
+
+        A number dividing a sum, as `FACTOR` writes `(x^2 + 12)/4`, is already in its
+        simplified form; only the sum is simplified, so `DENOMINATOR` still sees the 4.
+        """
         simplify = self.env.simplify
         if simplify is None or self.env.writing:
             return values
         simplified = []
         for value in values:
             try:
-                simplified.append(simplify(value, self.context))
+                coefficient, rest = value.as_coeff_Mul()
+                if value.is_Mul and coefficient.is_Rational and rest.is_Add:
+                    simplified.append(
+                        _keep_coeff(coefficient, simplify(rest, self.context))
+                    )
+                else:
+                    simplified.append(simplify(value, self.context))
             except Exception:
                 simplified.append(value)
         return simplified
@@ -1122,7 +1181,7 @@ class _Evaluator(Converter):
         test_node, *branches = arguments
         performed: dict[str, sp.Basic] = {}
         test = _value_of(_Evaluator(self.env, performed).convert(test_node))
-        verdict = self.env.decides(test)
+        verdict = self.env.decides(_numeric_test(test, self.context))
         env = self.env
         if performed:
             env = replace(
@@ -1828,13 +1887,42 @@ def _refers_to(value: Node | None, name: str) -> bool:
     return any(_refers_to(child, name) for child in value.children)
 
 
+def _numeric_test(test: sp.Basic, context: Context) -> sp.Basic:
+    """Under Approximate, a relation between numbers with each side approximated.
+
+    The user asked for numbers, so a test between them is decided by them, as Derive
+    does in floating point: an exact decision of `ABS(a + SQRT(d)) >= ABS(a -
+    SQRT(d))` for complex radicals takes seconds.
+    """
+    if (
+        context.precision is not Precision.APPROXIMATE
+        or not isinstance(test, Relational)
+        or not all(isinstance(side, sp.Expr) and side.is_number for side in test.args)
+    ):
+        return test
+    try:
+        return test.func(*(carried(side, context) for side in test.args))
+    except Exception:
+        return test
+
+
+def _defines(node: Node) -> bool:
+    """Whether `node` contains an assignment or a definition."""
+    if node.kind in (Kind.ASSIGN, Kind.FUNDEF):
+        return True
+    return any(_defines(child) for child in node.children)
+
+
 def _assigned_value(value: sp.Basic) -> sp.Basic:
     """The value of an assignment used as an operand or argument, else `value`.
 
     An assignment within an expression stands for the value it assigns: `DIF(c := x^2,
-    x)` is `2*x`, and `2*(c := 3)` is 6.
+    x)` is `2*x`, and `2*(c := 3)` is 6. A definition stands for its body likewise:
+    `DIF(F(u) := p/u, u)` is `-p/u^2`.
     """
     if isinstance(value, Assign) and len(value.args) == 3:
+        return value.args[2]
+    if isinstance(value, FunDef) and len(value.args) == 3:
         return value.args[2]
     return value
 

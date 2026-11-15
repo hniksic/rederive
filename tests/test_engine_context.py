@@ -239,6 +239,20 @@ def test_an_assignment_is_followed_as_far_as_it_goes():
     assert written("u", context) == same_as("3")
 
 
+def test_a_value_used_many_times_is_worked_out_once():
+    # Each link refers to the one before three times: 3^30 evaluations, one per
+    # reference, would never finish.
+    state = ParseState()
+    names = [f"v_{k}" for k in range(31)]
+    for name in names:
+        state.declare(VariableDeclaration(name, True))
+    assignments = {names[0]: parse("w", state)}
+    for before, name in zip(names, names[1:]):
+        assignments[name] = parse(f"{before} + {before} + {before}", state)
+    context = Context(assignments=assignments)
+    assert written(names[-1], context, state) == same_as(f"{3**30}*w", state)
+
+
 def test_a_variable_that_reaches_itself_is_expanded_once_and_left():
     # `pn := pn + 1` is legitimate. It must neither loop forever nor drop the name it
     # can't expand again.

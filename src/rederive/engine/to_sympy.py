@@ -1734,8 +1734,11 @@ def power(base: sp.Basic, exponent: sp.Basic) -> sp.Basic:
 
     `[[1, 1], [0, 1]]^n` is `[[1, n], [0, 1]]`, and `^-1` is the inverse. A singular
     matrix's inverse is kept in the head used for symbolic matrices, which prints as
-    `u^-1`. Only square matrices have powers, and a vector's power isn't elementwise
-    either, so any other vector's power stands.
+    `u^-1`. Only square matrices have matrix powers.
+
+    A vector's integer power is a power of its dot product with itself, times the
+    vector for an odd exponent: `[1, 2]^2` is 5, `[1, 2]^3` is `[5, 10]` and
+    `[1, 2]^-1` is `[1/5, 2/5]`. Any other vector's power stands.
 
     A set's power to a positive integer is the Cartesian product of that many copies:
     `{1, 2}^2` is `{[1, 1], [1, 2], [2, 1], [2, 2]}`.
@@ -1747,6 +1750,15 @@ def power(base: sp.Basic, exponent: sp.Basic) -> sp.Basic:
     if _symbolic_matrix(base):
         return _matrix_power(base, exponent)
     if isinstance(base, Vector):
+        if (
+            isinstance(exponent, sp.Integer)
+            and base.args
+            and not any(isinstance(element, Vector) for element in base.args)
+        ):
+            square = dotted(base, base)
+            if exponent % 2 == 0:
+                return power(square, exponent // 2)
+            return multiplied([power(square, (exponent - 1) // 2), base])
         matrix = matrix_of(base)
         if matrix is None or not matrix.is_square:
             return Power(base, exponent)
@@ -1922,6 +1934,26 @@ def _direct(func: Callable[..., sp.Basic]) -> Handler:
         if any(_symbolic_matrix(argument) for argument in args):
             raise TypeError("not a scalar")
         return func(*args)
+
+    return handler
+
+
+def _extremum(func: Callable[..., sp.Basic]) -> Handler:
+    """`MAX` or `MIN`, of its arguments or of the elements of a single vector.
+
+    `MAX([3, 1, 2])` is 3, and a matrix gives the extremum of each row:
+    `MAX([[1, 2], [3, 4]])` is `[2, 4]`.
+    """
+    plain = _direct(func)
+
+    def handler(conv: Converter, args: list) -> sp.Basic:
+        if len(args) == 1 and isinstance(args[0], Vector) and args[0].args:
+            elements = args[0].args
+            if all(isinstance(element, Vector) for element in elements):
+                return Vector(*(handler(conv, [element]) for element in elements))
+            if not any(isinstance(element, Vector) for element in elements):
+                return plain(conv, list(elements))
+        return plain(conv, args)
 
     return handler
 
@@ -2649,12 +2681,16 @@ def _terms(conv: Converter, args: list) -> sp.Basic:
 
     A vector distributes, each element giving a row, so `TERMS` of a vector of sums is a
     matrix if they have equal numbers of terms.
+
+    Zero is the empty sum, so `TERMS(0)` is `[]`, as `FACTORS(1)` is.
     """
     value = _one(args)
     if isinstance(value, Vector):
         return mapped(value, lambda element: _terms(conv, [element]))
     if not isinstance(value, sp.Expr):
         raise TypeError("no terms")
+    if value == 0:
+        return Vector()
     return Vector(*value.as_ordered_terms(order="grlex"))
 
 
@@ -3878,8 +3914,44 @@ def iterated(
         return sequence[-1]
     came_round = _as_shown(sequence[-1], conv.context) == _as_shown(
         sequence[-2], conv.context
-    )
+    ) or _converging(sequence, conv.context)
     return sequence[-1] if came_round else sp.nan
+
+
+def _converging(sequence: list[sp.Basic], context: Context) -> bool:
+    """Whether approximate iterates that came round to an earlier one are converging,
+    the cycle being one in the last digit shown only.
+
+    A limit near a rounding boundary shows as two values in turn: with four digits,
+    `ITERATES(-0.5*SIN(t) + pi/3, t, pi/3)` ends `0.7181, 0.7182, 0.7181`. Unlike a
+    true cycle, the steps between the carried values keep shrinking.
+    """
+    if context.precision is not Precision.APPROXIMATE or len(sequence) < 3:
+        return False
+    values = [_parts_of(value) for value in sequence[-3:]]
+    if any(part is None for part in values) or len({len(v) for v in values}) != 1:
+        return False
+    first, second, third = values
+    before = max(abs(a - b) for a, b in zip(first, second))
+    after = max(abs(a - b) for a, b in zip(second, third))
+    size = max(abs(part) for part in third)
+    tolerance = size * sp.Rational(10) ** (1 - context.precision_digits)
+    return after <= tolerance and after < sp.Rational(9, 10) * before
+
+
+def _parts_of(value: sp.Basic) -> list[sp.Basic] | None:
+    """The real and imaginary parts of a number, or of each element of a vector of
+    them, flattened; None if `value` isn't one."""
+    elements = value.args if isinstance(value, Vector) else (value,)
+    parts = []
+    for element in elements:
+        if isinstance(element, Vector) or not element.is_number:
+            return None
+        real, imaginary = element.as_real_imag()
+        if not (real.is_Number and imaginary.is_Number):
+            return None
+        parts += [real, imaginary]
+    return parts
 
 
 def _substituted(body: sp.Basic) -> Step:
@@ -3954,7 +4026,11 @@ def _until_repeated(
     iterates = [_state(names, values)]
     shown = {_as_shown(iterates[-1], conv.context)}
     for count in range(_RATIONAL_ITERATIONS):
-        if count >= _ITERATIONS and not all(value.is_Rational for value in values):
+        if count >= _ITERATIONS and not all(_rational(value) for value in values):
+            break
+        if count >= _VECTOR_ITERATIONS and (
+            len(values) > 1 or isinstance(values[0], Vector)
+        ):
             break
         values = _updated(conv, step, names, values)
         iterates.append(_state(names, values))
@@ -3970,14 +4046,24 @@ def _until_repeated(
 #: Limits for an uncounted iteration: the number of steps and the size of an iterate.
 #: Both are needed, since a non-repeating sequence usually blows up faster than a step
 #: limit catches (repeated squaring passes 30000 digits in 17 steps). Converging
-#: iterations come nowhere near either. An iteration over exact numbers costs little
-#: per step, whose numbers the size limit bounds, so it may run longer, settling as
-#: slowly as halving `10^100` down to 0 does; a symbolic iterate can grow by a level of
+#: iterations come nowhere near either. An iteration over exact numbers, or vectors of
+#: them, costs little per step, whose numbers the size limit bounds, so it may run
+#: longer, settling as slowly as halving `10^100` down to 0 does (a modular power by
+#: repeated squaring keeps a vector of three, each step costing more, so vectors stop
+#: sooner); a symbolic iterate can grow by a level of
 #: nesting every step, making each step slower than the last.
 _ITERATIONS = 100
 _RATIONAL_ITERATIONS = 10_000
+_VECTOR_ITERATIONS = 1000
 _ITERATE_BITS = 100_000
 _ITERATE_OPERATIONS = 1000
+
+
+def _rational(value: sp.Basic) -> bool:
+    """Whether `value` is a rational number or a vector of them, nested or not."""
+    if isinstance(value, Vector):
+        return all(_rational(element) for element in value.args)
+    return bool(value.is_Rational)
 
 
 def outsized(value: sp.Basic) -> bool:
@@ -4314,10 +4400,17 @@ def _characteristic_polynomial(conv: Converter, args: list) -> sp.Basic:
     The polynomial is computed over a dummy and `v` substituted afterwards, because
     `Poly` strips its generator's assumptions, and a `v` without its declared domain
     wouldn't cancel against the user's `v`.
+
+    `v` may be any value, at which the polynomial is taken: `CHARPOLY(A, 0)` is
+    `DET(A)`.
     """
-    matrix, variable = _matrix_and_variable(conv, args)
-    polynomial = matrix.charpoly(sp.Dummy()).as_expr(variable)
-    return polynomial if matrix.rows % 2 == 0 else -polynomial
+    matrix, *rest = args
+    value = _one(rest) if rest else conv.symbol("w")
+    if isinstance(value, (Vector, SetOf)):
+        raise TypeError("not a scalar")
+    matrix = _linear(matrix)
+    expression = matrix.charpoly(sp.Dummy()).as_expr(value)
+    return expression if matrix.rows % 2 == 0 else -expression
 
 
 def _eigenvalues(conv: Converter, args: list) -> sp.Basic:
@@ -4650,6 +4743,8 @@ FUNCTIONS: dict[str, Handler] = {
     **{name: _arctrig(func) for name, func in _INVERSE_TRIGONOMETRIC.items()},
     **{name: _direct(func) for name, func in _DIRECT.items()},
     "SQRT": _sqrt,
+    "MAX": _extremum(sp.Max),
+    "MIN": _extremum(sp.Min),
     "ATAN": _atan,
     "ACOT": _acot,
     "PHASE": _phase,

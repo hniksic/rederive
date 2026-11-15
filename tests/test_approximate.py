@@ -465,6 +465,24 @@ def test_an_iteration_with_a_symbolic_count_runs_until_it_repeats():
     assert simp(text, APPROXIMATE) == "[2, 1.75, 1.73214, 1.73205, 1.73205]"
 
 
+def test_an_iteration_settling_on_a_rounding_boundary_has_converged():
+    # At four digits the iterates end `0.7181, 0.7182, 0.7181`; the steps between them
+    # shrink, so this is the limit seen through rounding, not a cycle.
+    four = Context().with_precision(Precision.APPROXIMATE, 4)
+    assert simp("ITERATE(-0.5*SIN(t) + pi/3, t, pi/3)", four) == "0.7181"
+    assert simp("ITERATE(1/x, x, 1.0001)", four) == "?"
+
+
+def test_a_test_between_numbers_is_decided_on_their_approximations():
+    # Muller's method picks the root of larger magnitude: decided exactly, the complex
+    # radicals took seconds a step.
+    text = (
+        "IF(ABS(27/2 + SQRT(2993/16 - 22*#i)) >= ABS(27/2 - SQRT(2993/16 - 22*#i)),"
+        " 1, 2)"
+    )
+    assert simp(text, APPROXIMATE) == "1"
+
+
 def test_a_recursion_goes_numeric_step_by_step():
     # The arithmetic-geometric mean of 1 and 2 is 1.4567910310...; computed exactly,
     # each level nests the square roots of the last.

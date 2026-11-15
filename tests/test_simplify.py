@@ -1690,6 +1690,11 @@ def test_an_assignment_within_an_expression_stands_for_its_value():
     assert simp("DIF(c := x^2, x)") == "2*x"
 
 
+def test_a_definition_within_an_expression_stands_for_its_body():
+    assert simp("DIF(F(u) := p/u, u)") == "-p/u^2"
+    assert simp("2*(F(x) := x^2)") == "2*x^2"
+
+
 #: Calls to functions declared without a body. Each must come back unchanged, so
 #: simplifying a worksheet containing one doesn't damage it.
 OPAQUE = [

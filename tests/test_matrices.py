@@ -26,6 +26,14 @@ def test_a_symbolic_power_of_a_matrix_is_its_closed_form():
     assert simp("[[1, 1], [0, 1]]^n") == "[[1, n], [0, 1]]"
 
 
+def test_an_integer_power_of_a_vector_is_a_power_of_its_dot_square():
+    # An odd power keeps one factor of the vector, so `^-1` divides it by its square.
+    assert simp("[x, y + 2]^2 - 9") == "x^2 + y^2 + 4*y - 5"
+    assert simp("[1, 2]^3") == "[5, 10]"
+    assert simp("[1, 2]^-1") == "[1/5, 2/5]"
+    assert simp("[[1, 2]]^2") == "[[1, 2]]^2"
+
+
 def test_a_singular_matrix_inverse_comes_back_unsimplified():
     assert simp("[[1, 2], [2, 4]]^-1") == "[[1, 2], [2, 4]]^-1"
     assert simp("[[1, 2], [3, 4]]^-1") == "[[-2, 1], [3/2, -1/2]]"
@@ -42,6 +50,10 @@ VECTORS = [
     ("DIMENSION([1, 2, 3])", "3"),
     ("[[1, 2], [3, 4]]`", "[[1, 3], [2, 4]]"),
     ("SUM([1, 2, 3])", "6"),
+    # Like `SUM`, `MAX` and `MIN` of one vector take its elements; of a matrix, each
+    # row's.
+    ("MAX([3, 1, 2])", "3"),
+    ("MIN([[1, 2], [3, 0]])", "[1, 0]"),
     ("[[1, 2], [3, 4]] . [[a], [b]]", "[[a + 2*b], [3*a + 4*b]]"),
     # A flat vector right of a matrix acts as a column and the answer is flat again; a
     # written column stays a column.
@@ -115,7 +127,8 @@ VECTORS = [
     ("[[1, 2, 3], [4, 5, 6]]^(-1)", "[[1, 2, 3], [4, 5, 6]]^(-1)"),
     ("[[1, 2, 3], [4, 5, 6]]^2", "[[1, 2, 3], [4, 5, 6]]^2"),
     ("[[1, 2, 3], [4, 5, 6]]^n", "[[1, 2, 3], [4, 5, 6]]^n"),
-    ("[1, 2]^2", "[1, 2]^2"),
+    # A vector's power is one of its dot square (see below).
+    ("[1, 2]^2", "5"),
     ("[1, 2]/[3, 4]", "[1, 2]/[3, 4]"),
     ("2/[1, 2]", "2/[1, 2]"),
     ("[[1, 2], [3, 4]]/[1, 2]", "[[1, 2], [3, 4]]/[1, 2]"),
@@ -356,6 +369,9 @@ LINEAR_ALGEBRA = [
     # The definition is `DET(A - z*IDENTITY_MATRIX(3))`, so in odd dimension the cube is
     # negated; a sum of more than two terms keeps the leading minus.
     ("CHARPOLY([[1,2,3],[4,5,6],[7,8,10]],z)", "-z^3 + 16*z^2 + 12*z - 3"),
+    # Any value may stand for the variable: at 0 the polynomial is the determinant.
+    ("CHARPOLY([[-4,1],[-5,0]],0)", "5"),
+    ("CHARPOLY([[1,2],[3,4]],x + 1)", "x^2 - 3*x - 6"),
     # Eigenvalues are given as solved equations: the manual's example, and a 2 x 2
     # needing the quadratic formula. For a pair differing only in a radical's sign,
     # Derive lists the sum first; this follows sympy's order, which reverses that case
@@ -639,6 +655,10 @@ ITERATION = [
     ("ITERATE(1/x, x, 2, n)", "?"),
     # Exact numbers may take hundreds of steps to settle.
     ("ITERATE(FLOOR(x, 2), x, 10^100)", "0"),
+    # So may vectors of them: a binary power `[result, square, exponent]` halves the
+    # exponent at each step.
+    ("ITERATE([IF(MOD(v SUB 3, 2) = 1, v SUB 1*v SUB 2, v SUB 1), v SUB 2^2, "
+     "FLOOR(v SUB 3, 2)], v, [1, 1, 2^200]) SUB 3", "0"),
     # An uncounted iteration that never repeats stays unevaluated (Derive runs until
     # memory runs out), whether its iterates grow in size, in digits (Newton's method
     # for SQRT(3), exactly) or in neither.
@@ -748,6 +768,8 @@ STRUCTURE = [
     # A non-sum has one term, and a vector distributes.
     ("TERMS(x*y)", "[x*y]"),
     ("TERMS([x + 1, y + 2])", "[[x, 1], [y, 2]]"),
+    # Zero is the empty sum, so a sum over its terms is zero again.
+    ("TERMS(0)", "[]"),
     # Most main first: `x`, `y`, `z` from the order list, then the rest alphabetically,
     # the same order other commands use.
     ("VARIABLES(x^2 + a*y)", "[x, y, a]"),

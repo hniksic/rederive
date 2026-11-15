@@ -449,6 +449,12 @@ def test_a_factored_argument_is_simplified_before_its_denominator_is_read():
     assert simp(f"NUMERATOR({factored})", context) == "x^(-2*k)*z^2 - v^2 + 1/4"
 
 
+def test_the_denominator_of_a_factored_quotient_by_a_number_is_that_number():
+    # Polynomial arithmetic mod p clears a remainder's denominator so.
+    assert simp("DENOMINATOR(FACTOR(x^2/4 + 3, Trivial, x))") == "4"
+    assert simp("NUMERATOR(FACTOR(x^2/4 + 3))") == "x^2 + 12"
+
+
 def test_a_reciprocal_symbolic_power_is_multiplied_into_a_sum_it_cancels_in():
     context = declared("k :epsilon Real (0, inf)")
     assert simp("x^(-k)*(x^k + z)", context) == "x^(-k)*z + 1"

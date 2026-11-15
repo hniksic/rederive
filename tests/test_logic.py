@@ -310,6 +310,9 @@ CONDITIONALS = [
     ("IF(x < 1 AND x > 3, a, b)", "b", None),
     ("IF((x^2 + x^2*y^2)/(x^2*y) = (1 + y^2)/y, 1, 2, 3)", "1", None),
     ("IF(DIF((x + x*y)/x, x), 1, 2, 3)", "1", None),
+    # Complex numbers are compared multiplied out.
+    ("IF((2 + 3*#i)^2 = 1, 1, 2)", "2", None),
+    ("IF((2 + 3*#i)^2 = -5 + 12*#i, 1, 2)", "1", None),
 ]
 
 

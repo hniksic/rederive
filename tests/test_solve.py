@@ -183,6 +183,8 @@ def test_a_polynomial_in_a_root_without_radical_roots_is_left_unsolved_at_once()
     # In `p^(1/10)` it is of degree 17, irreducible; Approximate searches for the root.
     text = "7*p^(17/10) - 225000*p^(2/5) = 2625000"
     assert sol(text, ("p",)) == ["7*p^(17/10) - 225000*p^(2/5) - 2625000 = 0"]
+    over = "80*(7*p^(17/10) - 225000*p^(2/5) - 2625000)/p^2"
+    assert len(sol(over, ("p",))) == 1
     assert sol("x^(2/3) - 2*x^(1/3) - 35 = 0", ("x",)) == ["x = 343"]
 
 

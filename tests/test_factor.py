@@ -47,6 +47,8 @@ AMOUNTS = [
     ("3 - 1/(x + 2)", TRIVIAL, "(3*x + 5)/(x + 2)"),
     ("6*x^2 + 10*x^3/y", TRIVIAL, "2*x^2*(5*x + 3*y)/y"),
     ("2*x^3 - 12*x^2 + 18*x", TRIVIAL, "2*x*(x^2 - 6*x + 9)"),
+    # A numeric denominator stays under the sum it divides.
+    ("x^2/4 + 3", TRIVIAL, "(x^2 + 12)/4"),
     # Exponentials are content as powers of variables are, with the least exponent in
     # each term of the exponents taken out. ODE.MTH's `BARE` relies on it.
     ("a*#e^(2*t) - #e^(2*t - b)", TRIVIAL, "(a*#e^b - 1)*#e^(2*t - b)"),
@@ -55,6 +57,7 @@ AMOUNTS = [
     # Squarefree also splits off perfect powers, and stops there.
     ("2*x^3 - 12*x^2 + 18*x", SQUAREFREE, "2*x*(x - 3)^2"),
     ("x^4 + 2*x^3 - 3*x^2 - 8*x - 4", SQUAREFREE, "(x + 1)^2*(x^2 - 4)"),
+    ("x^2/4 + x/3 + 1", SQUAREFREE, "(3*x^2 + 4*x + 12)/12"),
     # Rational also splits products of sums.
     ("x^4 + 2*x^3 - 3*x^2 - 8*x - 4", RATIONAL, "(x + 2)*(x - 2)*(x + 1)^2"),
     ("4*x^2 - 9", RATIONAL, "(2*x + 3)*(2*x - 3)"),
