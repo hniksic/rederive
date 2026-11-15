@@ -335,6 +335,34 @@ def test_an_arc_or_logarithm_times_a_rational_function_is_integrated_by_parts(
     assert simp(text) == expected
 
 
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        (
+            "INT(LN(ABS(x^2 - a^2)), x)",
+            "x*LN(ABS(a^2 - x^2)) - a*LN(x - a) + a*LN(x + a) - 2*x",
+        ),
+        ("INT(CI(x), x)", "x*CI(x) - SIN(x)"),
+        (
+            "INT(COS(5*x)*CI(2*x), x)",
+            "CI(2*x)*SIN(5*x)/5 - SI(3*x)/10 - SI(7*x)/10",
+        ),
+    ],
+)
+def test_a_logarithm_of_an_abs_or_a_special_function_is_integrated_by_parts(
+    text, expected
+):
+    """The derivative of `LN(ABS(u))` is `u'/u`, and that of `CI(2*x)` is `COS(2*x)/x`,
+    so the integral left by parts is elementary or in `SI`."""
+    assert simp(text) == expected
+
+
+def test_a_quotient_of_undefined_functions_integrates_to_logarithms():
+    state = declaring("F", "G")
+    text = "INT((DIF(F(x), x)*G(x) - F(x)*DIF(G(x), x))/(F(x)^2 - G(x)^2), x)"
+    assert simp(text, state=state) == "LN(F(x) - G(x))/2 - LN(F(x) + G(x))/2"
+
+
 def test_an_even_integrand_over_a_positive_variable_is_kept_where_proved_odd():
     """An antiderivative of an even integrand found for positive `x` also holds for
     negative `x` if it's odd.
@@ -487,6 +515,25 @@ def test_an_elliptic_integral_is_left_without_a_search():
     ],
 )
 def test_a_radicand_over_one_denominator_is_taken_apart(text, expected):
+    assert simp(text) == expected
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        ("INT(IF(x < 0, -x, x), x)", "x*ABS(x)/2"),
+        ("INT(IF(x < 0, -x, x), x, -1, 2)", "5/2"),
+        ("INT(IF(1 <= t <= 2, COS(t), 0), t, 0, 3)", "SIN(2) - SIN(1)"),
+        (
+            "INT(IF(1 <= t AND t <= 2, 1, 0)*COS(t), t, 0, u)",
+            "IF(u < 0, 0, SIN(-ABS(u - 2)/2 + u/2 + 1) - SIN(-ABS(u - 1)/2 + u/2 "
+            "+ 1/2))",
+        ),
+    ],
+)
+def test_a_function_defined_by_cases_is_integrated_over_its_steps(text, expected):
+    """A test is an indicator written in signs, as `CHI` is, which differs from the
+    conditional only on the test's boundary."""
     assert simp(text) == expected
 
 

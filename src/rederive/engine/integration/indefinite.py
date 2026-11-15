@@ -27,6 +27,7 @@ from functools import lru_cache
 from typing import NamedTuple
 
 import sympy as sp
+from sympy.core.function import AppliedUndef
 from sympy.functions.elementary.hyperbolic import HyperbolicFunction
 from sympy.functions.elementary.trigonometric import TrigonometricFunction
 from sympy.integrals.manualintegrate import manualintegrate
@@ -1223,6 +1224,56 @@ def _squares_as_complements(
 _substituting: ContextVar[bool] = ContextVar("_substituting", default=False)
 
 
+def _as_logarithms(head: sp.Basic) -> Candidate | None:
+    """An antiderivative of a quotient in functions with no definition, as a sum of
+    constant multiples of the logarithms of its denominator's factors, or None.
+
+    `INT((F'(x)*G(x) - F(x)*G'(x))/(F(x)^2 - G(x)^2), x)` is `LN(F(x) - G(x))/2 -
+    LN(F(x) + G(x))/2`: the multiples are found by matching the derivative to the
+    integrand term by term, the functions and their derivatives taken as unknowns.
+    Sympy's integrators search such integrands for a long time in vain.
+    """
+    if len(head.limits) != 1 or len(head.limits[0]) != 1:
+        return None
+    variable, integrand = head.limits[0][0], head.function
+    if not integrand.atoms(AppliedUndef):
+        return None
+    try:
+        denominator = sp.fraction(sp.together(integrand))[1]
+        _, factors = sp.factor_list(denominator)
+    except Exception:
+        return None
+    parts = [factor for factor, _ in factors if factor.has(variable)]
+    if any(m != 1 for factor, m in factors if factor.has(variable)):
+        return None
+    if not parts:
+        return None
+    weights = [sp.Dummy(f"c{i}") for i in range(len(parts))]
+    value = sp.Add(*(w * sp.log(part) for w, part in zip(weights, parts)))
+    mismatch = attempt(
+        sp.diff(value, variable) - integrand,
+        lambda e: sp.fraction(sp.together(e))[0],
+    )
+    if mismatch is None:
+        return None
+    unknowns = {
+        call: sp.Dummy("u")
+        for call in mismatch.atoms(AppliedUndef, sp.Derivative)
+        if call.has(variable)
+    }
+    written = sp.expand(mismatch.xreplace(unknowns))
+    if written.has(*unknowns):
+        return None
+    try:
+        terms = sp.Poly(written, *unknowns.values(), variable).coeffs()
+        found = sp.solve(terms, weights, dict=True)
+    except Exception:
+        return None
+    if len(found) != 1 or set(found[0]) != set(weights):
+        return None
+    return Candidate(value.xreplace(found[0]), trusted=True)
+
+
 def _by_products_as_sums(head: sp.Basic) -> Candidate | None:
     """An antiderivative of the integrand with products of sines and cosines rewritten as
     sums, or None.
@@ -1286,6 +1337,10 @@ _summing: ContextVar[bool] = ContextVar("_summing", default=False)
 #: is left to integrate.
 _PARTED = (sp.asin, sp.acos, sp.atan, sp.acot, sp.log)
 
+#: Special functions with elementary derivatives, integrated by parts against any
+#: factor with an antiderivative; see `_by_parts`.
+_SPECIAL = (sp.Ci, sp.Si, sp.Chi, sp.Shi, sp.Ei, sp.erf, sp.erfc, sp.erfi)
+
 
 def _by_parts_over_a_polynomial(head: sp.Basic) -> Candidate | None:
     """An antiderivative by parts, as in `_by_parts`, where `P` is a polynomial and the
@@ -1310,6 +1365,12 @@ def _by_parts(head: sp.Basic) -> Candidate | None:
     `INT(ASIN(x/a)/x^2, x)` unevaluated. Only one level deep. It runs after sympy, but
     before the retries only if sympy answered, since on `INT(LN(x + SQRT(x^2 + 1))/x^2,
     x)` the retries would search for seconds in vain.
+
+    The logarithm may be of an `ABS`, whose derivative is that of the logarithm of
+    its argument: `INT(LN(ABS(x^2 - 1)), x)`. And `f` may be a special function with an
+    elementary derivative, such as `CI` or `ERF`, when `P` is anything with an
+    antiderivative `V` and `V*f'` has one too: `INT(COS(5*x)*CI(2*x), x)` is
+    `SIN(5*x)*CI(2*x)/5 - SI(3*x)/10 - SI(7*x)/10`.
     """
     return _by_parts_with(head, over_a_polynomial=False)
 
@@ -1320,10 +1381,17 @@ def _by_parts_with(head: sp.Basic, over_a_polynomial: bool) -> Candidate | None:
     if _parting.get() or len(head.limits) != 1 or len(head.limits[0]) != 1:
         return None
     variable, integrand = head.limits[0][0], head.function
-    kernels = {call for call in integrand.atoms(*_PARTED) if call.has(variable)}
+    kernels = {
+        call
+        for call in integrand.atoms(*_PARTED, *_SPECIAL)
+        if call.has(variable)
+    }
     if len(kernels) != 1:
         return None
     (kernel,) = kernels
+    special = isinstance(kernel, _SPECIAL)
+    if special and over_a_polynomial:
+        return None
     marker = sp.Dummy("f")
     written = attempt(integrand, lambda f: sp.expand(f.xreplace({kernel: marker})))
     if written is None or written.has(kernel):
@@ -1332,20 +1400,42 @@ def _by_parts_with(head: sp.Basic, over_a_polynomial: bool) -> Candidate | None:
     if (
         factor == 0
         or factor.has(marker)
-        or factor.is_rational_function(variable) is not True
-        or rest.is_rational_function(variable) is not True
+        or (not special and factor.is_rational_function(variable) is not True)
+        or (not special and rest.is_rational_function(variable) is not True)
         or (over_a_polynomial and factor.is_polynomial(variable) is not True)
     ):
         return None
-    primitive = rational_antiderivative(factor, variable)
-    if primitive is None or primitive.is_rational_function(variable) is not True:
+    inside = kernel.args[0]
+    if isinstance(kernel, sp.log) and isinstance(inside, sp.Abs):
+        # `LN(ABS(u))` has the derivative `u'/u` wherever it is defined.
+        inside = inside.args[0]
+        slope = attempt(inside, lambda u: sp.cancel(sp.diff(u, variable) / u))
+    else:
+        slope = attempt(kernel, lambda f: sp.cancel(sp.together(sp.diff(f, variable))))
+    if slope is None:
         return None
-    slope = attempt(kernel, lambda f: sp.cancel(sp.together(sp.diff(f, variable))))
-    if slope is None or any(call.has(variable) for call in slope.atoms(sp.Function)):
-        return None
+    if special:
+        if slope.has(*_SPECIAL):
+            return None
+        token = _parting.set(True)
+        try:
+            primitive = integral(sp.Integral(factor, variable))
+        finally:
+            _parting.reset(token)
+        if primitive.has(sp.Integral):
+            return None
+    else:
+        if any(call.has(variable) for call in slope.atoms(sp.Function)):
+            return None
+        primitive = rational_antiderivative(factor, variable)
+        if primitive is None or primitive.is_rational_function(variable) is not True:
+            return None
     token = _parting.set(True)
     try:
-        left = [sp.Integral(forced(primitive * slope, sp.cancel), variable)]
+        product = primitive * slope
+        if not special:
+            product = forced(product, sp.cancel)
+        left = [sp.Integral(product, variable)]
         if rest != 0:
             left.append(sp.Integral(rest, variable))
         done = [integral(leftover) for leftover in left]
@@ -1576,7 +1666,10 @@ def _by_the_bounded_methods(head: sp.Basic) -> Candidate | None:
         tabled = _by_meijer_g(head)
         if tabled is not None:
             return Candidate(tabled, retries=_RETRIES)
-    return None if found is None else Candidate(found, retries=_RETRIES)
+    if found is None or (isinstance(found, sp.Integral) and not definite(head)):
+        # An antiderivative left whole, only rewritten, leaves the later methods to try.
+        return None
+    return Candidate(found, retries=_RETRIES)
 
 
 def _by_meijer_g(head: sp.Basic) -> sp.Basic | None:
@@ -2071,6 +2164,7 @@ _METHODS: tuple[Method, ...] = (
     _of_an_exponential_times_a_wave,
     _on_each_side_of_a_kink,
     _by_derivative_divides,
+    _as_logarithms,
     _by_products_as_sums,
     _by_parts_over_a_polynomial,
     _term_by_term,

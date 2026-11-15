@@ -1010,6 +1010,11 @@ def _worked_out(head: sp.Basic, context: Context) -> sp.Basic:
     if isinstance(head, Approx):
         return _approximation(head, context)
     if isinstance(head, sp.Integral):
+        stepped = _integral_by_steps(head)
+        if stepped is not None:
+            value = _worked_out(stepped, context)
+            if not value.has(sp.Integral):
+                return value
         if context.precision is Precision.APPROXIMATE and head.is_number:
             with numerically():
                 return integral(head)
@@ -1079,6 +1084,60 @@ def _by_cases(expression: sp.Basic, variables: set) -> sp.Basic | None:
 
 #: How deep `_by_cases` writes out conditionals in the branches of conditionals.
 _CASE_LEVELS = 4
+
+
+def _integral_by_steps(head: sp.Integral) -> sp.Integral | None:
+    """An integral over one variable of a function defined by cases, with each case
+    multiplied by the step functions of its test, or None.
+
+    `INT(IF(1 <= t <= 2, COS(t), 0), t, 0, u)` is `INT(COS(t)*(SIGN(t - 1) - SIGN(t -
+    2))/2, t, 0, u)`, as `CHI(1, t, 2)` writes the same indicator. The two integrands
+    differ only where a test is on its boundary, which no integral sees. Only tests
+    built from comparisons, by AND, OR and NOT, are written so, and a conditional must
+    have a value in every case.
+    """
+    if len(head.limits) != 1:
+        return None
+    variable = head.limits[0][0]
+    cases = _by_cases(head.function, {variable})
+    if cases is None:
+        return None
+
+    def indicator(test: sp.Basic) -> sp.Basic | None:
+        if isinstance(test, (sp.StrictLessThan, sp.LessThan)):
+            return (1 - sp.sign(test.lhs - test.rhs)) / 2
+        if isinstance(test, (sp.StrictGreaterThan, sp.GreaterThan)):
+            return (1 + sp.sign(test.lhs - test.rhs)) / 2
+        parts = [indicator(arg) for arg in test.args]
+        if any(part is None for part in parts):
+            return None
+        if isinstance(test, sp.And):
+            return sp.Mul(*parts)
+        if isinstance(test, sp.Or):
+            return 1 - sp.Mul(*(1 - part for part in parts))
+        if isinstance(test, sp.Not):
+            return 1 - parts[0]
+        return None
+
+    def stepped(piecewise: sp.Piecewise) -> sp.Basic | None:
+        total, outside = sp.S.Zero, sp.S.One
+        for value, test in piecewise.args:
+            if test is sp.true:
+                return total + outside * value
+            weight = indicator(test)
+            if weight is None:
+                return None
+            total += outside * weight * value
+            outside *= 1 - weight
+        return None
+
+    pieces = {part: stepped(part) for part in cases.atoms(sp.Piecewise)}
+    if not pieces or any(value is None for value in pieces.values()):
+        return None
+    function = attempt(cases, lambda c: sp.expand(c.xreplace(pieces)))
+    if function is None or function.has(sp.Piecewise):
+        return None
+    return head.func(function, *head.limits)
 
 
 def _constant_exponents(expression: sp.Basic) -> sp.Basic:
