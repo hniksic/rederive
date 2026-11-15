@@ -375,7 +375,14 @@ class Taylor(sp.Function):
         try:
             series = expression.series(variable, point, int(order) + 1).removeO()
         except Exception:
-            return self
+            series = None
+        if series is None:
+            # Sympy can't expand an integral with a variable limit, but its derivative
+            # is known: the integrand. There are no derivatives at infinity.
+            if expression.has(*_KINKED) or not point.is_finite:
+                return self
+            summed = _summed_from_derivatives(expression, variable, point, int(order))
+            return self if summed is None else summed
         if expression.has(*_KINKED) and not _from_both_sides(
             expression, variable, point, int(order), series
         ):

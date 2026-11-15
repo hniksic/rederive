@@ -1305,6 +1305,9 @@ def _summation(head: sp.Sum) -> sp.Basic:
         split = _split_over_sequence(head)
         if split is not None:
             return split
+        rational = _rational_series(head)
+        if rational is not None:
+            return rational
     value = attempt(head, lambda s: s.doit(deep=False))
     if value is None:
         return _undecided(head)
@@ -1317,6 +1320,56 @@ def _summation(head: sp.Sum) -> sp.Basic:
         entries = attempt(value, lambda v: v.func(*map(_factored, v.args)))
         return value if entries is None else entries
     return _factored(value)
+
+
+def _rational_series(head: sp.Sum) -> sp.Basic | None:
+    """An infinite sum of a rational function with rational coefficients and simple
+    rational poles, by the digamma function `psi`, or None if the summand isn't one.
+
+    In partial fractions such a summand is a sum of `c_i/(k - p_i)`, and if its
+    denominator has degree at least two more than its numerator, the series converges
+    absolutely and the `c_i` add up to zero. As `SUM(1/(k - p) - 1/(k - q), k, a, inf)`
+    is `psi(a - q) - psi(a - p)`, the sum is `-SUM(c_i*psi(a - p_i))`, and Gauss's
+    theorem writes `psi` at a rational point in logarithms and `pi`:
+    `SUM(1/((3*k + 1)*(3*k + 2)*(3*k + 3)), k, 0, inf)` is `SQRT(3)*pi/12 - LN(3)/4`.
+
+    Sympy splits such a sum into divergent parts, and for `SUM(1/(k*(2*k + 1)), k, 1,
+    inf)` answers `nan` from `inf - inf`. A pole in the range makes the sum undefined:
+    `SUM(1/(k^2 - 1), k, 0, inf)` is `?`.
+    """
+    if len(head.limits) != 1 or len(head.limits[0]) != 3:
+        return None
+    index, low, high = head.limits[0]
+    if high != sp.oo or not low.is_Integer or head.function.free_symbols != {index}:
+        return None
+    if not head.function.is_rational_function(index):
+        return None
+    try:
+        numerator, denominator = sp.fraction(sp.cancel(head.function))
+        top, bottom = sp.Poly(numerator, index), sp.Poly(denominator, index)
+    except sp.PolynomialError:
+        return None
+    if not (top.domain.is_QQ or top.domain.is_ZZ) or bottom.degree() < top.degree() + 2:
+        return None
+    if not (bottom.domain.is_QQ or bottom.domain.is_ZZ):
+        return None
+    poles = sp.roots(bottom)
+    if sum(poles.values()) != bottom.degree() or any(
+        times != 1 or not pole.is_Rational for pole, times in poles.items()
+    ):
+        return None
+    if any(pole.is_Integer and pole >= low for pole in poles):
+        return sp.nan
+    total = sp.S.Zero
+    for pole in poles:
+        residue = sp.cancel(numerator / sp.diff(denominator, index)).subs(index, pole)
+        total -= residue * sp.digamma(low - pole)
+    closed = attempt(
+        total, lambda t: sp.expand(sp.expand_log(sp.expand_func(t), force=True))
+    )
+    if closed is None or closed.has(sp.polygamma, sp.EulerGamma):
+        return None
+    return closed
 
 
 def _split_over_sequence(head: sp.Sum) -> sp.Basic | None:

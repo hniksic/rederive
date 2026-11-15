@@ -173,6 +173,11 @@ INFINITE_SUMS = [
     ("SUM(k^2/k!, k, 0, inf)", "2*#e"),
     # Zeta where the series converges, the sum where it may not.
     ("SUM(1/k^p, k, 1, inf)", "IF(p > 1, ZETA(p), SUM(k^(-p), k, 1, inf))"),
+    # A rational function with simple rational poles, by the digamma function; a pole
+    # among the terms leaves the sum undefined.
+    ("SUM(1/((3*k + 1)*(3*k + 2)*(3*k + 3)), k, 0, inf)", "SQRT(3)*pi/12 - LN(3)/4"),
+    ("SUM(1/(k*(2*k + 1)), k, 1, inf)", "2 - 2*LN(2)"),
+    ("SUM(1/(k^2 - 1), k, 0, inf)", "?"),
 ]
 
 
@@ -282,6 +287,16 @@ def test_a_taylor_polynomial_that_does_not_exist_is_undefined():
     assert simp("TAYLOR(SQRT(x), x, 0, 3)") == "?"
     assert simp("TAYLOR(LN(x), x, 0, 3)") == "?"
     assert simp("TAYLOR(1/x, x, 0, 3)") == "?"
+
+
+def test_a_taylor_polynomial_sympy_cannot_expand_is_built_from_derivatives():
+    """An integral with a variable limit has a known derivative, though sympy's series
+    expansion fails on it."""
+    answer = simp("TAYLOR(INT(F(y), y, 0, x) + G(x), x, d, 1)", state=declaring("F", "G"))
+    assert "TAYLOR" not in answer
+    assert "INT(F(y), y, 0, d)" in answer and "x*(G'(d) + F(d))" in answer
+    # There are no derivatives at infinity, so a call sympy can't expand there stands.
+    assert simp("TAYLOR(COMB(2*n, n)/4^n, n, inf, 1)").startswith("TAYLOR(")
 
 
 TAYLOR_AT_A_KINK_OR_A_JUMP = [
