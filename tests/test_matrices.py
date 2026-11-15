@@ -375,6 +375,13 @@ LINEAR_ALGEBRA = [
         "z = -4*SQRT(3)*COS(pi/3 - ACOS(3*SQRT(3)/8)/3)/3, "
         "z = 4*SQRT(3)*COS(ACOS(3*SQRT(3)/8)/3)/3]",
     ),
+    # A characteristic polynomial with a factor that has no radical roots gives the
+    # roots of the other factors, and that factor's equation.
+    (
+        "EIGENVALUES([[-a, -b, -c, -d, -e, 0], [1, 0, 0, 0, 0, 0], [0, 1, 0, 0, 0, 0], "
+        "[0, 0, 1, 0, 0, 0], [0, 0, 0, 1, 0, 0], [0, 0, 0, 0, 0, 3]], z)",
+        "[z = 3, z^5 + a*z^4 + b*z^3 + c*z^2 + d*z + e = 0]",
+    ),
     # A non-square matrix has no characteristic polynomial, and the quintic from the
     # manual's 5 x 5 exercise has no radical roots (the manual's reason exact eigenvalues
     # stop at 4 x 4). Both stay unevaluated.

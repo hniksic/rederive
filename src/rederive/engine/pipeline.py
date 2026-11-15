@@ -2836,7 +2836,9 @@ def _symmetries(expression: sp.Basic) -> sp.Basic:
 
     For real `u`, `SIGN(ATAN(u))` and `SIGN(u^3)` are `SIGN(u)`, and `COS(ABS(u))` is
     `COS(u)`. This must run before the definitions turn hyperbolics into exponentials,
-    hiding the symmetry. Arguments not known to be real are left alone.
+    hiding the symmetry. Arguments not known to be real are left alone, except that a
+    rational function of real variables is real wherever it is defined, so
+    `ABS(x/y)^2` is `x^2/y^2`.
     """
 
     def signed(head: sp.sign) -> sp.Basic:
@@ -2854,10 +2856,27 @@ def _symmetries(expression: sp.Basic) -> sp.Basic:
     for _ in range(8):
         rewritten = expression.replace(lambda e: isinstance(e, sp.sign), signed)
         rewritten = rewritten.replace(lambda e: isinstance(e, _EVEN), even)
+        rewritten = _even_magnitudes(rewritten)
         if rewritten == expression:
             break
         expression = rewritten
     return _paired_signs(expression)
+
+
+def _even_magnitudes(expression: sp.Basic) -> sp.Basic:
+    """Even powers of `ABS(u)` as powers of `u`, for `u` real wherever it is defined:
+    `ABS(x/y)^2` is `x^2/y^2`."""
+
+    def is_even_power(e: sp.Basic) -> bool:
+        return (
+            isinstance(e, sp.Pow)
+            and isinstance(e.base, sp.Abs)
+            and e.exp.is_integer is True
+            and e.exp.is_even is True
+            and _real_where_defined(e.base.args[0])
+        )
+
+    return expression.replace(is_even_power, lambda e: e.base.args[0] ** e.exp)
 
 
 def _same_sign(inner: sp.Basic) -> sp.Basic | None:
@@ -4580,7 +4599,13 @@ def _perfect_powers(expression: sp.Basic) -> sp.Basic:
     `x^2 + 1`), and a complex variable keeps its root. A call is a variable of the
     polynomial too: ODE.MTH's `SPECIAL_A_1` takes the root of `4*PHI(x)^2 -
     8*k*PHI(x) + 4*k^2`.
+
+    A quotient of such powers is taken over its denominator when that is an even power,
+    and so positive where it is defined: `SQRT(1/x^2 + 2/x + 1)` is `ABS(x + 1)/ABS(x)`.
+    Even powers of `ABS` are written out first, since a magnitude of a vector is a root
+    of a sum of them.
     """
+    expression = _even_magnitudes(expression)
     return expression.replace(_is_polynomial_root, _perfect_root, simultaneous=False)
 
 
@@ -4643,7 +4668,13 @@ def _is_polynomial_root(expression: sp.Basic) -> bool:
             (bool(expression.exp.is_Rational) and not expression.exp.is_Integer)
             or not expression.exp.is_number
         )
-        and isinstance(expression.base, sp.Add)
+        and (
+            isinstance(expression.base, sp.Add)
+            or (
+                isinstance(expression.base, sp.Mul)
+                and any(isinstance(factor, sp.Add) for factor in expression.base.args)
+            )
+        )
         and len(expression.base.args) <= _PERFECT_TERMS
         and bool(expression.base.free_symbols)
     )
@@ -4663,21 +4694,33 @@ def _perfect_root(power: sp.Pow, whatever: bool = False) -> sp.Basic:
         back = {root: s ** sp.Rational(1, q) for s, (root, q) in roots.items()}
         return taken.xreplace(back)
     base, exponent = power.args
-    try:
-        polynomial = sp.Poly(base)
-    except sp.PolynomialError:
+    numerator, denominator = sp.fraction(sp.together(base))
+    if denominator.is_number:
+        numerator, denominator = base, sp.S.One
+    top = _as_power(numerator)
+    bottom = _as_power(denominator)
+    if top is None or bottom is None:
         return power
-    if not polynomial.domain.is_QQ and not polynomial.domain.is_ZZ:
-        return power
-    if polynomial.total_degree() > _PERFECT_DEGREE:
-        return power
-    content, factors = sp.sqf_list(base)
-    multiple = reduce(gcd, (int(times) for _, times in factors), 0)
+    multiple = gcd(top[2], bottom[2])
+    content = top[0] / bottom[0]
     # Whatever the sign, a negative content's root is taken too: `SQRT(-a^2 + 2*a*b -
     # b^2)` is `#i*(a - b)`.
     if multiple < 2 or not (content.is_positive or whatever and content.is_nonzero):
         return power
-    root = sp.Mul(*(factor ** (times // multiple) for factor, times in factors))
+    upper = top[1] ** (top[2] // multiple)
+    lower = bottom[1] ** (bottom[2] // multiple)
+    if denominator != 1:
+        # The root of a quotient is the quotient of the roots where the denominator
+        # is positive, which an even power with a positive content is wherever it is
+        # nonzero: `SQRT((x + y)^2/z^2)` is `ABS(x + y)/ABS(z)`.
+        if multiple % 2 or not bottom[0].is_positive or not exponent.is_Rational:
+            return power
+        wholes = (upper**multiple, lower**multiple)
+        taken = content**exponent * wholes[0] ** exponent / wholes[1] ** exponent
+        if any(found.base in wholes for found in taken.atoms(sp.Pow)):
+            return power
+        return taken
+    root = upper
     whole = root**multiple
     if whatever:
         # Raised in one step, since sympy writes `((x - 1)^2)^(1/2)` as `ABS(x - 1)`
@@ -4688,6 +4731,28 @@ def _perfect_root(power: sp.Pow, whatever: bool = False) -> sp.Basic:
     if any(found.base == whole for found in taken.atoms(sp.Pow)):
         return power
     return taken
+
+
+def _as_power(polynomial: sp.Basic) -> tuple[sp.Basic, sp.Basic, int] | None:
+    """`(c, r, m)` where the polynomial `polynomial` is `c*r^m` for its square-free
+    factorization, `m` the largest such multiplicity, or None if it isn't a polynomial
+    with rational coefficients of a size worth factoring. A number is `(c, 1, 0)`."""
+    if polynomial.is_number:
+        return (polynomial, sp.S.One, 0) if polynomial.is_Rational else None
+    try:
+        terms = sp.Poly(polynomial)
+    except sp.PolynomialError:
+        return None
+    if not terms.domain.is_QQ and not terms.domain.is_ZZ:
+        return None
+    if terms.total_degree() > _PERFECT_DEGREE or len(terms.terms()) > _PERFECT_TERMS:
+        return None
+    content, factors = sp.sqf_list(polynomial)
+    multiple = reduce(gcd, (int(times) for _, times in factors), 0)
+    if multiple < 1:
+        return None
+    root = sp.Mul(*(factor ** (times // multiple) for factor, times in factors))
+    return content, root, multiple
 
 
 def _variable_roots(base: sp.Basic) -> dict[sp.Symbol, tuple[sp.Dummy, int]]:

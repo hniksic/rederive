@@ -1608,6 +1608,11 @@ PERFECT_POWERS = [
     # A symbolic exponent is taken over a root that is positive.
     ("(4*x + 4*SQRT(x) + 1)^(1/(2*SQRT(x) + 1))", "(2*SQRT(x) + 1)^(2/(2*SQRT(x) + 1))",
      POSITIVE_X),
+    # A quotient over an even power, which is positive where it is defined; even powers
+    # of ABS come out first, as in the magnitude of a vector.
+    ("SQRT(1/x^2 + 2/x + 1)", "ABS(x + 1)/ABS(x)", None),
+    ("ABS(x/y)^2", "x^2/y^2", None),
+    ("ABS([[a/(b*c), 1/c], [1/c, b/(a*c)]])", "(a^2 + b^2)/(ABS(a)*ABS(b)*ABS(c))", None),
     # The principal cube root of a negative cube is not real, and a negative radicand
     # or one that is not a perfect power has no root to take.
     ("(x^3 + 3*x^2 + 3*x + 1)^(1/3)", "(x^3 + 3*x^2 + 3*x + 1)^(1/3)", None),

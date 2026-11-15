@@ -33,6 +33,7 @@ from sympy.core.function import AppliedUndef
 from sympy.core.relational import Relational
 from sympy.functions.elementary.piecewise import ExprCondPair
 from sympy.logic.boolalg import Boolean, BooleanFunction
+from sympy.matrices.exceptions import MatrixError
 
 from rederive.engine.approximation import GUARD, approximated, rescaled, simplest
 from rederive.engine.context import (
@@ -4322,19 +4323,44 @@ def _eigenvalues(conv: Converter, args: list) -> sp.Basic:
     output; it matches the manual's examples (numbers before names, `a - b` before
     `a + b`).
 
-    Zeros expressible only as `CRootOf` are rejected and the call stays as written: the
-    manual uses the quadratic, cubic and quartic formulas and notes exact eigenvalues
-    are rarely available beyond that.
+    Zeros expressible only as `CRootOf` are rejected: the manual uses the quadratic,
+    cubic and quartic formulas and notes exact eigenvalues are rarely available beyond
+    that. Then the characteristic polynomial is solved factor by factor, as `SOLVE`
+    does, a factor without such zeros staying as its equation; if no factor has them,
+    the call stays as written.
 
     `trig=True` makes `roots` use Viete's cubic rather than Cardano's for the casus
     irreducibilis, so symmetric matrices, whose eigenvalues are real, don't get answers
     in `#i`.
     """
     matrix, variable = _matrix_and_variable(conv, args)
-    zeros = sorted(matrix.eigenvals(trig=True), key=sp.default_sort_key)
-    if any(zero.has(sp.CRootOf) for zero in zeros):
-        raise ValueError("no closed form")
+    try:
+        zeros = sorted(matrix.eigenvals(trig=True), key=sp.default_sort_key)
+    except MatrixError:
+        zeros = None
+    if zeros is None or any(zero.has(sp.CRootOf) for zero in zeros):
+        return _eigenvalues_by_factors(matrix, variable)
     return Vector(*(sp.Eq(variable, zero, evaluate=False) for zero in zeros))
+
+
+def _eigenvalues_by_factors(matrix: sp.MatrixBase, variable: sp.Symbol) -> Vector:
+    """The zeros of each factor of the characteristic polynomial that has them in
+    radicals, and the equation of each that hasn't; see `_eigenvalues`."""
+    _, factors = sp.factor_list(matrix.charpoly(sp.Dummy()).as_expr(variable))
+    zeros: set[sp.Basic] = set()
+    unsolved: list[sp.Basic] = []
+    for factor, _ in factors:
+        if not factor.has(variable):
+            continue
+        found = sp.roots(factor, variable, trig=True)
+        if sum(found.values()) == sp.degree(factor, variable):
+            zeros.update(found)
+        else:
+            unsolved.append(sp.Eq(factor, 0, evaluate=False))
+    if not zeros:
+        raise ValueError("no closed form")
+    ordered = sorted(zeros, key=sp.default_sort_key)
+    return Vector(*(sp.Eq(variable, zero, evaluate=False) for zero in ordered), *unsolved)
 
 
 def _matrix_and_variable(conv: Converter, args: list) -> tuple[sp.MatrixBase, sp.Basic]:

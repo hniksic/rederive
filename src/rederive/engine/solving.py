@@ -166,10 +166,14 @@ def equations_of(expression: sp.Basic) -> tuple[Relational, ...] | None:
     """The equations of a system, or None if this isn't a system.
 
     A system is a vector of relations or expressions, an expression meaning `u = 0`, as
-    in `EXACT_EIGENVECTOR` in VECTOR.MTH. A vector containing vectors or truth values
-    isn't a system.
+    in `EXACT_EIGENVECTOR` in VECTOR.MTH. A matrix is a system of all its elements, so an
+    equation between matrices, such as `[[1, 2], [3, 4]] . [[x], [y]] = [[5], [6]]` with
+    column vectors, is the system of the equations between their elements. A vector
+    mixing vectors and other elements, or containing truth values, isn't a system.
     """
     elements = _elements(expression)
+    if elements and all(isinstance(e, Vector) for e in elements):
+        elements = [leaf for e in elements for leaf in _elements(e)]
     if not elements or not all(_equatable(e) for e in elements):
         return None
     return tuple(
@@ -382,6 +386,10 @@ def _equation(
     if residual.is_zero or _cancels(residual, variable):
         return (_equated(variable, constants.fresh(), context),)
     found = _values(residual, variable)
+    if found is None:
+        split = _by_factors(residual, variable, context, divisors, constants, real)
+        if split is not None:
+            return split
     if (found is None or found.has(sp.ConditionSet)) and context.branch is Branch.ANY:
         found = _inverted_whatever(residual, variable) or found
     if found is not None:
@@ -405,6 +413,37 @@ def _equation(
         if searched is not None:
             return searched
     return _unsolved(residual, context)
+
+
+def _by_factors(
+    residual: sp.Basic,
+    variable: sp.Symbol,
+    context: Context,
+    divisors: tuple[sp.Basic, ...],
+    constants: _Constants,
+    real: bool,
+) -> tuple[sp.Basic, ...] | None:
+    """A polynomial whose roots aren't all found, solved factor by factor, or None if
+    it doesn't factor.
+
+    A factor without found roots stays as its equation among the solutions of the
+    others: `SOLVE((z - 1)*(z^5 + z + 3) = 0, z)` is `[z = 1, z^5 + z + 3 = 0]`.
+    """
+    if _polynomial(residual, variable) is None:
+        return None
+    try:
+        _, factors = sp.factor_list(residual)
+    except Exception:
+        return None
+    parts = [factor for factor, _ in factors if factor.has(variable)]
+    if len(parts) < 2:
+        return None
+    answers: list[sp.Basic] = []
+    for part in parts:
+        for answer in _equation(part, variable, context, None, divisors, constants, real):
+            if answer not in answers:
+                answers.append(answer)
+    return tuple(answers)
 
 
 def _values(residual: sp.Basic, variable: sp.Symbol) -> sp.Set | None:

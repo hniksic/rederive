@@ -350,6 +350,15 @@ def test_a_cubic_factor_is_written_as_the_cubic_is():
     ]
 
 
+def test_a_polynomial_is_solved_factor_by_factor_where_one_factor_is_not():
+    """A factor whose roots have no radicals stays as its equation beside the roots of
+    the others, rather than the whole equation coming back unsolved."""
+    assert sol("(x - 1)*(x^5 + x + 3) = 0") == ["x = 1", "x^5 + x + 3 = 0"]
+    # Multiplied out, with a parameter.
+    answers = sol("x^7 + x^6 + x^5 + x^3 + (a + 1)*x^2 + (a + 1)*x + a = 0")
+    assert len(answers) == 3 and answers[2] == "x^5 + x + a = 0"
+
+
 def test_the_order_of_several_solutions_is_ours_and_not_the_originals():
     """Reals ascending, then complex ones. Derive's order is an artifact of its solver
     (`2, 3` for `x^2 - 5*x + 6` but `2, -2` for `x^2 - 4`), so there is no rule to
@@ -618,6 +627,8 @@ SYSTEMS = [
     ("[0, 0]", ("x", "y"), ["[x = @1, y = @2]"]),
     # A conjunction of equations is a system too.
     ("x + y = 3 AND x - y = 1", ("x", "y"), ["[x = 2, y = 1]"]),
+    # So is an equation between matrices, here between column vectors.
+    ("[[1, 2], [3, 4]] . [[x], [y]] = [[1], [2]]", ("x", "y"), ["[x = 0, y = 1/2]"]),
 ]
 
 
