@@ -1048,6 +1048,8 @@ class Window2D(QtWidgets.QMainWindow):
                 symbolPen=pg.mkPen(plot.color),
                 symbolBrush=pg.mkBrush(plot.color),
                 antialias=True,
+                # A NaN row separates the lines of a vector of matrices.
+                connect="finite",
             )
             # Keep large data plots responsive by drawing only what is in view, at
             # the view's resolution.
@@ -1175,7 +1177,7 @@ class Window2D(QtWidgets.QMainWindow):
             self._ridden(plot, answer)
         elif plot.kind is PlotKind.DATA:
             plot.xs, plot.ys = answer
-            plot.item.setData(plot.xs, plot.ys)
+            plot.item.setData(plot.xs, plot.ys, connect="finite")
         else:
             plot.closure, plot.xs, plot.ys = answer
             plot.item.setData(plot.xs, plot.ys, connect="finite")

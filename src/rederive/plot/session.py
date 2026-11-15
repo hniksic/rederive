@@ -406,7 +406,8 @@ def curves(request: protocol.Add) -> list[Plot]:
     elements one by one, keeping their colors.
 
     Elements are named with the texts rendered by the app, falling back to the label if
-    there are none.
+    there are none. Each is drawn as its member in the options says, so a family can
+    mix curves, implicit curves and regions.
     """
     if protocol.dimension(request.kind) is WindowKind.THREE_D:
         made: type[Plot] = Surface
@@ -414,7 +415,13 @@ def curves(request: protocol.Add) -> list[Plot]:
     else:
         made, several, single = Plot, PlotKind.FAMILY, PlotKind.CURVE
 
-    def one(label: str, text: str, node: Any, kind: PlotKind) -> Plot:
+    def one(
+        label: str,
+        text: str,
+        node: Any,
+        kind: PlotKind,
+        options: protocol.Options = request.options,
+    ) -> Plot:
         return made(
             worksheet=request.worksheet,
             label=label,
@@ -422,7 +429,7 @@ def curves(request: protocol.Add) -> list[Plot]:
             kind=kind,
             node=node,
             context=request.context,
-            options=request.options,
+            options=options,
             state=request.state,
             # Preferences have already been filled into the request, so the data
             # point style is final here.
@@ -430,15 +437,23 @@ def curves(request: protocol.Add) -> list[Plot]:
             point_size=request.options.point_size or POINT_SIZE,
         )
 
+    def element(index: int, node: Any) -> Plot:
+        label = f"{request.label}.{index + 1}"
+        texts, members = request.options.texts, request.options.members
+        text = texts[index] if index < len(texts) else request.label
+        if index >= len(members):
+            return one(label, text, node, single)
+        member = members[index]
+        options = replace(
+            request.options,
+            variables=member.variables,
+            vertical=member.vertical or request.options.vertical,
+            members=(),
+        )
+        return one(label, text, node, member.kind, options)
+
     if request.kind is not several:
         return [one(request.label, request.text, request.node, request.kind)]
-    texts = request.options.texts
     return [
-        one(
-            f"{request.label}.{index + 1}",
-            texts[index] if index < len(texts) else request.label,
-            element,
-            single,
-        )
-        for index, element in enumerate(request.node.children)
+        element(index, node) for index, node in enumerate(request.node.children)
     ]

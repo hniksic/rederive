@@ -210,23 +210,49 @@ def polar_pair(
 def points(node: Node, context: Context) -> tuple[np.ndarray, np.ndarray]:
     """The two columns of a constant matrix, as a data plot's x and y.
 
-    A single point like `[1, 2]` is read as a one-row matrix.
+    A single point like `[1, 2]` is read as a one-row matrix. Vectors of such matrices,
+    nested to any depth, are several lines of points, as `ISOMETRICS` gives: each
+    innermost matrix is its own line, and a NaN row between lines keeps them apart.
     """
-    from rederive.engine.vectors import Vector, is_matrix, matrix_of
+    from rederive.engine.vectors import Vector
 
     expression = _converted(node, context)
-    if isinstance(expression, Vector) and not is_matrix(expression):
-        expression = Vector(expression)
-    matrix = matrix_of(expression)
-    if matrix is None:
-        raise Unplottable("a data plot needs a matrix of two columns")
+    lines: list[list[Any]] = []
+
+    def gather(value: Any) -> None:
+        if not isinstance(value, Vector) or not value.args:
+            raise Unplottable("a data plot needs a matrix of two columns")
+        if _point(value):
+            lines.append([value])
+        elif all(_point(row) for row in value.args):
+            lines.append(list(value.args))
+        else:
+            for part in value.args:
+                gather(part)
+
+    gather(expression)
+    gap = [np.nan, np.nan]
+    rows: list[list[complex | float]] = []
     try:
-        rows = np.array(matrix.evalf().tolist(), dtype=np.complex128)
+        for index, line in enumerate(lines):
+            if index:
+                rows.append(gap)
+            rows += [[complex(part.evalf()) for part in point.args] for point in line]
     except Exception as error:
         raise Unplottable(_said(error)) from None
-    if rows.ndim != 2 or rows.shape[1] != 2:
-        raise Unplottable("a data plot needs a matrix of two columns")
-    return _real_part(rows[:, 0]), _real_part(rows[:, 1])
+    table = np.array(rows, dtype=np.complex128)
+    return _real_part(table[:, 0]), _real_part(table[:, 1])
+
+
+def _point(value: Any) -> bool:
+    """Whether a converted value is a point: a vector of two non-vectors."""
+    from rederive.engine.vectors import Vector
+
+    return (
+        isinstance(value, Vector)
+        and len(value.args) == 2
+        and not any(isinstance(part, Vector) for part in value.args)
+    )
 
 
 def number(node: Node | None, context: Context, default: float) -> float:
@@ -272,8 +298,19 @@ def _lambdified(
     try:
         function = sp.lambdify(symbols, expression, modules="numpy")
     except Exception as error:
-        raise Unplottable(_said(error)) from None
+        # A head numpy has no code for, such as an integral, is evaluated point by point
+        # (an integral by numeric quadrature), provided mpmath can print it.
+        try:
+            sp.lambdify(symbols, expression, modules="mpmath")
+        except Exception:
+            raise Unplottable(_said(error)) from None
+        function = _unvectorized
     return _Numeric(function, expression, symbols, real=real)
+
+
+def _unvectorized(*_arguments: Any) -> Any:
+    """The fast path of an expression with none, which sends every point to the next."""
+    raise TypeError("no vectorized evaluation")
 
 
 def _said(error: Exception) -> str:

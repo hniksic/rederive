@@ -28,6 +28,7 @@ __all__ = [
     "Describe",
     "Done",
     "Event",
+    "Member",
     "Options",
     "PlotInfo",
     "PlotKind",
@@ -157,6 +158,19 @@ def titled(kind: WindowKind, contents: Sequence[str] = (), current: bool = False
 
 
 @dataclass(frozen=True)
+class Member:
+    """How one member of a family or a vector of surfaces is drawn.
+
+    The kind and variables are those of the member alone, so `x = 4` in
+    `[x = 4, x - 6, x^2]` is an implicit curve beside two functions of x.
+    """
+
+    kind: PlotKind
+    variables: tuple[str, ...] = ()
+    vertical: str = ""
+
+
+@dataclass(frozen=True)
 class Options:
     """Optional per-kind extras of an `Add`.
 
@@ -168,7 +182,8 @@ class Options:
     `z = x^2 + y^2`.
 
     `texts` are the one-line renderings of a family's elements, made app-side like
-    `text`, since the host never renders expressions.
+    `text`, since the host never renders expressions. `members` says how each element
+    is drawn; without it, every element is a curve or a surface in `variables`.
 
     The rest describe how a data plot draws its points. None means "use the
     preferences", filled in by the host from the last `Prefer` it received.
@@ -177,6 +192,7 @@ class Options:
     variables: tuple[str, ...] = ()
     vertical: str = ""
     texts: tuple[str, ...] = ()
+    members: tuple[Member, ...] = ()
     connected: bool | None = None
     point_size: float | None = None
 

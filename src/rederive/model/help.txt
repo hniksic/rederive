@@ -555,11 +555,13 @@ of the two kinds of window it opens.
 
 Expressions that open a 2D window:
   one variable, or none    a curve: SIN(x)/x, x^2 - 1, 3
+  y = f(x)                 the curve of f(x): y = 1/x
   u = v                    the curve where the two sides are equal
   an inequality            the area where it holds: x^2 + y^2 < 9
   [u, v]                   a parametric curve: [3SIN(3t), 3SIN(4t)]
-  [u, v, w] and longer     a curve for each: [x, x^2, x^3]
+  [u, v, w] and longer     each as it is: [x = 4, x - 6, x^2]
   [a, b] of numbers        a point; a vector of pairs draws them all
+  vectors of those         a line of points for each, as ISOMETRICS gives
 
 A pair of expressions makes a parametric curve, a pair of plain numbers a
 point. To draw two curves together, Plot each expression in turn.

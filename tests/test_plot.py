@@ -70,7 +70,8 @@ def kind_of(text, variables=()):
         ("x*y", ("x", "y"), PlotKind.SURFACE),
         ("z = x^2 + y^2", ("x", "y", "z"), PlotKind.SURFACE),
         ("x^2 + y^2 = 4", ("x", "y"), PlotKind.IMPLICIT),
-        ("y = SIN(x)", ("x", "y"), PlotKind.IMPLICIT),
+        ("y = SIN(x)", ("x", "y"), PlotKind.CURVE),
+        ("x = SIN(y)", ("x", "y"), PlotKind.IMPLICIT),
         ("x < 3", ("x",), PlotKind.REGION),
         ("x^2 + y^2 <= 4", ("x", "y"), PlotKind.REGION),
         ("x > 0 AND y > 0", ("x", "y"), PlotKind.REGION),
@@ -93,6 +94,44 @@ def test_an_equation_solved_for_a_lone_variable_names_the_vertical_axis():
     assert plotted.kind is PlotKind.SURFACE
     assert plotted.vertical == "z"
     assert plotted.variables == ("x", "y")
+
+
+def test_a_surface_solved_for_its_vertical_axis_is_its_other_side():
+    # The surface is the height `100/(x^2 + y^2 + 9)`, not the truth value of the
+    # equation, which is a flat sheet.
+    plotted = kind_of("z = 100/(x^2 + y^2 + 9)", ("x", "y", "z"))
+    height = evaluate.closure(plotted.node, Context(), plotted.variables)
+    assert float(height(np.array([0.0]), np.array([0.0]))[0]) == pytest.approx(100 / 9)
+
+
+def test_a_curve_solved_for_its_vertical_axis_gaps_its_pole_like_the_function():
+    # `y = 1/x` is the curve `1/x`, so it breaks at the pole where the zero contour of
+    # `y - 1/x` would draw a vertical line.
+    plotted = kind_of("y = 1/x", ("x", "y"))
+    assert (plotted.kind, plotted.variables) == (PlotKind.CURVE, ("x",))
+    f = evaluate.closure(plotted.node, Context(), plotted.variables)
+    xs, ys = evaluate.sample_adaptive(f, VIEW, VIEW, CANVAS)
+    assert _spans(xs, ys, 0.0) == []
+
+
+def test_each_member_of_a_vector_is_plotted_as_what_it_is():
+    from rederive.plot.session import curves
+
+    text = "[x = 4, x - 6, x^2]"
+    plotted = kind_of(text, ("x",))
+    request = plots.Add(
+        worksheet=0,
+        node=parsed(text),
+        context=Context(),
+        kind=plotted.kind,
+        label="#1",
+        options=plotted.options,
+    )
+    assert [plot.kind for plot in curves(request)] == [
+        PlotKind.IMPLICIT,
+        PlotKind.CURVE,
+        PlotKind.CURVE,
+    ]
 
 
 def test_a_variable_on_both_sides_is_not_solved_for_anything():
@@ -204,6 +243,11 @@ def test_a_closure_plots_the_heads_numpy_has_no_name_for():
     ]:
         value = closure(text)(np.array([place]))[0]
         assert abs(value - expected) < 1e-6, f"{text} at {place} is {value}"
+
+
+def test_a_closure_integrates_numerically_what_numpy_cannot():
+    value = closure("INT(SIN(t)/t, t, 0, x)")(np.array([2.0]))[0]
+    assert abs(value - 1.60541298) < 1e-6
 
 
 def test_a_closure_over_a_slow_head_still_gaps_its_poles():
@@ -356,6 +400,16 @@ def test_a_polar_curve_turns_its_angle_in_the_unit_it_was_written_in():
         horizontal, vertical = evaluate.polar_pair(one, degrees=degrees)
         assert abs(float(horizontal(np.array([expected]))[0])) < 1e-9
         assert abs(float(vertical(np.array([expected]))[0]) - 1.0) < 1e-9
+
+
+def test_a_vector_of_matrices_is_a_line_per_matrix():
+    # `ISOMETRICS` and direction fields give lines of points nested three deep; each
+    # innermost matrix is drawn as its own line, with a gap before the next.
+    text = "[[[0, 0], [1, 1]], [[2, 0], [3, 1], [4, 0]]]"
+    assert kind_of(text).kind is PlotKind.DATA
+    xs, ys = evaluate.points(parsed(text), Context())
+    assert list(xs[:2]) == [0.0, 1.0] and list(xs[3:]) == [2.0, 3.0, 4.0]
+    assert np.isnan(xs[2]) and np.isnan(ys[2])
 
 
 def test_a_constant_matrix_becomes_the_two_columns_of_a_data_plot():

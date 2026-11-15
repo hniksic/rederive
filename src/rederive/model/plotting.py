@@ -23,11 +23,11 @@ size), one per direction.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from rederive.model.expr import Kind, Node
 from rederive.model.settings import Settings
-from rederive.plot.protocol import Options, PlotKind, Prefer
+from rederive.plot.protocol import Member, Options, PlotKind, Prefer
 
 __all__ = ["Plotted", "Unplottable", "classify", "learned", "preferences"]
 
@@ -46,6 +46,9 @@ INEQUALITIES = frozenset({"<", "<=", ">", ">=", "/=", "≤", "≥", "≠"})
 #: Node kinds that combine relations into a region, as in `x > 0 AND y > 0`.
 COMBINATIONS = frozenset({Kind.NOT, Kind.AND, Kind.OR, Kind.XOR, Kind.IMP})
 
+#: The kinds a member of a vector can have in a 2D window.
+FLAT = frozenset({PlotKind.CURVE, PlotKind.IMPLICIT, PlotKind.REGION})
+
 
 class Unplottable(Exception):
     """The expression can't be plotted; the message says why."""
@@ -57,16 +60,29 @@ class Plotted:
 
     `variables` is in axis order: the abscissa or parameter first, and for a
     surface the two horizontal axes in the engine's canonical (arrival) order.
+
+    `node` is what to evaluate when it isn't the tree classified: the right side of
+    `y = u(x)` or `z = f(x, y)`, or a vector with such members replaced by their right
+    sides. `members` classifies each member of a family or a vector of surfaces.
     """
 
     kind: PlotKind
     variables: tuple[str, ...] = ()
     vertical: str = ""
+    node: Node | None = None
+    members: tuple[Plotted, ...] = ()
 
     @property
     def options(self) -> Options:
         """The classification as protocol options."""
-        return Options(variables=self.variables, vertical=self.vertical)
+        return Options(
+            variables=self.variables,
+            vertical=self.vertical,
+            members=tuple(
+                Member(member.kind, member.variables, member.vertical)
+                for member in self.members
+            ),
+        )
 
 
 def classify(
@@ -106,14 +122,18 @@ def _refusal(names: tuple[str, ...], text: str) -> str:
 
 
 def _solved(node: Node, names: tuple[str, ...]) -> Plotted | None:
-    """`z = f(x, y)`: an equation solved for the vertical axis.
+    """`z = f(x, y)` or `y = u(x)`: an equation solved for the vertical axis.
 
-    The lone variable is the vertical axis and the other two the floor. This is
-    the only rule that accepts three variables.
+    The lone variable is the vertical axis and the others the abscissa or the floor,
+    and what is drawn is the other side, so `y = 1/x` is the curve `1/x`, broken at its
+    pole, rather than the zero contour of `y - 1/x`, which crosses zero there too. With
+    two variables, the lone one must be the second in axis order: `x = 1/y` gives x
+    as a function of y, which is drawn as an implicit curve. This is the only rule
+    that accepts three variables.
     """
     if node.kind is not Kind.REL or node.value != "=" or len(node.children) != 2:
         return None
-    if len(names) != 3:
+    if len(names) not in (2, 3):
         return None
     left, right = node.children
     for side, other in ((left, right), (right, left)):
@@ -123,7 +143,10 @@ def _solved(node: Node, names: tuple[str, ...]) -> Plotted | None:
         if name not in names or name in _names_in(other):
             continue
         floor = tuple(found for found in names if found != name)
-        return Plotted(PlotKind.SURFACE, floor, name)
+        if len(names) == 3:
+            return Plotted(PlotKind.SURFACE, floor, name, other)
+        if name == names[1]:
+            return Plotted(PlotKind.CURVE, floor, name, other)
     return None
 
 
@@ -146,27 +169,130 @@ def _region(node: Node, names: tuple[str, ...]) -> Plotted | None:
 
 
 def _vector(node: Node, names: tuple[str, ...]) -> Plotted | None:
-    """The five interpretations of a vector, in the order they are tried."""
+    """The interpretations of a vector, in the order they are tried.
+
+    A pair of plain expressions is a point or a parametric curve, and constant points,
+    alone or in vectors nested to any depth, are a data plot. Otherwise each member is
+    plotted as what it is (see `_members`).
+    """
     if node.kind is not Kind.VECTOR or not node.children:
         return None
     children = node.children
-    scalars = [child for child in children if child.kind is not Kind.VECTOR]
-    if len(children) == 2 and len(scalars) == 2:
+    plain = [child for child in children if _plain(child)]
+    if len(children) == 2 and len(plain) == 2:
         if not names:
             return Plotted(PlotKind.DATA, names)
         if len(names) == 1:
             return Plotted(PlotKind.PARAMETRIC, names)
-    if not names and all(
-        child.kind is Kind.VECTOR and len(child.children) == 2 for child in children
-    ):
+    if not names and _points(node):
         return Plotted(PlotKind.DATA, names)
-    if len(scalars) != len(children):
+    if len(children) < 2 or any(child.kind is Kind.VECTOR for child in children):
         return None
-    if len(children) >= 3 and len(names) <= 1:
-        return Plotted(PlotKind.FAMILY, names)
-    if len(children) >= 2 and len(names) == 2:
-        return Plotted(PlotKind.SURFACES, names)
-    return None
+    return _members(node, names)
+
+
+def _members(node: Node, names: tuple[str, ...]) -> Plotted | None:
+    """A vector of things to plot together, each classified as it would be alone.
+
+    So `[x = 4, x - 6, x^2]` is a vertical line and two curves. Its members can share
+    a 2D window if they are curves, implicit curves and regions, and the curves share
+    one abscissa. Otherwise they are surfaces over one floor: `z = f(x, y)` or an
+    expression in those two variables; a member in fewer variables is a surface that is
+    constant along the others, as `x` is in `[x + y, x]`.
+    """
+    members = [_member(child, names) for child in node.children]
+    if any(member is None for member in members):
+        return None
+    found = [member for member in members if member is not None]
+    abscissas = {
+        member.variables[0]
+        for member in found
+        if member.kind is PlotKind.CURVE and member.variables
+    }
+    if all(member.kind in FLAT for member in found) and len(abscissas) <= 1:
+        variables = tuple(abscissas) or names
+        found = [
+            replace(member, variables=tuple(abscissas))
+            if member.kind is PlotKind.CURVE
+            else member
+            for member in found
+        ]
+        return _family(node, PlotKind.FAMILY, variables, "", found)
+    floors = {member.variables for member in found if member.kind is PlotKind.SURFACE}
+    if not floors and len(names) == 2:
+        floors = {names}
+    if len(floors) != 1:
+        return None
+    floor = floors.pop()
+
+    def standing(member: Plotted) -> bool:
+        """Whether the member is a surface over the floor, or can be read as one."""
+        if member.kind is PlotKind.SURFACE:
+            return True
+        # A plain expression, not `y = u(x)`, which is a curve in the plane.
+        plain = member.kind is PlotKind.CURVE and member.node is None
+        return plain and set(member.variables) <= set(floor)
+
+    if not all(standing(member) for member in found):
+        return None
+    vertical = next((member.vertical for member in found if member.vertical), "")
+    found = [replace(member, kind=PlotKind.SURFACE, variables=floor) for member in found]
+    return _family(node, PlotKind.SURFACES, floor, vertical, found)
+
+
+def _member(node: Node, names: tuple[str, ...]) -> Plotted | None:
+    """One member of a vector, classified as it would be alone.
+
+    Solved equations and fields are read in the vector's variables, so they share its
+    axes. An expression is read in the variables it holds, so `x^2` beside `y = 1/x` is
+    a curve rather than a surface.
+    """
+    for reading in (_solved, _equation, _region):
+        plotted = reading(node, names)
+        if plotted is not None:
+            return plotted
+    held = _names_in(node)
+    return _scalar(node, tuple(name for name in names if name in held))
+
+
+def _family(
+    node: Node,
+    kind: PlotKind,
+    variables: tuple[str, ...],
+    vertical: str,
+    members: list[Plotted],
+) -> Plotted:
+    """A vector plotted member by member, with each member's drawn side in place."""
+    drawn = None
+    if any(member.node is not None for member in members):
+        drawn = replace(
+            node,
+            children=tuple(
+                child if member.node is None else member.node
+                for child, member in zip(node.children, members, strict=True)
+            ),
+        )
+    stripped = tuple(replace(member, node=None) for member in members)
+    return Plotted(kind, variables, vertical, drawn, stripped)
+
+
+def _plain(node: Node) -> bool:
+    """Whether `node` is an expression rather than a vector, relation or statement."""
+    return node.kind not in (Kind.VECTOR, Kind.REL, *COMBINATIONS)
+
+
+def _points(node: Node) -> bool:
+    """Whether `node` is a point `[a, b]`, or a vector of such, nested to any depth.
+
+    Each innermost vector of points is drawn as its own line, which is how
+    `ISOMETRICS` draws a surface as lines of points.
+    """
+    if node.kind is not Kind.VECTOR or not node.children:
+        return False
+    children = node.children
+    if len(children) == 2 and all(child.kind is not Kind.VECTOR for child in children):
+        return True
+    return all(_points(child) for child in children)
 
 
 def _scalar(node: Node, names: tuple[str, ...]) -> Plotted | None:

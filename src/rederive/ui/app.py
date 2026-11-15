@@ -4319,7 +4319,8 @@ class RederiveApp(App[None]):
             # Identify the worksheet by identity, since two overlays can each have a
             # `#3`; plots are keyed by the pair.
             worksheet=id(self.session),
-            node=target,
+            # The side of `y = u(x)` that is drawn, if that is not the whole tree.
+            node=target if plotted.node is None else plotted.node,
             context=self.session.context,
             kind=kind,
             window=where,
