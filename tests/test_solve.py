@@ -179,6 +179,19 @@ def test_an_equation_in_abs_of_a_complex_variable_stands():
     assert sol("ABS(x - 1) = 2", ("x",), context=context) == ["ABS(x - 1) - 2 = 0"]
 
 
+def test_a_polynomial_in_a_root_without_radical_roots_is_left_unsolved_at_once():
+    # In `p^(1/10)` it is of degree 17, irreducible; Approximate searches for the root.
+    text = "7*p^(17/10) - 225000*p^(2/5) = 2625000"
+    assert sol(text, ("p",)) == ["7*p^(17/10) - 225000*p^(2/5) - 2625000 = 0"]
+    assert sol("x^(2/3) - 2*x^(1/3) - 35 = 0", ("x",)) == ["x = 343"]
+
+
+def test_an_abs_of_a_parameter_is_a_nonnegative_constant():
+    found = sol("(t^2 - b^2)/(ABS(b) + t) = 2*a^2/(ABS(b) - t)", ("t",))
+    assert len(found) == 3
+    assert sol("ABS(b)*x + 1 = 0", ("x",)) == ["x = -1/ABS(b)"]
+
+
 #: A power of a positive base is solved as a power of `#e`. Each root of the quadratic
 #: in `b^x` gives a family of complex solutions, represented by the member nearest the
 #: origin.
@@ -419,6 +432,11 @@ def test_a_solution_is_measured_in_whatever_the_angle_setting_says():
 
 def test_an_identity_solves_to_an_arbitrary_value():
     assert sol("x = x") == ["x = @1"]
+
+
+def test_an_assignment_or_a_definition_is_solved_for_its_value():
+    assert sol("a := x^2 - 9", ("x",)) == ["x = -3", "x = 3"]
+    assert sol("W(k) := k^2 - 4") == ["k = -2", "k = 2"]
 
 
 @pytest.mark.parametrize(
@@ -871,8 +889,12 @@ def test_solving_never_raises(text, context):
     solve(parse(text), context, (), bounds)
 
 
-def test_a_variable_the_expression_does_not_hold_has_no_solutions():
-    assert sol("x^2 - 4", ("w",)) == []
+def test_a_variable_the_expression_does_not_hold_is_solved_by_a_condition_on_the_rest():
+    # Every `w` solves it once `x^2 = 4`, so "no solutions" would be wrong; a false
+    # equation has none.
+    assert sol("x^2 - 4", ("w",)) == ["x^2 - 4 = 0"]
+    assert sol("v = 2*u + 1", ("y",)) == ["-2*u + v - 1 = 0"]
+    assert sol("1 = 2", ("y",)) == []
 
 
 # -- SOLVE as an authored function --------------------------------------------

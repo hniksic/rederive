@@ -37,7 +37,7 @@ from rederive.engine.normal import normal_form
 from rederive.engine.ordering import main_order
 from rederive.engine.printer import is_written, spelling
 from rederive.engine.signs import polar_logarithms
-from rederive.engine.to_sympy import Vector
+from rederive.engine.to_sympy import Assign, FunDef, Vector
 
 __all__ = ["equations_of", "oriented", "solutions", "solution_variables"]
 
@@ -110,7 +110,12 @@ def solutions(
     A solution written with a function the notation has no name for, such as sympy's
     inverse error function, is no answer, since it couldn't be typed back: the
     equation is then left unsolved.
+
+    An assignment or a definition is solved for what it defines: `W(k) := k^2 - 4`
+    solves `k^2 - 4 = 0`.
     """
+    if isinstance(expression, (Assign, FunDef)):
+        expression = expression.args[-1]
     context = context or Context()
     minted = _MINTING.get()
     constants = _Constants(
@@ -385,6 +390,10 @@ def _equation(
         return _numeric(residual, variable, bounds[0], bounds[1], context)
     if residual.is_zero or _cancels(residual, variable):
         return (_equated(variable, constants.fresh(), context),)
+    if residual.free_symbols and not residual.has(variable):
+        # Whether it holds depends on the other variables only, so it is the condition
+        # on them: `SOLVE(v = 2*u + 1, y)` isn't "no solutions".
+        return _unsolved(residual, context)
     found = _values(residual, variable)
     if found is None:
         split = _by_factors(residual, variable, context, divisors, constants, real)
@@ -469,6 +478,20 @@ def _values(residual: sp.Basic, variable: sp.Symbol) -> sp.Set | None:
         return sp.FiniteSet(*found)
     if variable.is_real and _has_absolute(residual, variable):
         return _over_reals(residual, variable)
+    if _roots_unwritten_in_root(residual, variable):
+        return None
+    standing = {
+        part: sp.Dummy(nonnegative=True)
+        for part in residual.atoms(sp.Abs)
+        if not part.has(variable)
+    }
+    if standing:
+        # Solveset refuses any `ABS` over the complexes, even of a parameter, which is
+        # just a nonnegative constant to it.
+        found = _values(residual.xreplace(standing), variable)
+        if found is None:
+            return None
+        return found.xreplace({dummy: part for part, dummy in standing.items()})
     try:
         found = sp.solveset(residual, variable, sp.S.Complexes)
     except Exception:
@@ -484,6 +507,40 @@ def _values(residual: sp.Basic, variable: sp.Symbol) -> sp.Set | None:
     if isinstance(found, sp.ConditionSet):
         return _between_arcs(residual, variable) or _inverted(residual, variable)
     return found
+
+
+def _roots_unwritten_in_root(residual: sp.Basic, variable: sp.Symbol) -> bool:
+    """Whether `residual` is a polynomial in a root of `variable` with roots that have
+    no radical form.
+
+    Solveset would name them by their polynomial and then refine each numerically,
+    which for `7*p^(17/10) - 225000*p^(2/5) - 2625000` takes minutes; the equation is
+    left unsolved instead, as a polynomial with such roots is.
+    """
+    exponents = {
+        part.exp
+        for part in residual.atoms(sp.Pow)
+        if part.base == variable and part.exp.is_Rational
+    }
+    if not exponents or all(exponent.is_Integer for exponent in exponents):
+        return False
+    root = sp.Dummy()
+    order = math.lcm(*(int(exponent.q) for exponent in exponents))
+    expanded = sp.expand(residual)
+    powers = {
+        part: root ** (part.exp * order)
+        for part in expanded.atoms(sp.Pow)
+        if part.base == variable
+    }
+    written = expanded.xreplace(powers).xreplace({variable: root**order})
+    try:
+        polynomial = sp.Poly(written, root)
+        if polynomial.degree() < 5 or polynomial.free_symbols - {root}:
+            return False
+        found = sp.roots(polynomial)
+    except Exception:
+        return False
+    return sum(found.values()) != polynomial.degree()
 
 
 def _candidates_checked(
