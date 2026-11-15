@@ -34,6 +34,12 @@ class Kind(StrEnum):
     APPLY = "apply"
     FUNCPOW = "funcpow"
     VECTOR = "vector"
+    SET = "set"
+    #: The `...` of `[0, 2, ..., 10]`, an element of a vector or set.
+    ELLIPSIS = "ellipsis"
+    #: A union, intersection or difference of sets; `value` is the operator, one of
+    #: `names.SET_OPERATORS`.
+    SETOP = "setop"
     REL = "rel"
     NOT = "not"
     AND = "and"

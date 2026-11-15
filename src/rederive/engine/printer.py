@@ -71,8 +71,13 @@ PRECEDENCE_VALUES.setdefault("Subscript", PRECEDENCE["Atom"] - 1)
 PRECEDENCE_VALUES.setdefault("Power", PRECEDENCE["Pow"])
 PRECEDENCE_VALUES.setdefault("Added", PRECEDENCE["Add"])
 PRECEDENCE_VALUES.setdefault("Quotient", PRECEDENCE["Mul"])
-# A vector is bracketed already.
+# A vector is bracketed already, and a set braced.
 PRECEDENCE_VALUES.setdefault("Vector", PRECEDENCE["Atom"])
+PRECEDENCE_VALUES.setdefault("SetOf", PRECEDENCE["Atom"])
+# The set operators bind more loosely than a sum and more tightly than a relation.
+PRECEDENCE_VALUES.setdefault("SetUnion", PRECEDENCE["Relational"] + 1)
+PRECEDENCE_VALUES.setdefault("SetIntersection", PRECEDENCE["Relational"] + 2)
+PRECEDENCE_VALUES.setdefault("SetDifference", PRECEDENCE["Relational"] + 3)
 # A truth value used as an arithmetic operand binds as tightly as its content.
 PRECEDENCE_FUNCTIONS.setdefault("Truth", lambda expr: precedence(expr.args[0]))
 
@@ -1620,6 +1625,41 @@ class AuthorPrinter(sp.StrPrinter):
 
     def _print_Vector(self, expr):
         return self._vector(expr.args)
+
+    def _print_SetOf(self, expr):
+        return f"{{{', '.join(self._print(element) for element in expr.args)}}}"
+
+    def _print_ElidedVector(self, expr):
+        return f"[{self._elided(expr.args)}]"
+
+    def _print_ElidedSet(self, expr):
+        return f"{{{self._elided(expr.args)}}}"
+
+    def _elided(self, terms) -> str:
+        """The terms of an arithmetic sequence, the ellipsis before the last."""
+        written = [self._print(term) for term in terms]
+        return ", ".join([*written[:-1], "...", written[-1]])
+
+    def _print_SetUnion(self, expr):
+        return self._set_operation(expr, " UNION ")
+
+    def _print_SetIntersection(self, expr):
+        return self._set_operation(expr, " INTERSECTION ")
+
+    def _print_SetDifference(self, expr):
+        return self._set_operation(expr, "\\")
+
+    def _set_operation(self, expr, operator: str) -> str:
+        """Operands left to right, the same operator nested only on the left, as the
+        grammar's left-associative set operators read back."""
+        level = precedence(expr)
+        first, *rest = expr.args
+        written = [self.parenthesize(first, level)]
+        written += [self.parenthesize(operand, level, strict=True) for operand in rest]
+        return operator.join(written)
+
+    def _print_SetComplement(self, expr):
+        return f"{self.parenthesize(expr.args[0], PRECEDENCE['Func'])}`"
 
     def _print_Logical(self, expr):
         """A logical operator sympy rejected, with operands unsimplified in their written

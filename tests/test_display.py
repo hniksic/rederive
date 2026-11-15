@@ -604,6 +604,7 @@ SINGLE_ROW = [
     ("y:epsilon Real (2^10, 1/3)", "y :ε Real (2^10, 1/3)"),
     ("p:epsilon Real [-2/3, 5)", "p :ε Real [- 2/3, 5)"),
     ("90 deg", "90·°"),
+    ("{a,b} UNION ({1,...,n}\\c)", "{a, b} UNION {1, ..., n}\\c"),
 ]
 
 

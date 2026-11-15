@@ -91,7 +91,12 @@ def test_the_functions_subject_documents_every_built_in_name():
     blocks = helps.BY_WORD["Functions"].blocks
     text = "\n".join(line for block in blocks for line in block)
     documented = set(re.findall(r"#?\w+", text))
-    built_in = names.BUILTIN_FUNCTIONS | names.CONSTANTS | names.KEYWORD_OPERATORS
+    built_in = (
+        names.BUILTIN_FUNCTIONS
+        | names.CONSTANTS
+        | names.KEYWORD_OPERATORS
+        | names.DISPLACEABLE_OPERATORS
+    )
     assert sorted(built_in - documented) == []
 
 

@@ -388,6 +388,24 @@ Vector and matrix operations:
   CHARPOLY(m, z)     the characteristic polynomial in z
   EIGENVALUES(m, z)  the eigenvalues of m, as equations in z
 
+Sets:
+  {u, v, ...}        the set of u, v, ...; {} is the empty set
+  [a, b, ..., c]     the vector of a, b and on in steps of b - a, up to c
+  {a, b, ..., c}     the same as a set; without b, the step is 1
+  s UNION t          the union
+  s INTERSECTION t   the intersection
+  s\t                the difference, the elements of s not in t
+  s`                 the complement
+  s*t                the Cartesian product, a set of vectors; s^n is the
+                     product of n copies
+  POWER_SET(s)       the set of all the subsets of s
+  POWER_SET(s, n)    the subsets of n elements
+  DIMENSION(s)       how many elements s has
+
+A set keeps each element once and lists numbers first, in ascending order.
+Elements are compared as simplified expressions: x + x and 2*x are one
+element, while a and b are two, so {a, b} INTERSECTION {c} is {}.
+
 Vector calculus:
   GRAD(u), GRAD(u, a)          the gradient of a scalar field
   DIV(v), DIV(v, a)            the divergence of a vector field

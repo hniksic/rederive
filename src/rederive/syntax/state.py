@@ -158,9 +158,13 @@ _RESERVED_EXACT, _RESERVED_FOLDED = _inventory(
 
 # Known names that a declaration displaces. Derive's utility files define `EXACT(...)`
 # and `BETA(z,w)` and use `DEGREE_KELVIN`, so setting values and Greek letters must not
-# outrank declared names.
+# outrank declared names, and older ones define `UNION(u, v)`.
 _PREDECLARED_EXACT, _PREDECLARED_FOLDED = _inventory(
-    [(value, NameInfo(value, is_displaceable=True)) for value in names.SETTING_VALUES]
+    [
+        (word, NameInfo(word, is_keyword_operator=True, is_displaceable=True))
+        for word in names.DISPLACEABLE_OPERATORS
+    ]
+    + [(value, NameInfo(value, is_displaceable=True)) for value in names.SETTING_VALUES]
     + [(setting, NameInfo(setting, is_displaceable=True)) for setting in names.SETTINGS]
     + [
         (name, NameInfo(names.GREEK_CANONICAL.get(name, name), is_displaceable=True))

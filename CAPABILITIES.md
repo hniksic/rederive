@@ -7,7 +7,7 @@ places where Rederive intentionally gives a different answer.
 
 ## Derive's built-ins
 
-The 111 names the original defines, all supported:
+The 112 names the original defines, all supported:
 
 | | |
 |---|---|
@@ -18,6 +18,7 @@ The 111 names the original defines, all supported:
 | Calculus | `DIF` `INT` `LIM` `SUM` `PRODUCT` `TAYLOR` |
 | Algebra | `EXPAND` `FACTOR` `FACTORS` `SOLVE` `NORMAL` `TERMS` `APPROX` `POLY_GCD` `VARIABLES` |
 | Vectors, matrices | `VECTOR` `ELEMENT` `DIMENSION` `APPEND` `DET` `TRACE` `CHARPOLY` `EIGENVALUES` `IDENTITY_MATRIX` `ROW_REDUCE` `CROSS` `DELETE_ELEMENT` `INSERT_ELEMENT` `REPLACE_ELEMENT` `REVERSE_VECTOR` `SELECT` `SORT` |
+| Sets | `POWER_SET` |
 | Vector calculus | `GRAD` `DIV` `CURL` `LAPLACIAN` `POTENTIAL` `VECTOR_POTENTIAL` |
 | Statistics | `AVERAGE` `RMS` `VAR` `STDEV` `FIT` |
 | Finance | `PVAL` `FVAL` `PMT` `NPER` `RATE` |

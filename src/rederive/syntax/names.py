@@ -15,10 +15,10 @@ DERIVE_FUNCTIONS: frozenset[str] = frozenset(
     ERFC EXP EXPAND FACTOR FACTORS FIT FLOOR FVAL GAMMA GCD GRAD IDENTITY_MATRIX
     IF IM INSERT_ELEMENT INT INTERVAL ITERATE ITERATES LAPLACIAN LCM LHS LIM LN LOG
     MAX MIN MOD MODS NEXT_PRIME NORMAL NPER NUMBER NUMERATOR PERM PHASE PMT POLY_GCD
-    POTENTIAL PRIME PRODUCT PVAL QUOTIENT RANDOM RATE RE REMAINDER REPLACE_ELEMENT
-    REVERSE_VECTOR RHS RMS ROOT_OF ROOT_SUM ROW_REDUCE SELECT SEC SECH SIGN SIN
-    SINH SOLVE SORT SQRT STDEV STEP SUM TAN TANH TAYLOR TERMS TRACE TRUTH_TABLE VAR
-    VARIABLES VECTOR VECTOR_POTENTIAL ZETA
+    POTENTIAL POWER_SET PRIME PRODUCT PVAL QUOTIENT RANDOM RATE RE REMAINDER
+    REPLACE_ELEMENT REVERSE_VECTOR RHS RMS ROOT_OF ROOT_SUM ROW_REDUCE SELECT SEC SECH
+    SIGN SIN SINH SOLVE SORT SQRT STDEV STEP SUM TAN TANH TAYLOR TERMS TRACE TRUTH_TABLE
+    VAR VARIABLES VECTOR VECTOR_POTENTIAL ZETA
     """.split()
 )
 
@@ -81,6 +81,18 @@ GREEK_VARIABLES: frozenset[str] = frozenset(
 )
 
 KEYWORD_OPERATORS: frozenset[str] = frozenset("SUB AND OR XOR IMP NOT".split())
+
+# Keyword operators a definition displaces. Utility files from before sets were built
+# in define `UNION(u, v)` and `INTERSECTION(u, v)` on vectors, and keep working.
+DISPLACEABLE_OPERATORS: frozenset[str] = frozenset("UNION INTERSECTION".split())
+
+# The operators on sets, as the parser's node values: the union, the intersection and
+# the difference `s \ t`, loosest first.
+SET_OPERATORS: tuple[str, ...] = ("UNION", "INTERSECTION", "\\")
+
+# The ellipsis that stands for the elements of an arithmetic sequence in a vector or a
+# set: `[0, 2, ..., 10]`.
+ELLIPSIS = "..."
 
 # The derivative mark: `BB'(r)` is the derivative of `BB` at `r`, one mark per order. It
 # is part of the name, not an operator, so it's not in `OPERATORS`. (Transposition uses
@@ -223,6 +235,7 @@ OPERATORS: tuple[str, ...] = (
     "*",
     "/",
     "^",
+    "...",
     ".",
     "!",
     "%",
@@ -233,6 +246,9 @@ OPERATORS: tuple[str, ...] = (
     ")",
     "[",
     "]",
+    "{",
+    "}",
+    "\\",
     ",",
     "?",
     "·",

@@ -45,6 +45,19 @@ from rederive.engine.context import (
 from rederive.engine.integration import integral
 from rederive.engine.ordering import main_order
 from rederive.engine.printer import author_text, spelling
+from rederive.engine.sets import (
+    MOST_TERMS,
+    SetComplement,
+    SetDifference,
+    SetIntersection,
+    SetOf,
+    SetUnion,
+    cartesian,
+    elided,
+    is_set,
+    power_set,
+    size,
+)
 from rederive.engine.vectors import (
     Vector,
     column,
@@ -728,6 +741,12 @@ class Converter:
         self.open_labels = open_labels
         self.parameters: frozenset[str] = frozenset()
 
+    def sets_simplified(self, values: list[sp.Basic]) -> list[sp.Basic]:
+        """`values` with each set among them simplified, so that its elements are
+        compared as simplified expressions. Without an environment to simplify in, the
+        values are returned as they are."""
+        return values
+
     # -- the walk -----------------------------------------------------------
 
     def convert(self, node: Node) -> sp.Basic:
@@ -763,6 +782,10 @@ class Converter:
                 return self._funcpow(node)
             case Kind.VECTOR:
                 return self._vector(node)
+            case Kind.SET:
+                return self._set(node)
+            case Kind.SETOP:
+                return self._set_operation(node)
             case Kind.REL:
                 return self._relation(node)
             case Kind.NOT | Kind.AND | Kind.OR | Kind.XOR | Kind.IMP:
@@ -775,8 +798,8 @@ class Converter:
                 return self._declaration(node)
             case Kind.SHOWVALUE:
                 return self.convert(node.children[0])
-        # PARAMS and INTERVAL only appear inside their owning nodes; anything else
-        # becomes an inert head.
+        # PARAMS, INTERVAL and ELLIPSIS only appear inside their owning nodes; anything
+        # else becomes an inert head.
         return self.opaque(str(node.kind).upper(), self._children(node))
 
     def _children(self, node: Node) -> list[sp.Basic]:
@@ -1013,7 +1036,9 @@ class Converter:
         return self._transpose(operand)
 
     def _transpose(self, operand: sp.Basic) -> sp.Basic:
-        """``operand` ``, given its value; see `_postop`."""
+        """``operand` ``, given its value; see `_postop`. A set's is its complement."""
+        if is_set(operand):
+            return SetComplement(operand)
         if isinstance(operand, Vector):
             flipped = transposed(operand)
             return Transposed(operand) if flipped is None else flipped
@@ -1069,7 +1094,29 @@ class Converter:
 
     def _vector(self, node: Node) -> sp.Basic:
         """The vector of the elements' values, whatever they are (see `vectors`)."""
-        return Vector(*self._children(node))
+        return self._listed(node, Vector, braces=False)
+
+    def _set(self, node: Node) -> sp.Basic:
+        """The set of the elements' values (see `sets`)."""
+        return self._listed(node, SetOf, braces=True)
+
+    def _listed(self, node: Node, head: type[sp.Function], braces: bool) -> sp.Basic:
+        """A vector or set, whose elements may be the ends of an arithmetic sequence:
+        `[0, 2, ..., 10]` is `[0, 2, 4, 6, 8, 10]`."""
+        if not any(child.kind is Kind.ELLIPSIS for child in node.children):
+            return head(*self._children(node))
+        terms = [self.convert(c) for c in node.children if c.kind is not Kind.ELLIPSIS]
+        return elided(terms, braces)
+
+    def _set_operation(self, node: Node) -> sp.Basic:
+        """A union, intersection or difference, with the elements compared simplified."""
+        left, right = self.sets_simplified(self._children(node))
+        match str(node.value):
+            case "UNION":
+                return SetUnion(left, right)
+            case "INTERSECTION":
+                return SetIntersection(left, right)
+        return SetDifference(left, right)
 
     def _relation(self, node: Node) -> sp.Basic:
         """A relation, built unevaluated; conversion never decides one.
@@ -1454,9 +1501,14 @@ def multiplied(factors: list[sp.Basic]) -> sp.Basic:
 
     A product containing a declared nonscalar is taken the same way, since section 8.4
     makes `a*b` the matrix product for matrices.
+
+    A scalar times a set multiplies each element, and sets multiply as their Cartesian
+    product.
     """
     if not any(
-        isinstance(factor, Vector) or _vectorial(factor) or _symbolic_matrix(factor)
+        isinstance(factor, (Vector, SetOf))
+        or _vectorial(factor)
+        or _symbolic_matrix(factor)
         for factor in factors
     ):
         try:
@@ -1464,8 +1516,16 @@ def multiplied(factors: list[sp.Basic]) -> sp.Basic:
         except Exception:
             pass
     result = factors[0]
+    # The sets whose Cartesian product `result` is, so that a run of sets makes vectors
+    # as long as the run: `{a}*{b}*{c}` is `{[a, b, c]}`.
+    run: list[SetOf] = [result] if isinstance(result, SetOf) else []
     for factor in factors[1:]:
+        if run and isinstance(factor, SetOf):
+            run.append(factor)
+            result = cartesian(run)
+            continue
         result = _times(result, factor)
+        run = [result] if isinstance(result, SetOf) else []
     return result
 
 
@@ -1484,6 +1544,7 @@ def _ambiguous_product(factors: list[sp.Basic]) -> sp.Basic:
 
 
 def _times(left: sp.Basic, right: sp.Basic) -> sp.Basic:
+    """`left*right`, as `multiplied` describes; of two sets, the Cartesian product."""
     if _symbolic_matrix(left) or _symbolic_matrix(right):
         return dotted(left, right)
     if isinstance(left, Vector) and isinstance(right, Vector):
@@ -1492,6 +1553,12 @@ def _times(left: sp.Basic, right: sp.Basic) -> sp.Basic:
         return mapped(left, lambda element: _times(element, right))
     if isinstance(right, Vector):
         return mapped(right, lambda element: _times(left, element))
+    if isinstance(left, SetOf) and isinstance(right, SetOf):
+        return cartesian([left, right])
+    if isinstance(left, SetOf):
+        return SetOf(*(_times(element, right) for element in left.args))
+    if isinstance(right, SetOf):
+        return SetOf(*(_times(left, element) for element in right.args))
     if _vectorial(left) or _vectorial(right):
         # A number distributes over the sum, as sympy distributes it over any sum;
         # anything else multiplies it as a whole.
@@ -1636,9 +1703,14 @@ def power(base: sp.Basic, exponent: sp.Basic) -> sp.Basic:
     matrix's inverse is kept in the head used for symbolic matrices, which prints as
     `u^-1`. Only square matrices have powers, and a vector's power isn't elementwise
     either, so any other vector's power stands.
+
+    A set's power to a positive integer is the Cartesian product of that many copies:
+    `{1, 2}^2` is `{[1, 1], [1, 2], [2, 1], [2, 2]}`.
     """
     if _explodes(base, exponent):
         return Power(base, exponent)
+    if isinstance(base, SetOf):
+        return _set_power(base, exponent)
     if _symbolic_matrix(base):
         return _matrix_power(base, exponent)
     if isinstance(base, Vector):
@@ -1654,6 +1726,16 @@ def power(base: sp.Basic, exponent: sp.Basic) -> sp.Basic:
         return base**exponent
     except Exception:
         return sp.Pow(base, exponent, evaluate=False)
+
+
+def _set_power(base: SetOf, exponent: sp.Basic) -> sp.Basic:
+    if (
+        isinstance(exponent, sp.Integer)
+        and exponent > 0
+        and len(base.args) ** int(exponent) <= MOST_TERMS
+    ):
+        return cartesian([base] * int(exponent))
+    return Power(base, exponent)
 
 
 def any_root(base: sp.Basic, exponent: sp.Basic) -> sp.Basic | None:
@@ -1695,7 +1777,7 @@ def settled(value: sp.Basic) -> sp.Basic:
     already, which matters for matrices; evaluation avoids the question by
     evaluating a body at each value instead of substituting into it.
     """
-    if not isinstance(value, sp.Basic) or not value.has(Vector):
+    if not isinstance(value, sp.Basic) or not value.has(Vector, SetOf):
         return value
     args = [settled(argument) for argument in value.args]
     if isinstance(value, sp.Add):
@@ -2771,9 +2853,9 @@ def _dif(conv: Converter, args: list) -> sp.Basic:
 def _integral(conv: Converter, args: list) -> sp.Basic:
     """`INT(u, x)` and `INT(u, x, a, b)`, both unevaluated.
 
-    Vectors and matrices are integrated element-wise, keeping their shape. A vector
-    limit gives one integral per element: `INT(x^2, x, 0, [1, 2])` is `[1/3, 8/3]`. Two
-    vector limits are refused, and the call stands.
+    Vectors and matrices are integrated element-wise, keeping their shape, and so are
+    sets. A vector limit gives one integral per element: `INT(x^2, x, 0, [1, 2])` is
+    `[1/3, 8/3]`. Two vector limits are refused, and the call stands.
 
     A definite integral of an equation integrates both sides. An antiderivative of one
     doesn't, since each side has its own constant, so `INT(y = x, x)` stands.
@@ -2781,6 +2863,9 @@ def _integral(conv: Converter, args: list) -> sp.Basic:
     _variable(args[1])
     if isinstance(args[0], Vector):
         return mapped(args[0], lambda element: _integral(conv, [element, *args[1:]]))
+    if isinstance(args[0], SetOf):
+        integrals = (_integral(conv, [element, *args[1:]]) for element in args[0].args)
+        return SetOf(*integrals)
     if len(args) == 2:
         if isinstance(args[0], Relational):
             raise TypeError("no antiderivative of an equation")
@@ -3420,12 +3505,25 @@ def _square(value: sp.Basic) -> sp.ImmutableMatrix:
 
 
 def _dimension(conv: Converter, args: list) -> sp.Basic:
-    """The number of elements in a vector, which for a matrix is its rows.
+    """The number of elements in a vector, which for a matrix is its rows, or in a set.
 
     Vectors of anything count: the shipped libraries branch on the number of `SOLVE`
     solutions, and no solutions is an empty vector rather than an error.
     """
-    return sp.Integer(len(_elements(_one(args))))
+    value = _one(args)
+    if is_set(value):
+        (value,) = conv.sets_simplified([value])
+    if isinstance(value, SetOf):
+        return size(value)
+    return sp.Integer(len(_elements(value)))
+
+
+def _power_set(conv: Converter, args: list) -> sp.Basic | None:
+    """`POWER_SET(s)`, all the subsets of `s`, and `POWER_SET(s, n)`, those of `n`
+    elements (see `sets.power_set`)."""
+    if len(args) not in (1, 2):
+        return None
+    return power_set(*conv.sets_simplified(args))
 
 
 def _element_of(conv: Converter, args: list) -> sp.Basic:
@@ -4543,6 +4641,7 @@ FUNCTIONS: dict[str, Handler] = {
     "DET": _determinant,
     "TRACE": _trace,
     "DIMENSION": _dimension,
+    "POWER_SET": _power_set,
     "ELEMENT": _element_of,
     "DELETE_ELEMENT": _delete_element,
     "REPLACE_ELEMENT": _replace_element,

@@ -281,6 +281,15 @@ def test_a_builtin_an_older_utility_file_defines_can_be_defined(text):
     assert sexpr(text).startswith("(fundef ")
 
 
+def test_a_set_operator_an_older_utility_file_defines_becomes_a_function():
+    # Files from before sets were built in define `UNION(u, v)` on vectors.
+    state = ParseState()
+    assert sexpr("{1} UNION {2}", state) == "(union (set 1) (set 2))"
+    for declaration in parse_expression("UNION(u,v):=APPEND(u,v)", state).declarations:
+        state.declare(declaration)
+    assert sexpr("UNION([1],[2])", state) == "(call UNION (vec 1) (vec 2))"
+
+
 def test_parsing_a_definition_leaves_its_parameters_undeclared():
     # `mx` is one name inside the body of `FIT3(mx,mf):=mx+mf`, but reverts to `m*x`
     # afterwards: parsing alone declares nothing. The session declares the parameters

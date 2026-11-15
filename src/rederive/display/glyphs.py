@@ -85,6 +85,8 @@ class Fence:
 
 PARENS = Fence(("(", ")"), ("┌", "│", "└"), ("┐", "│", "┘"))
 BRACKETS = Fence(("[", "]"), ("┌", "│", "└"), ("┐", "│", "┘"))
+#: A set's braces, built up with a point in the middle to tell them from brackets.
+BRACES = Fence(("{", "}"), ("┌", "┤", "└"), ("┐", "├", "┘"))
 #: Absolute value: the same rail whatever the height.
 RAILS = Fence(("│", "│"), ("│", "│", "│"), ("│", "│", "│"))
 #: The integral sign, drawn as a rail. It uses box-drawing arcs rather than `⌠` and `⌡`,

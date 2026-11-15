@@ -686,6 +686,7 @@ KINDS = [
     "LN(x)",
     "SIN^2 x",
     "[1, 2, 3]",
+    "{1, ..., n} UNION {a}",
     "x = 1",
     "NOT p",
     "p AND q",

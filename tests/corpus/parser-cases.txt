@@ -400,7 +400,7 @@ quux(z)    =>    (juxt q u u x z)
 f(x,y)    =>    ERROR@6    # rejection confirmed; offset not machine-checked
 f(x,y):=x+y    =>    (fundef F (params x y) (+ x y))
 SIN[x]    =>    (apply SIN (vec x))
-SIN{x}    =>    ERROR@3    # rejection confirmed; offset not machine-checked
+SIN{x}    =>    (apply SIN (set x))
 
 ## Group: The derivative prime
 
@@ -816,18 +816,26 @@ LN[(4*x)/3]    =>    (apply LN (vec (/ (* 4 x) 3)))
 ATAN[a/b]    =>    (apply ATAN (vec (/ a b)))
 DIMENSION[[a,b,c],[1,2,3]]    =>    (apply DIMENSION (vec (vec a b c) (vec 1 2 3)))
 IF[n=0, 1, 2]    =>    (apply IF (vec (rel n = 0) 1 2))
-{a, b, c}    =>    ERROR@0    # rejection confirmed; offset not machine-checked
-{}    =>    ERROR@0    # rejection confirmed; offset not machine-checked
 (a+b)    =>    (+ a b)
 [a+b]    =>    (vec (+ a b))
+
+## Group: Sets
+
+[state: InputMode=Character; CaseMode=Insensitive; InputBase=10]
+{a, b, c}    =>    (set a b c)
+{}    =>    (set)
+{1,...,10}    =>    (set 1 ... 10)
+[0,2,...,10]    =>    (vec 0 2 ... 10)
+[1,2,...,5,7]    =>    ERROR@5    # rejection confirmed; offset not machine-checked
+a \ b    =>    (setminus a b)
+a UNION b INTERSECTION c\d    =>    (union a (intersection b (setminus c d)))
+{1} UNION {2}={1,2}    =>    (rel (union (set 1) (set 2)) = (set 1 2))
 
 ## Group: Operators that do not exist in the original
 
 [state: InputMode=Character; CaseMode=Insensitive; InputBase=10]
 x == y    =>    ERROR@3    # rejection confirmed; offset not machine-checked
 1..10    =>    ERROR@2    # rejection confirmed; offset not machine-checked
-{1,...,10}    =>    ERROR@0    # rejection confirmed; offset not machine-checked
-a \ b    =>    ERROR@2    # rejection confirmed; offset not machine-checked
 a && b    =>    ERROR@2    # rejection confirmed; offset not machine-checked
 $x    =>    ERROR@0    # rejection confirmed; offset not machine-checked
 '(2+3)    =>    ERROR@0    # rejection confirmed; offset not machine-checked

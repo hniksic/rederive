@@ -52,6 +52,9 @@ from rederive.syntax.names import GREEK_GLYPHS
     AND,
     NOT,
     RELATION,
+    UNION,
+    INTERSECTION,
+    DIFFERENCE,
     SUM,
     NEG,
     PRODUCT,
@@ -59,9 +62,14 @@ from rederive.syntax.names import GREEK_GLYPHS
     POSTFIX,
     SUB,
     ATOM,
-) = range(14)
+) = range(17)
 
 _BINOP_PRECEDENCE = {"/": PRODUCT, ".": PRODUCT, "^": POW}
+
+#: Precedence of each set operator, and how it is written. The difference is written
+#: without blanks, as the original does.
+_SET_PRECEDENCE = {"UNION": UNION, "INTERSECTION": INTERSECTION, "\\": DIFFERENCE}
+_SET_SPELLING = {"UNION": " UNION ", "INTERSECTION": " INTERSECTION ", "\\": "\\"}
 
 #: Operators spelled as words, which need a blank on each side to stay separate from
 #: adjacent names.
@@ -115,6 +123,8 @@ def precedence(node: Node, gap: str = "") -> int:
             return NOT
         case Kind.REL | Kind.DOMAIN:
             return RELATION
+        case Kind.SETOP:
+            return _SET_PRECEDENCE[str(node.value)]
         case Kind.SUM:
             return SUM
         case Kind.UNOP:
@@ -128,8 +138,8 @@ def precedence(node: Node, gap: str = "") -> int:
         case Kind.POSTOP:
             return POSTFIX
         case _:
-            # Leaves and self-delimiting forms: calls, vectors, `ABS(u)`, and the tight
-            # form's `NOT(u)`.
+            # Leaves and self-delimiting forms: calls, vectors, sets, `ABS(u)`, and the
+            # tight form's `NOT(u)`.
             return ATOM
 
 
@@ -179,9 +189,19 @@ def _spell(node: Node, gap: str) -> str:
             )
         case Kind.VECTOR:
             return f"[{_arguments(node.children, gap)}]"
+        case Kind.SET:
+            return f"{{{_arguments(node.children, gap)}}}"
+        case Kind.ELLIPSIS:
+            return str(node.value)
+        case Kind.SETOP:
+            # Left-associative: the same operator nests bare on the left only.
+            own = _SET_PRECEDENCE[str(node.value)]
+            left = _operand(node.children[0], own, gap)
+            right = _operand(node.children[1], own + 1, gap)
+            return f"{left}{_SET_SPELLING[str(node.value)]}{right}"
         case Kind.REL:
             left = _operand(node.children[0], RELATION, gap)
-            right = _operand(node.children[1], SUM, gap)
+            right = _operand(node.children[1], UNION, gap)
             return f"{left}{gap}{node.value}{gap}{right}"
         case Kind.NOT:
             if gap:

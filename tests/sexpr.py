@@ -16,6 +16,7 @@ from rederive.model.expr import Kind, Node
 _BINOPS = {"/": "/", "^": "^", ".": "dot"}
 _UNOPS = {"-": "neg", "+": "pos", "+-": "pm"}
 _POSTOPS = {"!": "fact", "%": "pct", "`": "transpose"}
+_SETOPS = {"UNION": "union", "INTERSECTION": "intersection", "\\": "setminus"}
 
 
 def to_sexpr(node: Node) -> str:
@@ -48,6 +49,12 @@ def to_sexpr(node: Node) -> str:
             return _form("funcpow", children)
         case Kind.VECTOR:
             return _form("vec", children)
+        case Kind.SET:
+            return _form("set", children)
+        case Kind.ELLIPSIS:
+            return "..."
+        case Kind.SETOP:
+            return _form(_SETOPS[str(node.value)], children)
         case Kind.REL:
             # The operator is written between the two operands.
             return _form("rel", [children[0], str(node.value), children[1]])

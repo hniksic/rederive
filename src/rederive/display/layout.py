@@ -201,6 +201,17 @@ class Engine:
                 return self.raised(inner, exponent, node, (inner, exponent))
             case Kind.VECTOR:
                 return self._vector(node, level, budget)
+            case Kind.SET:
+                return fenced(
+                    self._joined(node.children, level, budget),
+                    glyphs.BRACES,
+                    threshold=1,
+                    node=node,
+                )
+            case Kind.ELLIPSIS:
+                return text(str(node.value), node)
+            case Kind.SETOP:
+                return self._set_operation(node, level, budget)
             case Kind.REL:
                 return self._relation(node, level, budget)
             case Kind.NOT:
@@ -400,6 +411,16 @@ class Engine:
         second = self.operand(right, level, budget, forms.ADD)
         operator = glyphs.operator(str(node.value))
         return row([first, text(self._spaced(operator)), second], node, (first, second))
+
+    def _set_operation(self, node: Node, level: int, budget: int | None) -> Box:
+        """A union, intersection or difference, left-associative like the grammar."""
+        own = forms.precedence(node)
+        left, right = node.children
+        first = self.operand(left, level, budget, own, own)
+        second = self.operand(right, level, budget, own + 1)
+        operator = str(node.value)
+        symbol = operator if operator == "\\" else f" {operator} "
+        return row([first, text(symbol), second], node, (first, second))
 
     def _logical(self, node: Node, level: int, budget: int | None) -> Box:
         word = _WORD_OPERATORS[node.kind]

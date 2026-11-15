@@ -81,6 +81,7 @@ from rederive.engine.to_sympy import (
     settled,
     steps,
 )
+from rederive.engine.sets import is_set
 from rederive.engine.vectors import mapped
 from rederive.model.expr import Kind, Node
 from rederive.syntax import ParseState
@@ -678,6 +679,12 @@ class _Evaluator(Converter):
             except Exception:
                 simplified.append(value)
         return simplified
+
+    def sets_simplified(self, values: list[sp.Basic]) -> list[sp.Basic]:
+        """`values` with each set among them simplified (see `_simplified`)."""
+        return [
+            self._simplified([value])[0] if is_set(value) else value for value in values
+        ]
 
     def _approximating(self, arguments: Sequence[Node]) -> list[sp.Basic]:
         """The arguments of `APPROX(u, n)`, with `u` evaluated under Approximate.

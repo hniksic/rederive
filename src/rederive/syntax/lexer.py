@@ -281,9 +281,9 @@ class Lexer:
                 in_string = char != '"'
             elif char == '"':
                 in_string = True
-            elif char in "([":
+            elif char in "([{":
                 depth += 1
-            elif char in ")]":
+            elif char in ")]}":
                 depth -= 1
             elif char == "," and depth == 1:
                 commas += 1

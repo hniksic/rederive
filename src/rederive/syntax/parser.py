@@ -46,7 +46,7 @@ _FACTOR_KINDS = (
 _SIGNS = ("-", "+", "+-")
 _POSTFIX = ("!", "%", "`")
 _RELATIONS = ("=", "/=", "<", "<=", ">", ">=")
-_CLOSERS = (",", "]", ")")
+_CLOSERS = (",", "]", ")", "}")
 #: Setting values by folded spelling. `NORMAL` and `EXPAND` are also built-in functions,
 #: so a function name with nothing to apply to is looked up here first.
 _SETTING_VALUES = {fold(value): value for value in names.SETTING_VALUES}
@@ -118,7 +118,7 @@ class Parser:
             # Where an operator could continue the expression, `|` closes the innermost
             # open bar rather than opening a new one.
             return self.bars == 0
-        return token.value in ("(", "[", "?")
+        return token.value in ("(", "[", "{", "?")
 
     def starts_operand(self, token: Token) -> bool:
         return self.starts_factor(token) or _is_op(token, *_SIGNS)
@@ -185,7 +185,7 @@ class Parser:
 
     def relation(self) -> _Parsed:
         """Binary relations, left-associative: `a=b<c` is `(a=b)<c`."""
-        left = self.sum()
+        left = self.set_operation()
         while True:
             token = self.peek()
             if not _is_op(token, *_RELATIONS):
@@ -193,8 +193,25 @@ class Parser:
             if token.value == "=" and self.after(token).kind is TokenKind.EOF:
                 break  # the author line's trailing `=`
             self.advance()
-            right = self.sum()
+            right = self.set_operation()
             left = _combine(Kind.REL, left, right, token.value, token.surface)
+        return left
+
+    def set_operation(self, level: int = 0) -> _Parsed:
+        """The set operators, between relations and sums.
+
+        From loosest: `UNION`, `INTERSECTION`, then the difference `\\`, each
+        left-associative, so `s UNION t INTERSECTION u` is `s UNION (t INTERSECTION u)`
+        and `a \\ b \\ c` is `(a \\ b) \\ c`.
+        """
+        if level == len(names.SET_OPERATORS):
+            return self.sum()
+        operator = names.SET_OPERATORS[level]
+        left = self.set_operation(level + 1)
+        while _is_op(self.peek(), operator):
+            token = self.advance()
+            right = self.set_operation(level + 1)
+            left = _combine(Kind.SETOP, left, right, operator, token.surface)
         return left
 
     def sum(self) -> _Parsed:
@@ -456,6 +473,8 @@ class Parser:
             return self.group(token)
         if _is_op(token, "["):
             return self.vector(token)
+        if _is_op(token, "{"):
+            return self.set_literal(token)
         if _is_op(token, "|"):
             return self.absolute_value(token)
         raise self.error(token.start, "an operand")
@@ -480,21 +499,42 @@ class Parser:
 
     def vector(self, opening: Token) -> _Parsed:
         """A vector literal; brackets are never used for grouping."""
+        return self._listed(Kind.VECTOR, opening, "]")
+
+    def set_literal(self, opening: Token) -> _Parsed:
+        """A set literal such as `{1, 2, 3}`; `{}` is the empty set."""
+        return self._listed(Kind.SET, opening, "}")
+
+    def _listed(self, kind: Kind, opening: Token, closer: str) -> _Parsed:
+        """The elements of a vector or set, up to `closer`.
+
+        One element may be the ellipsis of an arithmetic sequence, written between its
+        last two terms: `[1, ..., n]` counts by one, `[0, 2, ..., 10]` by the difference
+        of the first two. It stands nowhere else.
+        """
         self.advance()
         elements: list[_Parsed] = []
-        if not _is_op(self.peek(), "]"):
-            elements.append(self.assignment())
+        if not _is_op(self.peek(), closer):
+            elements.append(self._element())
             while _is_op(self.peek(), ","):
                 self.advance()
-                elements.append(self.assignment())
-        closing = self.expect("]", "']'")
-        node = Node(
-            Kind.VECTOR,
-            opening.start,
-            closing.end,
-            tuple(element.node for element in elements),
-        )
-        return _Parsed.of(node)
+                elements.append(self._element())
+        closing = self.expect(closer, f"'{closer}'")
+        children = tuple(element.node for element in elements)
+        for index, child in enumerate(children):
+            if child.kind is Kind.ELLIPSIS and (
+                len(children) not in (3, 4) or index != len(children) - 2
+            ):
+                raise self.error(child.start, "an element")
+        return _Parsed.of(Node(kind, opening.start, closing.end, children))
+
+    def _element(self) -> _Parsed:
+        token = self.peek()
+        if _is_op(token, names.ELLIPSIS):
+            self.advance()
+            node = Node(Kind.ELLIPSIS, token.start, token.end, (), names.ELLIPSIS)
+            return _Parsed.of(node)
+        return self.assignment()
 
     def absolute_value(self, opening: Token) -> _Parsed:
         """`|u|` is `ABS(u)`, and bars nest."""

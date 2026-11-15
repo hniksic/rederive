@@ -75,6 +75,7 @@ from rederive.engine.normal import normal_form, over_one_denominator
 from rederive.engine.ordering import main_order
 from rederive.engine.printer import is_written, shadowing_built_ins
 from rederive.engine.rewriting import Rewrite, attempt, forced, pays
+from rederive.engine.sets import equal_sets, is_elided, is_set
 from rederive.engine.signs import folded_signs, polar_logarithms
 from rederive.engine.solving import minting, oriented, solutions
 from rederive.engine.to_sympy import (
@@ -284,7 +285,8 @@ def _transform(expression: sp.Basic, context: Context, decide: bool) -> sp.Basic
         return _definition(expression, context, decide)
     if isinstance(expression, Logical):
         return _logical(expression, context, decide)
-    if isinstance(expression, Vector):
+    if isinstance(expression, Vector) or is_set(expression) or is_elided(expression):
+        # A set or ellipsis is rebuilt, so its elements are merged or counted anew.
         return expression.func(
             *(_transform(a, context, decide) for a in expression.args)
         )
@@ -326,6 +328,9 @@ def _relation(expression: Relational, context: Context, decide: bool) -> sp.Basi
     With `decide` off (soLve's pipeline), the sides are simplified and the relation left
     for solving.
 
+    Two sets are equal when they have the same elements, compared as simplified
+    expressions.
+
     Two vectors of the same length are related element by element, as section 8.5 uses
     to read off a solved system: `[[x], [y], [z]] = A^-1 . b` gives three equations. If
     the elements decide a vector (in)equation, the answer is one truth value; see
@@ -333,6 +338,10 @@ def _relation(expression: Relational, context: Context, decide: bool) -> sp.Basi
     """
     left = _transform(expression.lhs, context, decide)
     right = _transform(expression.rhs, context, decide)
+    if decide and expression.func in (sp.Eq, sp.Ne):
+        verdict = equal_sets(left, right)
+        if verdict is not None:
+            return sp.true if verdict == (expression.func is sp.Eq) else sp.false
     spread = _spread(expression.func, left, right, context, decide)
     if spread is not None:
         if decide and expression.func in (sp.Eq, sp.Ne):
@@ -2174,10 +2183,11 @@ def _solve_head(args: list, divisors: list, context: Context) -> sp.Basic | None
 
     Returns None for any other form, leaving the call as written: an unknown third
     argument, more than four arguments, or a domain word in the variable's place. A
-    misspelled `Reals` shouldn't be silently ignored.
+    misspelled `Reals` shouldn't be silently ignored. So does a set of equations, whose
+    elements have no order to solve them in.
     """
     target, *rest = args
-    if len(rest) > 3 or (rest and _domain_word(rest[0]) is not None):
+    if len(rest) > 3 or (rest and _domain_word(rest[0]) is not None) or is_set(target):
         return None
     variables = _solved_for(rest[0]) if rest else ()
     bounds = (rest[1], rest[2]) if len(rest) == 3 else None

@@ -33,18 +33,27 @@ OR = 3
 AND = 4
 NOT = 5
 RELATION = 6
-ADD = 7
-MUL = 8
-NEG = 9
-POW = 10
-POSTFIX = 11
-SCRIPT = 12
-ATOM = 13
+UNION = 7
+INTERSECTION = 8
+DIFFERENCE = 9
+ADD = 10
+MUL = 11
+NEG = 12
+POW = 13
+POSTFIX = 14
+SCRIPT = 15
+ATOM = 16
 
 _BINOPS: dict[str, int] = {
     "/": MUL,
     ".": MUL,
     "^": POW,
+}
+
+SET_OPERATIONS: dict[str, int] = {
+    "UNION": UNION,
+    "INTERSECTION": INTERSECTION,
+    "\\": DIFFERENCE,
 }
 
 # How tightly each special form binds. `√u` takes an operand as tight as a power's, so
@@ -147,6 +156,8 @@ def precedence(node: Node) -> int:
             return MUL
         case Kind.BINOP:
             return _BINOPS[str(node.value)]
+        case Kind.SETOP:
+            return SET_OPERATIONS[str(node.value)]
         case Kind.UNOP:
             return NEG
         case Kind.POSTOP:

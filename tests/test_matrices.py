@@ -201,6 +201,60 @@ def test_a_solved_vector_is_a_vector_to_generate_over():
     assert simp("VECTOR(RHS(e), e, SOLVE(x^2 = 4, x))") == "[-2, 2]"
 
 
+# -- sets ---------------------------------------------------------------------
+
+#: A set keeps each element once, numbers first in ascending order. An operation whose
+#: answer depends on whether two different expressions are equal stays as written.
+SETS = [
+    ("{a, b, b, c}", "{a, b, c}"),
+    ("{x, 1, y, 2/3, -5}", "{-5, 2/3, 1, x, y}"),
+    ("{1, 3, 5, 7, 9} UNION {2, 3, 5, 8, 13}", "{1, 2, 3, 5, 7, 8, 9, 13}"),
+    ("{1, ..., 10}\\{2, 3, 5, 7}", "{1, 4, 6, 8, 9, 10}"),
+    ("{1, 2, 3} INTERSECTION {2, 3, 4}", "{2, 3}"),
+    ("{1, 2} UNION {3} INTERSECTION {3}", "{1, 2, 3}"),
+    # Elements are expressions, different unless they simplify to the same one.
+    ("{1, 2}\\{x}", "{1, 2}"),
+    ("{1, 2, x}\\{2, 5}", "{1, x}"),
+    ("{a, b} INTERSECTION {c}", "{}"),
+    ("{a, b, c} INTERSECTION {b, d}", "{b}"),
+    ("{x + x, 2*x}", "{2*x}"),
+    ("{SIN(x)^2 + COS(x)^2, 2}\\{1}", "{2}"),
+    ("s INTERSECTION {a}", "s INTERSECTION {a}"),
+    ("{1, ..., n}\\{1}", "{1, ..., n}\\{1}"),
+    ("POWER_SET({a, b, c})", "{{}, {a}, {b}, {c}, {a, b}, {a, c}, {b, c}, {a, b, c}}"),
+    ("POWER_SET({1, 2, 3}, 2)", "{{1, 2}, {1, 3}, {2, 3}}"),
+    ("POWER_SET({a, b, c}, 2)", "{{a, b}, {a, c}, {b, c}}"),
+    ("{a, b}*{c, d}", "{[a, c], [a, d], [b, c], [b, d]}"),
+    ("{2, 3}*{1}*{4, 5}", "{[2, 1, 4], [2, 1, 5], [3, 1, 4], [3, 1, 5]}"),
+    ("{1, 2}^2", "{[1, 1], [1, 2], [2, 1], [2, 2]}"),
+    ("2*{1, 2}", "{2, 4}"),
+    ("{1, 2}*[3, 4]", "[{3, 6}, {4, 8}]"),
+    ("{1, 2} + 1", "{1, 2} + 1"),
+    ("{a, b}``", "{a, b}"),
+    ("{a, b} INTERSECTION {a, b}`", "{}"),
+    ("{a, b} UNION {a, b}`", "{}`"),
+    ("DIMENSION({1, 2, 3})", "3"),
+    ("DIMENSION({a, b})", "2"),
+    ("DIMENSION({SIN(x)^2 + COS(x)^2, 1})", "1"),
+    ("{1, 2} = {2, 1}", "true"),
+    ("{1, 2} = {1, 2, 3}", "false"),
+    ("{a, b} = {b, a}", "true"),
+    ("{a, b} = {a, c}", "false"),
+    ("{a, b} /= {a, c}", "true"),
+    # The ellipsis counts by the step between the first two terms, or by one.
+    ("[0, 2, ..., 10]", "[0, 2, 4, 6, 8, 10]"),
+    ("[x, x + 1, ..., x + 3]", "[x, x + 1, x + 2, x + 3]"),
+    ("[1/2, ..., 3]", "[1/2, 3/2, 5/2]"),
+    ("{10, ..., 1}", "{}"),
+    ("{1, ..., n}", "{1, ..., n}"),
+]
+
+
+@pytest.mark.parametrize(("text", "expected"), SETS, ids=str)
+def test_sets(text, expected):
+    assert simp(text) == expected
+
+
 # -- declared nonscalars ------------------------------------------------------
 
 NONSCALAR = declared(*(f"{name} :epsilon Nonscalar" for name in "abcd"))

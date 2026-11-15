@@ -97,6 +97,9 @@ SPELLINGS = [
     ("x :epsilon Real (0, inf)", "x:epsilonReal (0, inf)"),
     ("[[1,2],[3,4]]", "[[1,2],[3,4]]"),
     ("-inf", "-inf"),
+    # sets, and the set operators: the difference unspaced, the words spaced
+    ("{1, ..., 10} \\ {2, 3, 5, 7}", "{1,...,10}\\{2,3,5,7}"),
+    ("{1} union {2} = {1, 2}", "{1} UNION {2}={1,2}"),
 ]
 
 
