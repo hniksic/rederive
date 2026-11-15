@@ -441,6 +441,27 @@ def test_a_quotient_in_roots_of_its_variables_cancels(text, expected):
     assert simp(text) == expected
 
 
+def test_a_quotient_cancels_over_the_numeric_roots_in_it():
+    # `x + SQRT(2)` divides both, which only the field of `SQRT(2)` shows.
+    text = "(x^3 + (SQRT(2) - 2)*x^2 - (2*SQRT(2) + 3)*x - 3*SQRT(2))/(x^2 - 2)"
+    assert simp(text) == "(x^2 - 2*x - 3)/(x - SQRT(2))"
+    assert simp(f"FACTOR({text})") == "(x + 1)*(x - 3)/(x - SQRT(2))"
+
+
+#: Exponentials of fractional multiples of one exponent are powers of one exponential,
+#: and the quotient cancels in it; so does a power of a perfect-power base.
+OVER_EXPONENTIALS = [
+    ("(#e^x - 1)/(#e^(x/2) + 1)", "#e^(x/2) - 1"),
+    ("(#e^(-x) - 1)/(#e^(-x/2) + 1)", "#e^(-x/2) - 1"),
+    ("(4^x - 1)/(2^x + 1)", "2^x - 1"),
+]
+
+
+@pytest.mark.parametrize(("text", "expected"), OVER_EXPONENTIALS, ids=str)
+def test_a_quotient_in_exponentials_of_one_exponent_cancels(text, expected):
+    assert simp(text) == expected
+
+
 #: The power of a variable every term of a numerator sum has cancels against the
 #: denominator's where an exponent is a fraction or a symbol, which the gcd doesn't see.
 #: ODE.MTH's canonic forms read the denominator: `4*x^(18/7) - 3*x^2` over `4*x^4`
@@ -482,6 +503,8 @@ DOMAINS = [
     ("SQRT(x^2)", "SQRT(x^2)", COMPLEX_X),
     ("SQRT(x^2)", "x", POSITIVE_X),
     ("SQRT(x^2)", "-x", declared("x :epsilon Real (-inf, 0)")),
+    # Below zero, a root of a negative is `#i` times a real root, so the two agree.
+    ("SQRT(1/z) + 1/SQRT(z)", "0", declared("z :epsilon Real (-inf, 0)")),
     # A real `x` could be negative, and then `LN(x^2 - x)` is not
     # `LN(x) + LN(x - 1)`. Term order is the engine's.
     ("LN(x^2 - x) - LN(x)", "LN(x^2 - x) - LN(x)", None),
@@ -620,6 +643,13 @@ def test_an_inverse_undoes_its_function_on_whichever_branch_a_real_angle_is():
     assert simp("ASIN(SIN(x))") == "(x - pi*FLOOR(x/pi + 1/2))*(-1)^FLOOR(x/pi + 1/2)"
     assert simp("ACOS(COS(x))") == "ABS(x - 2*pi*FLOOR(x/(2*pi) + 1/2))"
     assert simp("ASIN(SIN(z))", declared("z :epsilon Complex")) == "ASIN(SIN(z))"
+
+
+def test_an_inverse_undoes_its_function_at_a_complex_number_inside_a_branch():
+    # The branch is the vertical strip over the real part's branch.
+    assert simp("ATAN(TAN(11 + 30*#i))") == "-4*pi + 11 + 30*#i"
+    assert simp("ASIN(SIN(2 + #i))") == "pi - 2 - #i"
+    assert simp("ACOS(COS(4 - #i))") == "2*pi - 4 + #i"
 
 
 def test_two_declared_intervals_are_asked_together():
@@ -911,6 +941,9 @@ TRIGONOMETRY = [
     ("SIN(x)^3 + SIN(x) + COS(x)^2*SIN(x)", "2*SIN(x)", None),
     ("SIN(6*x)/SIN(3*x)", "2*COS(3*x)", None),
     ("ATAN(2 + SQRT(3))", "5*pi/12", None),
+    # The radicand is a square over the half angle; `COS(3)` is negative.
+    ("SQRT((1 + COS(6))/2)", "-COS(3)", None),
+    ("SQRT((1 + COS(y))/2)", "ABS(COS(y/2))", None),
     ("ATAN(1, 1)", "pi/4", None),
     # Complementary arcs of one argument sum to a right angle. `ACOT(t)` is
     # `pi/2 - ATAN(t)` (section 6.4), with values from 0 to `pi`, so the tangent pair
@@ -1569,6 +1602,12 @@ PERFECT_POWERS = [
     ("SQRT(x^2 + 2*x + 1)", "x + 1", POSITIVE_X),
     ("SQRT(x^2 + 2*x + 1)", "-x - 1", declared("x :epsilon Real (-inf, -1)")),
     ("SQRT(x^2 + 2*x + 1)", "SQRT(x^2 + 2*x + 1)", COMPLEX_X),
+    # A polynomial in a variable's root, the root nonnegative where the variable is.
+    ("SQRT(x - 2*SQRT(x) + 1)", "ABS(SQRT(x) - 1)", POSITIVE_X),
+    ("SQRT(4*x + 4*SQRT(x) + 1)", "2*SQRT(x) + 1", POSITIVE_X),
+    # A symbolic exponent is taken over a root that is positive.
+    ("(4*x + 4*SQRT(x) + 1)^(1/(2*SQRT(x) + 1))", "(2*SQRT(x) + 1)^(2/(2*SQRT(x) + 1))",
+     POSITIVE_X),
     # The principal cube root of a negative cube is not real, and a negative radicand
     # or one that is not a perfect power has no root to take.
     ("(x^3 + 3*x^2 + 3*x + 1)^(1/3)", "(x^3 + 3*x^2 + 3*x + 1)^(1/3)", None),

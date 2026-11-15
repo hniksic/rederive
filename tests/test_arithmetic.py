@@ -171,6 +171,13 @@ def test_the_remainder_of_a_power_too_big_to_build_is_taken_by_modular_powering(
     assert simp("MOD(7777777^7777777, 100000)") == str(pow(7777777, 7777777, 100000))
 
 
+def test_a_factorial_too_big_to_build_stays_a_factorial():
+    # `(10!)!` has 22 million digits. It still counts as a positive integer.
+    assert simp("10!!") == "3628800!"
+    assert simp("2*10!! - 10!!") == "3628800!"
+    assert simp("(-1)^(10!!)") == "1"
+
+
 # -- approximation ------------------------------------------------------------
 
 #: The digits the oracle works to, far beyond any precision asked for below.

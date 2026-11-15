@@ -829,6 +829,12 @@ def test_a_limit_that_settles_or_runs_away_is_no_interval():
     assert simp("LIM(LN(x), x, 0)") == "-inf"
 
 
+def test_a_quotient_defined_nowhere_has_no_limit():
+    # The denominator vanishes identically, as does the numerator.
+    text = "(TAN(x)^2 + 1 - SEC(x)^2)/(SIN(x)^2 + COS(x)^2 - 1)"
+    assert simp(f"LIM({text}, x, 0)") == "?"
+
+
 def test_a_limit_infinite_on_a_real_side_and_an_imaginary_one_is_unknown():
     """At a branch point one side of the limit is imaginary, which `±inf` doesn't say.
 

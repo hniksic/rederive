@@ -18,6 +18,7 @@ and leaves every other name a variable.
 from __future__ import annotations
 
 import functools
+import math
 import random
 import time
 from collections.abc import Callable, Sequence
@@ -25,6 +26,7 @@ from dataclasses import replace
 from fractions import Fraction
 from itertools import product
 
+import mpmath
 import sympy as sp
 from sympy.concrete.gosper import gosper_term
 from sympy.core.function import AppliedUndef
@@ -88,6 +90,7 @@ __all__ = [
     "MovingLimit",
     "AnyMovingLimit",
     "PlusMinus",
+    "Factorial",
     "Power",
     "Quotient",
     "StringLiteral",
@@ -284,6 +287,26 @@ class Power(sp.Function):
         working = prec + int(exponent).bit_length() + 16
         value = sp.Float(base, precision=working) ** exponent
         return sp.Float(value, precision=prec)
+
+
+class Factorial(sp.Function):
+    """`n!` of an integer `n` whose value is too big to build (see `_explodes_factorial`).
+
+    Like `Power`, a separate head, so nothing rebuilds and evaluates it. It can be
+    approximated, which takes no longer than for a small `n`.
+    """
+
+    nargs = 1
+    is_integer = True
+    is_positive = True
+    is_even = True
+
+    def _eval_evalf(self, prec: int) -> sp.Float | None:
+        (number,) = self.args
+        if not number.is_Integer:
+            return None
+        with mpmath.workprec(prec):
+            return sp.Float(mpmath.factorial(int(number)), precision=prec)
 
 
 class Truth(sp.Function):
@@ -1030,6 +1053,8 @@ class Converter:
         operand = self.convert(node.children[0])
         match str(node.value):
             case "!":
+                if _explodes_factorial(operand):
+                    return Factorial(operand)
                 return sp.factorial(operand)
             case "%":
                 return operand / 100
@@ -1846,6 +1871,14 @@ def _explodes(base: sp.Basic, exponent: sp.Basic) -> bool:
         return False
     bits = max(abs(base.p).bit_length(), abs(base.q).bit_length())
     return bits * abs(int(exponent)) > POWER_BITS
+
+
+def _explodes_factorial(operand: sp.Basic) -> bool:
+    """Whether `operand!` is a number too big to build, by the measure of `_explodes`:
+    `(10!)!` would be 22 million digits."""
+    if not (isinstance(operand, sp.Integer) and operand > 1):
+        return False
+    return math.lgamma(int(operand) + 1) / math.log(2) > POWER_BITS
 
 
 def _nameable(value: sp.Basic) -> bool:

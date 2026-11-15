@@ -95,6 +95,15 @@ def test_a_blank_value_leaves_the_name_an_unassigned_variable(session):
     assert session.assignments == {}
 
 
+async def test_an_assignment_overrides_a_domain_declaration(session):
+    """`z :=` after `z :epsilon Complex` leaves `z` an undeclared, real variable."""
+    session.declare_domain("z", "Complex")
+    session.declare_value("z")
+    assert session.declared_as("z") == "Value"
+    session.author("LN(#e^z)")
+    assert (await session.simplify("#3")).text == "z"
+
+
 # -- Declare Function --------------------------------------------------------
 
 

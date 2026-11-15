@@ -607,13 +607,18 @@ class Session:
                 self.state.declare(VariableDeclaration(name, len(node.children) > 1))
 
     def _assigned(self, node: Node, settings: set[str]) -> None:
-        """`x := 5` gives x a value; `x :=` with nothing after it takes it away."""
+        """`x := 5` gives x a value; `x :=` with nothing after it takes it away.
+
+        Either way an earlier domain declaration is overridden, so after `z :epsilon
+        Complex` and `z :=`, `z` is an undeclared, real variable again.
+        """
         target = node.children[0]
         if target.kind is not Kind.NAME:
             return
         name = str(target.value)
         if name in settings:
             return
+        self.domains.pop(name, None)
         if len(node.children) > 1:
             self.assignments[name] = node.children[1]
         else:

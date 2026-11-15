@@ -273,10 +273,9 @@ class ParseState:
         """Apply one declaration to this state."""
         match decl:
             case VariableDeclaration(name=name, has_value=has_value):
+                # An assignment overrides an earlier domain declaration.
                 self.functions.pop(name, None)
-                previous = self.variables.get(name)
-                domain = previous.domain if previous is not None else None
-                self.variables[name] = VariableInfo(name, has_value, domain)
+                self.variables[name] = VariableInfo(name, has_value, None)
             case FunctionDeclaration(name=name, params=params, has_body=has_body):
                 self.variables.pop(name, None)
                 self.functions[name] = FunctionInfo(name, params, has_body)

@@ -36,7 +36,7 @@ from collections.abc import Callable, Sequence
 from contextvars import ContextVar
 from functools import reduce
 from itertools import combinations
-from math import gcd
+from math import gcd, lcm
 from typing import NamedTuple
 
 import sympy as sp
@@ -1726,6 +1726,8 @@ def _limit(head: sp.Limit) -> sp.Basic:
     an integral it can't do.
     """
     expression, variable, point, direction = head.args
+    if _nowhere_defined(expression):
+        return sp.nan
     by_cases = _limit_by_cases(expression, variable, point, str(direction))
     if by_cases is not None:
         return by_cases
@@ -1764,6 +1766,23 @@ def _limit(head: sp.Limit) -> sp.Basic:
         value = forced(value, sp.simplify)
     split = attempt(value, lambda v: _split_on_a_sign(v, head))
     return value if split is None else split
+
+
+def _nowhere_defined(expression: sp.Basic) -> bool:
+    """Whether `expression` is a quotient whose denominator is identically zero, like
+    `(TAN(x)^2 + 1 - SEC(x)^2)/(SIN(x)^2 + COS(x)^2 - 1)`, so it has no limit anywhere.
+
+    Sympy's limit can spend minutes on such a quotient, which Simplify writes as `?`.
+    Other denominators that vanish identically sympy cancels by itself; trigonometric
+    ones are checked with the Pythagorean identity.
+    """
+    if not isinstance(expression, (sp.Mul, sp.Pow)):
+        return False
+    denominator = attempt(expression, lambda e: sp.fraction(sp.together(e))[1])
+    if denominator is None or not denominator.has(TrigonometricFunction):
+        return False
+    vanished = attempt(denominator, lambda d: _pythagorean(sp.expand(d)))
+    return vanished is not None and vanished.is_zero is True
 
 
 def _limit_by_cases(
@@ -2506,6 +2525,125 @@ def _over_roots(expression: sp.Basic) -> sp.Basic:
 
 #: The largest expression, in operations, `_over_roots` cancels.
 _OVER_ROOTS_SIZE = 200
+
+
+def _over_surds(expression: sp.Basic) -> sp.Basic:
+    """A quotient cancelled over the field its numeric roots span.
+
+    `(x^3 + (SQRT(2) - 2)*x^2 - (2*SQRT(2) + 3)*x - 3*SQRT(2))/(x^2 - 2)` has the
+    factor `x + SQRT(2)` above and below, which cancelling over the rationals can't
+    see; over `Q(SQRT(2))` it is `(x^2 - 2*x - 3)/(x - SQRT(2))`. Only a cancelled
+    factor is taken: a denominator written as a product, `(x + 2^(1/3))*(x^2 - 2^(1/3)*x
+    + 2^(2/3))`, isn't multiplied out. A sum stays a sum, as in `_over_roots`.
+    """
+    if not isinstance(expression, sp.Expr) or expression.is_Add:
+        return expression
+    surds = {
+        power
+        for power in expression.atoms(sp.Pow)
+        if power.base.is_Rational and power.exp.is_Rational and not power.exp.is_Integer
+    }
+    if not surds or len(surds) > _SURDS or sp.count_ops(expression) > _OVER_ROOTS_SIZE:
+        return expression
+    denominator = sp.fraction(sp.together(expression))[1]
+    if not denominator.free_symbols:
+        return expression
+    cancelled = sp.cancel(expression, extension=True)
+    return cancelled if _lowered(denominator, sp.fraction(cancelled)[1]) else expression
+
+
+def _lowered(before: sp.Basic, after: sp.Basic) -> bool:
+    """Whether denominator `after` has lower degree than `before`: whether cancelling
+    removed a factor, rather than only multiplying the factors out."""
+    symbols = sorted(before.free_symbols, key=str)
+    return sp.Poly(after, *symbols).total_degree() < sp.Poly(before, *symbols).total_degree()
+
+
+#: The most numeric roots `_over_surds` cancels over.
+_SURDS = 2
+
+
+def _over_exponentials(expression: sp.Basic) -> sp.Basic:
+    """A quotient with exponentials of fractional multiples of one exponent cancelled.
+
+    The normal form takes `#e^x` and `#e^(x/2)` for unrelated, so `(#e^x - 1)/(#e^(x/2)
+    + 1)` stays. Writing every `#e^(c*u)` as `t^(c/g)`, with `t = #e^(g*u)` and `g` the
+    greatest common measure of the `c`, makes the quotient rational in `t`, and
+    cancelled it is `#e^(x/2) - 1`. Likewise for powers `b^(c*u)` of a positive number
+    `b`, so `(4^x - 1)/(2^x + 1)` is `2^x - 1`. As `c/g` is an integer, `#e^(c*u)` is
+    `t^(c/g)` whatever `u` is. A sum stays a sum, as in `_over_roots`.
+    """
+    if not isinstance(expression, sp.Expr) or expression.is_Add:
+        return expression
+    if sp.count_ops(expression) > _OVER_ROOTS_SIZE or not sp.fraction(
+        sp.together(expression)
+    )[1].free_symbols:
+        return expression
+    groups: dict[tuple[sp.Basic, sp.Basic], list[sp.Rational]] = {}
+    for found in expression.atoms(sp.exp, sp.Pow):
+        key = _exponential_key(found)
+        if key is not None:
+            groups.setdefault(key[:2], []).append(key[2])
+    standing = {}
+    for (base, exponent), coefficients in groups.items():
+        measure = sp.Rational(
+            gcd(*(c.p for c in coefficients)), lcm(*(c.q for c in coefficients))
+        )
+        if all(c == measure for c in coefficients):
+            continue
+        standing[base, exponent] = (sp.Dummy("t"), measure)
+    if not standing:
+        return expression
+
+    def written(found: sp.Basic) -> sp.Basic:
+        key = _exponential_key(found)
+        if key is None or key[:2] not in standing:
+            return found
+        dummy, measure = standing[key[:2]]
+        return dummy ** int(key[2] / measure)
+
+    rational = expression.replace(
+        lambda e: _exponential_key(e) is not None, written, simultaneous=False
+    )
+    if any(
+        _exponential_key(found) is not None and _exponential_key(found)[:2] in standing
+        for found in rational.atoms(sp.exp, sp.Pow)
+    ):
+        return expression
+    cancelled = sp.cancel(rational)
+    if not _lowered(sp.fraction(sp.together(rational))[1], sp.fraction(cancelled)[1]):
+        return expression
+    return cancelled.xreplace(
+        {
+            dummy: sp.Pow(base, measure * exponent)
+            for (base, exponent), (dummy, measure) in standing.items()
+        }
+    )
+
+
+def _exponential_key(found: sp.Basic) -> tuple[sp.Basic, sp.Basic, sp.Rational] | None:
+    """`(b, u, c)` for an exponential `b^(c*u)` with `c` rational, `u` not a number and
+    `b` `#e` or a positive number, or None. A perfect power `b` is taken over its root:
+    `4^x` is `(2, x, 2)`."""
+    if isinstance(found, sp.exp):
+        base, exponent = sp.E, found.args[0]
+    elif (
+        isinstance(found, sp.Pow)
+        and found.base.is_number
+        and found.base.is_positive is True
+        and not found.exp.is_number
+    ):
+        base, exponent = found.base, found.exp
+    else:
+        return None
+    coefficient, rest = exponent.as_coeff_Mul()
+    if not coefficient.is_Rational or rest.is_number:
+        return None
+    if base.is_Integer:
+        perfect = sp.perfect_power(int(base))
+        if perfect:
+            base, coefficient = sp.Integer(perfect[0]), coefficient * perfect[1]
+    return base, rest, coefficient
 
 
 def _gated(expression: sp.Basic, rewrite: Rewrite) -> sp.Basic:
@@ -3675,6 +3813,55 @@ def _common_angle(expression: sp.Basic) -> sp.Basic | None:
     return measure * angles.pop()
 
 
+def _half_angle_roots(expression: sp.Basic) -> sp.Basic:
+    """Write a root of `a*(1 + COS(u))` or `a*(1 - COS(u))` over the half angle.
+
+    The radicand is `2*a*COS(u/2)^2` or `2*a*SIN(u/2)^2`, whose root sympy then takes
+    as far as the sign of the half-angle call allows: `SQRT((1 + COS(6))/2)` is
+    `-COS(3)`, and `SQRT((1 + COS(y))/2)` is `ABS(COS(y/2))` for a real `y`.
+    """
+    return expression.replace(_is_half_angle_root, _half_angle_root, simultaneous=False)
+
+
+def _is_half_angle_root(expression: sp.Basic) -> bool:
+    return (
+        isinstance(expression, sp.Pow)
+        and bool(expression.exp.is_Rational)
+        and expression.exp.q == 2
+        and isinstance(expression.base, sp.Add)
+        and _half_angle_square(expression.base) is not None
+    )
+
+
+def _half_angle_root(power: sp.Pow) -> sp.Basic:
+    return _half_angle_square(power.base) ** power.exp
+
+
+def _half_angle_square(radicand: sp.Add) -> sp.Basic | None:
+    """`radicand`, `a + b*COS(u)` with `b = a` or `b = -a`, as a square over `u/2`."""
+    cosines = radicand.atoms(sp.cos)
+    if len(cosines) != 1:
+        return None
+    (cosine,) = cosines
+    constant, slope = sp.S.Zero, sp.S.Zero
+    for term in radicand.args:
+        if not term.has(cosine):
+            constant += term
+            continue
+        coefficient = sp.cancel(term / cosine)
+        if coefficient.has(cosine):
+            return None
+        slope += coefficient
+    half = cosine.args[0] / 2
+    if constant.is_zero is not False or slope.is_zero is not False:
+        return None
+    if sp.expand(constant - slope) == 0:
+        return 2 * constant * sp.cos(half) ** 2
+    if sp.expand(constant + slope) == 0:
+        return 2 * constant * sp.sin(half) ** 2
+    return None
+
+
 def _phase_angles(expression: sp.Basic) -> sp.Basic:
     """Rewrite `a*SIN(z) + b*COS(z)` as a single sine.
 
@@ -4393,8 +4580,10 @@ def _any_perfect_powers(expression: sp.Basic) -> sp.Basic:
 def _is_polynomial_root(expression: sp.Basic) -> bool:
     return (
         isinstance(expression, sp.Pow)
-        and bool(expression.exp.is_Rational)
-        and not expression.exp.is_Integer
+        and (
+            (bool(expression.exp.is_Rational) and not expression.exp.is_Integer)
+            or not expression.exp.is_number
+        )
         and isinstance(expression.base, sp.Add)
         and len(expression.base.args) <= _PERFECT_TERMS
         and bool(expression.base.free_symbols)
@@ -4402,6 +4591,18 @@ def _is_polynomial_root(expression: sp.Basic) -> bool:
 
 
 def _perfect_root(power: sp.Pow, whatever: bool = False) -> sp.Basic:
+    roots = _variable_roots(power.base)
+    if roots:
+        written = power.base.replace(
+            lambda e: e.is_Pow and e.base in roots and e.exp.is_Rational,
+            lambda e: roots[e.base][0] ** int(e.exp * roots[e.base][1]),
+        )
+        written = written.xreplace({s: root**q for s, (root, q) in roots.items()})
+        taken = _perfect_root(written**power.exp, whatever)
+        if taken == written**power.exp:
+            return power
+        back = {root: s ** sp.Rational(1, q) for s, (root, q) in roots.items()}
+        return taken.xreplace(back)
     base, exponent = power.args
     try:
         polynomial = sp.Poly(base)
@@ -4428,6 +4629,26 @@ def _perfect_root(power: sp.Pow, whatever: bool = False) -> sp.Basic:
     if any(found.base == whole for found in taken.atoms(sp.Pow)):
         return power
     return taken
+
+
+def _variable_roots(base: sp.Basic) -> dict[sp.Symbol, tuple[sp.Dummy, int]]:
+    """For each variable of `base` raised to fractions, a new variable `t` standing for
+    its principal `q`-th root, `q` the least common denominator of the fractions, so
+    that `4*r + 4*SQRT(r) + 1` is the polynomial `4*t^2 + 4*t + 1`. `t` is nonnegative
+    where the variable is."""
+    denominators: dict[sp.Symbol, int] = {}
+    for found in base.atoms(sp.Pow):
+        if found.base.is_Symbol and found.exp.is_Rational and not found.exp.is_Integer:
+            denominators[found.base] = lcm(denominators.get(found.base, 1), found.exp.q)
+    return {
+        symbol: (
+            sp.Dummy(symbol.name, nonnegative=True)
+            if symbol.is_nonnegative
+            else sp.Dummy(symbol.name),
+            q,
+        )
+        for symbol, q in denominators.items()
+    }
 
 
 def _real_roots(expression: sp.Basic) -> sp.Basic:
@@ -4521,6 +4742,31 @@ def _is_power_of_positive(expression: sp.Basic) -> bool:
 
 def _as_exponential(power: sp.Pow) -> sp.Basic:
     return sp.exp(sp.expand(power.exp * sp.log(power.base)))
+
+
+def _negative_radicands(expression: sp.Basic) -> sp.Basic:
+    """Write a square root of a negative radicand as `#i` times a real root.
+
+    For `u` known to be negative, `u^(p/2)` is `#i^p*(-u)^(p/2)` on the principal
+    branch, so `SQRT(z)` is `#i*SQRT(-z)` and `1/SQRT(z)` is `-#i/SQRT(-z)` where `z <
+    0`. Sympy already does this for numbers and for some radicands (`SQRT(1/z)` is
+    `#i/SQRT(-z)`), and writing every such root the same way lets them cancel.
+    """
+    return expression.replace(_is_negative_radicand, _imaginary_root, simultaneous=False)
+
+
+def _is_negative_radicand(expression: sp.Basic) -> bool:
+    return (
+        isinstance(expression, sp.Pow)
+        and bool(expression.exp.is_Rational)
+        and expression.exp.q == 2
+        and not expression.base.is_number
+        and expression.base.is_negative is True
+    )
+
+
+def _imaginary_root(power: sp.Pow) -> sp.Basic:
+    return sp.I**power.exp.p * (-power.base) ** power.exp
 
 
 def _imaginary_phases(expression: sp.Basic) -> sp.Basic:
@@ -5046,6 +5292,8 @@ _IDENTITIES = (
           "IM(2^(x + #i*y)) is 2^x*SIN(y*LN(2)): a power of a positive base splits"),
     _Rule("imaginary phases", _imaginary_phases, forced,
           "PHASE(#i*x) is pi*SIGN(x)/2 for a real x"),
+    _Rule("negative radicands", _negative_radicands, forced,
+          "SQRT(z) is #i*SQRT(-z) for a negative z"),
     _Rule("signs", folded_signs, forced,
           "ABS(u)*SIGN(u) is u and u/ABS(u) is SIGN(u), for a real u"),
     _Rule("signs of reciprocals", _signs_of_reciprocals, forced,
@@ -5070,6 +5318,8 @@ _IDENTITIES = (
           "SIN(2*ACOS(x)) is 2*x*SQRT(1 - x^2): a call of a multiple of an arc"),
     _Rule("logarithmic powers", _logarithmic_powers, forced,
           "3^LN(2) is 2^LN(3): a power to a logarithm written over the smaller base"),
+    _Rule("half-angle roots", _half_angle_roots, _gated,
+          "SQRT((1 + COS(6))/2) is -COS(3): a root of 1 + COS(u) over the half angle"),
     _Rule("half angles", _half_angles, _gated,
           "calls of fractional multiples of one angle cancel written about it"),
     _Rule("denested", _denested, _unnested,
@@ -5080,6 +5330,10 @@ _IDENTITIES = (
           "COS(pi/9)*COS(2*pi/9)*COS(4*pi/9) is 1/8: values of rational angles"),
     _Rule("over roots", _over_roots, _gated,
           "a quotient in x and SQRT(y) cancels: (x*SQRT(y) + y)/(x + SQRT(y)) is SQRT(y)"),
+    _Rule("over surds", _over_surds, _gated,
+          "a quotient cancels over the numeric roots in it: (x^2 - 2)/(x - SQRT(2))"),
+    _Rule("over exponentials", _over_exponentials, _gated,
+          "(#e^x - 1)/(#e^(x/2) + 1) is #e^(x/2) - 1: exponentials over one measure"),
     _Rule("one denominator", _one_denominator, _gated,
           "a denominator under a denominator is cleared, #e^(-z) put over #e^z"),
 )

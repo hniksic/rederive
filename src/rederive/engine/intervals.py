@@ -760,7 +760,8 @@ def _inverted(head: sp.Basic, box: _Box) -> sp.Basic:
     pi, and arc tangent branches are the open intervals of width pi centered on them.
 
     A real `t` that may be on more than one branch gets the branch as a function of
-    `t` (see `_on_any_branch`).
+    `t` (see `_on_any_branch`), and a complex number `t` is mapped by its real part
+    (see `_complex_on_one_branch`).
     """
     inner = head.args[0]
     function = {sp.asin: sp.sin, sp.acos: sp.cos, sp.atan: sp.tan}[type(head)]
@@ -768,9 +769,40 @@ def _inverted(head: sp.Basic, box: _Box) -> sp.Basic:
         return head
     angle = inner.args[0]
     branched = _on_one_branch(head, angle, box)
-    if branched is not head or angle.is_extended_real is not True:
+    if branched is not head:
+        return branched
+    if angle.is_number and angle.is_extended_real is False:
+        return _complex_on_one_branch(head, angle)
+    if angle.is_extended_real is not True:
         return branched
     return _on_any_branch(head, angle, box)
+
+
+def _complex_on_one_branch(head: sp.Basic, angle: sp.Basic) -> sp.Basic:
+    """The inverse `head` of its function at a non-real number `angle`, or `head`.
+
+    The branches are the vertical strips over the real branches, open at both sides:
+    along a side, the function takes values on the inverse's branch cut, where the
+    principal value depends on a convention. Inside a strip the real case's mapping
+    holds, so `ATAN(TAN(11 + 30*#i))` is `11 - 4*pi + 30*#i`.
+    """
+    real = sp.re(angle)
+    if not real.is_number or real.is_extended_real is not True:
+        return head
+    pi = sp.pi
+    if isinstance(head, sp.acos):
+        turns = sp.floor(real / pi)
+        start, end = turns * pi, (turns + 1) * pi
+    else:
+        turns = sp.floor(real / pi + sp.S.Half)
+        start, end = (turns - sp.S.Half) * pi, (turns + sp.S.Half) * pi
+    if not (turns.is_Integer and _true(real > start) and _true(real < end)):
+        return head
+    if isinstance(head, sp.acos):
+        return angle - start if turns.is_even else end - angle
+    if isinstance(head, sp.atan):
+        return angle - turns * pi
+    return (-1) ** turns * (angle - turns * pi)
 
 
 def _on_any_branch(head: sp.Basic, angle: sp.Basic, box: _Box) -> sp.Basic:

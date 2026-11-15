@@ -1267,6 +1267,8 @@ class AuthorPrinter(sp.StrPrinter):
     def _print_factorial(self, expr):
         return f"{self.parenthesize(expr.args[0], PRECEDENCE['Func'])}!"
 
+    _print_Factorial = _print_factorial
+
     def _print_Relational(self, expr):
         level = PRECEDENCE["Relational"]
         operator = _RELATIONS.get(expr.rel_op, expr.rel_op)
