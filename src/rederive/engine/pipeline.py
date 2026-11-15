@@ -63,6 +63,7 @@ from rederive.engine.evaluate import (
     cancelled_over_roots,
     evaluate,
     limit_by_substitution,
+    moving_integrals,
     named_as_declared,
     released,
 )
@@ -1852,6 +1853,9 @@ def _limit(head: sp.Limit) -> sp.Basic:
     substituted = limit_by_substitution(expression, variable, point)
     if substituted is not None:
         return substituted
+    if moving_integrals(expression, {variable: point}):
+        # Sympy would substitute into the integrand.
+        return head
     closed = _closed_forms(expression)
     constant, varying = sp.S.One, closed
     try:

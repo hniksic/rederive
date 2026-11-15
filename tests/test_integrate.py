@@ -1648,6 +1648,28 @@ def test_a_step_antiderivative_agrees_with_the_integral_far_from_the_origin(
     assert simp(f"{at[high]} - ({at[low]}) - {integral}") == "0"
 
 
+def test_an_unevaluated_antiderivative_is_a_substitution():
+    """`u = INT(F(x), x)` has `F(x)` for its derivative, as ODE.MTH's reductions use."""
+    state = declaring("F")
+    assert simp("INT(F(x)*#e^INT(F(x), x), x)", state=state) == "#e^INT(F(x), x)"
+
+
+def test_a_reciprocal_absolute_value_is_integrated_between_its_zeros():
+    """The zeros of `SIN(x)` are outside the domain, so the antiderivative needn't be
+    continuous across them: on each stretch the sign is constant."""
+    assert simp("INT(COT(x)/ABS(SIN(x)), x)") == "-1/ABS(SIN(x))"
+    assert "INT" not in simp("INT((TAN(x) + 1)/ABS(TAN(x)), x)")
+
+
+def test_an_absolute_value_of_a_parameter_is_integrated_for_each_sign():
+    """For each sign of `x` the integrand is free of it. Integrated as it stands, the
+    answer hides a constant `LN(x)` in `LN(x*(2*y - 1) - SQRT(y)*ABS(x))`, which ODE.MTH's
+    homogeneous method turns into a wrong factor of its solution."""
+    answer = simp("INT(1/(y*(-2-(-x-SQRT(y)*ABS(x))/(x*y))), y)")
+    assert "INT" not in answer
+    assert "x" not in answer.replace("SIGN(x)", "")
+
+
 def test_a_real_integral_over_a_positive_parameter_is_real():
     """With `t` declared positive, sympy's antiderivative stays off its branch cut and
     the value is real. Undeclared, it's off by `#i*pi` and the integral stays."""

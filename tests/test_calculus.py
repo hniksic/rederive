@@ -1043,6 +1043,20 @@ def test_a_limit_toward_another_variable_renames_an_integrals_variable():
     assert simp("LIM(INT(u^2, u), u, 3)") == "9"
 
 
+def test_a_point_in_an_integrals_variable_goes_in_only_as_a_constant():
+    """`y` is a constant of `INT(y*F(x), x)`, which is `y` times an antiderivative of
+    `F`; putting `G(x)` for it inside would integrate `G(x)*F(x)` instead. ODE.MTH's
+    reduction of `y1^2 - PHI(x)*y*y1 - ...` integrates in its unknown and then puts
+    `F(x)` for it. Where the constant can't be taken out, the limit stands."""
+    state = declaring("F", "G")
+    assert simp("LIM(INT(y*F(x), x), y, G(x))", state=state) == "INT(F(x), x)*G(x)"
+    assert simp("LIM(INT(y*#e^(x^3), x), y, x^2)") == "x^2*INT(#e^(x^3), x)"
+    assert simp("LIM(INT(y^2 + F(x), x), y, x)", state=state) == "INT(F(x), x) + x^3"
+    assert simp("LIM(INT(#e^(y*x^3), x), y, x^2)") == (
+        "LIM(INT(#e^(x^3*y), x), y, x^2)"
+    )
+
+
 def test_a_limit_toward_a_multiple_of_its_variable_changes_an_integrals_variable():
     """An indefinite integral `G(y)` of `F(y)` at `c*y` is the integral of `c*F(c*y)`,
     as Derive writes it; ODE1.MTH's HOMOGENEOUS_GEN substitutes `y/x` into one. Any

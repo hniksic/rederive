@@ -109,6 +109,9 @@ def _integral(head: sp.Basic, shadowed: frozenset[str], numeric: bool) -> sp.Bas
     if tidied is not None:
         found = integral(tidied)
         return head if found.has(sp.Integral) else found
+    signed = _for_each_sign_of_a_parameter(head)
+    if signed is not None:
+        return signed
     combined = _with_exponentials_combined(head)
     if combined != head:
         return integral(combined)
@@ -125,6 +128,9 @@ def _integral(head: sp.Basic, shadowed: frozenset[str], numeric: bool) -> sp.Bas
     stepped = between_the_steps(head)
     if stepped is not None:
         return stepped
+    poles = _between_poles(head)
+    if poles is not None:
+        return poles
     across = across_the_steps(head)
     if across is not None:
         return across
@@ -1023,7 +1029,125 @@ def _on_each_side_of_a_kink(head: sp.Basic) -> Candidate | None:
         found = _either_side(integrand, variable, argument, slope, offset)
         if found is not None:
             return Candidate(found, trusted=True, tabled=True)
+    if len(arguments) == 1:
+        return _of_constant_sign(integrand, variable, arguments[0])
     return None
+
+
+def _for_each_sign_of_a_parameter(head: sp.Basic) -> sp.Basic | None:
+    """An indefinite integral whose integrand has `ABS(p)` or `SIGN(p)` of a real
+    parameter `p` that also occurs outside them, integrated for each sign of `p`, or
+    None.
+
+    `ABS(p)` is `p` or `-p`, so on each side the parameter may cancel: ODE.MTH's
+    homogeneous method integrates `(-x - SQRT(y)*ABS(x))/(x*y)` over `y`, which is `-(1
+    + SQRT(y))/y` for positive `x`. Integrated as it stands, the answer is in
+    `LN(x*(2*y - 1) - SQRT(y)*ABS(x))`, with a constant `LN(x)` hidden in it, which the
+    method carries into its solution as a factor. The answers `P` for `p > 0` and `M`
+    for `p < 0` are joined as `(P + M)/2 + SIGN(p)*(P - M)/2`.
+    """
+    if len(head.limits) != 1 or len(head.limits[0]) != 1:
+        return None
+    variable, integrand = head.limits[0][0], head.function
+    steps = {
+        step
+        for step in integrand.atoms(sp.Abs, sp.sign)
+        if not step.has(variable) and step.args[0].free_symbols
+    }
+    parameters = {step.args[0] for step in steps}
+    if len(parameters) != 1:
+        return None
+    (parameter,) = parameters
+    if parameter.is_real is not True:
+        return None
+    held = {step: sp.Dummy() for step in steps}
+    if not integrand.xreplace(held).has(*parameter.free_symbols):
+        return None
+    sides = []
+    for side in (1, -1):
+        written = {
+            step: side * parameter if isinstance(step, sp.Abs) else sp.Integer(side)
+            for step in steps
+        }
+        part = attempt(integrand.xreplace(written), sp.cancel)
+        if part is None:
+            return None
+        found = integral(sp.Integral(part, variable))
+        if found.has(sp.Integral):
+            return None
+        sides.append(found)
+    plus, minus = sides
+    if attempt(plus - minus, sp.simplify) == 0:
+        return plus
+    return folded_signs((plus + minus) / 2 + sp.sign(parameter) * (plus - minus) / 2)
+
+
+def _linear(expression: sp.Basic, variable: sp.Basic) -> bool:
+    """Whether `expression` is a polynomial of degree 1 in `variable`."""
+    try:
+        return sp.Poly(expression, variable).degree() == 1
+    except Exception:
+        return False
+
+
+def _between_poles(head: sp.Basic) -> sp.Basic | None:
+    """An antiderivative of `h/ABS(u)^n` for an odd `n` by `_of_constant_sign`, or None.
+
+    It goes before `across_the_steps`: the zeros of `u` are outside the integrand's
+    domain, so there is no jump to make the antiderivative continuous across.
+    """
+    if len(head.limits) != 1 or len(head.limits[0]) != 1:
+        return None
+    variable, integrand = head.limits[0][0], head.function
+    if variable.is_real is not True:
+        return None
+    steps = [step for step in integrand.atoms(sp.Abs, sp.sign) if step.has(variable)]
+    if len(steps) != 1 or not isinstance(steps[0], sp.Abs):
+        return None
+    _, power = integrand.as_independent(steps[0], as_Add=False)
+    if not (power.is_Pow and power.exp.is_negative):
+        return None
+    found = _of_constant_sign(integrand, variable, steps[0].args[0])
+    return None if found is None else found.value
+
+
+def _of_constant_sign(
+    integrand: sp.Basic, variable: sp.Basic, argument: sp.Basic
+) -> Candidate | None:
+    """An antiderivative of `h*ABS(u)^n` for an odd `n`, as `SIGN(u)*G` with `G` one of
+    `h*u^n`, or None.
+
+    Between consecutive zeros of `u` the sign is constant, so `SIGN(u)*G` is an
+    antiderivative there. Where `n` is negative the zeros are outside the integrand's
+    domain, as for `1/x`: `INT(COT(x)/ABS(SIN(x)), x)` is `-SIGN(SIN(x))/SIN(x)`. Where
+    it is positive, the integrand is continuous across a zero, and so must the
+    antiderivative be: `G` must be a function of `u` vanishing with it, as `-COS(y)^2/2`
+    for `SIN(y)*ABS(COS(y))`, which gives `-COS(y)*ABS(COS(y))/2`.
+    """
+    steps = [step for step in integrand.atoms(sp.Abs, sp.sign) if step.has(variable)]
+    if steps != [sp.Abs(argument)]:
+        return None
+    if _linear(argument, variable):
+        # `_either_side` writes these in real terms: `SIGN(x)*LN(ABS(x))`.
+        return None
+    rest, power = integrand.as_independent(sp.Abs(argument), as_Add=False)
+    base, exponent = power.as_base_exp()
+    if base != sp.Abs(argument) or not (exponent.is_integer and exponent.is_odd):
+        return None
+    if rest.has(sp.Abs(argument)):
+        return None
+    found = integral(sp.Integral(rest * argument**exponent, variable))
+    if found.has(sp.Integral):
+        return None
+    if exponent > 0:
+        size = sp.Dummy("u")
+        inside = attempt(found, lambda g: sp.cancel(g.subs(argument, size)))
+        if inside is None or inside.has(variable):
+            return None
+        at_zero = attempt(inside, lambda g: sp.limit(g, size, 0))
+        if at_zero is None or at_zero.is_zero is not True:
+            return None
+    return Candidate(folded_signs(sp.sign(argument) * found), trusted=True, formed=True)
 
 
 def _either_side(
@@ -1108,7 +1232,7 @@ def _side_sizes(piece: sp.Basic, size: sp.Basic, argument: sp.Basic) -> list[sp.
 
 def _by_derivative_divides(head: sp.Basic) -> Candidate | None:
     """An antiderivative by `u = g(x)`, where the integrand is `h(g(x))*g'(x)` and
-    contains a power with a symbolic exponent, or None.
+    contains a power with a symbolic exponent or an unevaluated integral, or None.
 
     Sympy misses `u = x^n` in `1/(x*SQRT(x^n + a^2))` and `u = TAN(a*x)` in
     `TAN(a*x)^n/COS(a*x)^2`. Candidates for `g` are such powers with a numeric part of
@@ -1138,6 +1262,13 @@ def _by_derivative_divides(head: sp.Basic) -> Candidate | None:
         core = base**exponent
         candidates.append((core, exponent * core * sp.diff(base, variable) / base))
     candidates.extend(_sine_and_cosine(integrand, variable))
+    # An unevaluated antiderivative is its own `u`, with its integrand for `u'`: ODE.MTH's
+    # reductions give `INT(F(x)*#e^INT(F(x), x), x)`, which is `#e^INT(F(x), x)`.
+    candidates.extend(
+        (inner, inner.function)
+        for inner in integrand.atoms(sp.Integral)
+        if inner.limits == ((variable,),)
+    )
     nested = _sine_and_cosine(integrand, variable, nested=True)
     candidates = list(dict.fromkeys(candidates + nested))
     u = sp.Dummy("u", real=True)

@@ -102,6 +102,7 @@ __all__ = [
     "evaluate",
     "evaluated",
     "limit_by_substitution",
+    "moving_integrals",
     "named_as_declared",
     "released",
 ]
@@ -1027,8 +1028,11 @@ class _Evaluator(Converter):
 
         try:
             simplified = replace(inner, work_out=all_but_integrals, suspended={})
-            form = _renamed_integrals(
-                _value_of(self.within(simplified).convert(body)), written
+            form = _factored_integrals(
+                _renamed_integrals(
+                    _value_of(self.within(simplified).convert(body)), written
+                ),
+                written,
             )
             if not substitutable(form, written):
                 return None
@@ -1703,7 +1707,7 @@ def limit_by_substitution(
     See `substitutable` and `defined`.
     """
     written = {variable: point}
-    expression = _renamed_integrals(expression, written)
+    expression = _factored_integrals(_renamed_integrals(expression, written), written)
     if not substitutable(expression, written):
         return None
     # A conditional's `?` case is a value it gives, not one the substitution makes.
@@ -1748,7 +1752,10 @@ def substitutable(value: sp.Basic, written: Mapping[sp.Basic, sp.Basic]) -> bool
     An indefinite integral in a variable has no value at a point until it is worked
     out: substituted into, it would integrate in the point (but see
     `_renamed_integrals`). One in a substitution still waiting for the variable is
-    bound there, and the point goes into the substitution's own point.
+    bound there, and the point goes into the substitution's own point. Nor is a
+    variable substituted inside an integral over `t` by a point mentioning `t`: in
+    `INT(y*F(t), t)` the `y` is a constant, which `y = G(t)` is not (but see
+    `_factored_integrals`).
     """
     variables = set(written)
     try:
@@ -1756,6 +1763,14 @@ def substitutable(value: sp.Basic, written: Mapping[sp.Basic, sp.Basic]) -> bool
             return False
         for integral in _unbound_integrals(value, variables):
             if any(len(limit) == 1 and limit[0] in variables for limit in integral.limits):
+                return False
+            moving = {
+                limit[0]
+                for limit in integral.limits
+                if len(limit) == 1
+                and any(point.has(limit[0]) for point in written.values())
+            }
+            if moving and integral.function.has(*variables):
                 return False
         if any(point.has(sp.oo, -sp.oo, sp.zoo, sp.nan) for point in written.values()):
             return False
@@ -1811,6 +1826,69 @@ def _renamed_integrals(value: sp.Basic, written: Mapping[sp.Basic, sp.Basic]) ->
             ),
             lambda e: e.xreplace({e.limits[0][0]: renaming[e.limits[0][0]]}),
         )
+    except Exception:
+        return value
+
+
+def moving_integrals(
+    value: sp.Basic, written: Mapping[sp.Basic, sp.Basic]
+) -> bool:
+    """Whether `value` has an indefinite integral over `t` whose integrand mentions a
+    variable of `written` with a point mentioning `t`, where substituting would change
+    what is integrated (see `substitutable`)."""
+    try:
+        variables = set(written)
+        for integral in value.atoms(sp.Integral):
+            for limit in integral.limits:
+                if (
+                    len(limit) == 1
+                    and any(point.has(limit[0]) for point in written.values())
+                    and integral.function.has(*variables)
+                ):
+                    return True
+    except Exception:
+        return False
+    return False
+
+
+def _factored_integrals(
+    value: sp.Basic, written: Mapping[sp.Basic, sp.Basic]
+) -> sp.Basic:
+    """`value` with the factors free of `t` taken out of each indefinite integral over
+    `t` whose integrand mentions a variable of `written` with a point mentioning `t`.
+
+    The variable is a constant of the integral, so `INT(y*F(t), t)` is `y*INT(F(t), t)`,
+    into which `y = G(t)` may be substituted; a sum is integrated term by term. ODE.MTH's
+    reduction of `y1^2 - PHI(x)*y*y1 - ... = 0` integrates in `y` and then puts `F(x)`
+    for it.
+    """
+    try:
+        variables = set(written)
+        if not value.has(sp.Integral):
+            return value
+
+        def moving(e: sp.Basic) -> bool:
+            if not (
+                isinstance(e, sp.Integral)
+                and len(e.limits) == 1
+                and len(e.limits[0]) == 1
+            ):
+                return False
+            (bound,) = e.limits[0]
+            return e.function.has(*variables) and any(
+                point.has(bound) for point in written.values()
+            )
+
+        def factored(e: sp.Basic) -> sp.Basic:
+            (bound,) = e.limits[0]
+            terms = []
+            for term in sp.Add.make_args(e.function):
+                constant, rest = term.as_independent(bound, as_Add=False)
+                inner = bound if rest == 1 else sp.Integral(rest, bound)
+                terms.append(constant * inner)
+            return sp.Add(*terms)
+
+        return value.replace(moving, factored)
     except Exception:
         return value
 
