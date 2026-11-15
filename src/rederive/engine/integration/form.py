@@ -658,7 +658,27 @@ def _without_constants(value: sp.Basic, variable: sp.Basic) -> sp.Basic:
     if not isinstance(terms, sp.Add):
         return coefficient * bare[0]
     kept = [term for term in bare if term.has(variable)]
-    return _carried(coefficient, _without_flat_logarithms(kept, variable))
+    value = _carried(coefficient, _without_flat_logarithms(kept, variable))
+    hidden = attempt(value, lambda v: _hyperbolic_constant(v, variable))
+    return value if not hidden else value - hidden
+
+
+def _hyperbolic_constant(value: sp.Basic, variable: sp.Basic) -> sp.Basic:
+    """The constant term of `value` once its hyperbolic functions are written as the
+    exponentials the answer is printed in, with products multiplied out and powers of
+    sums left as they are: `#e^(-x)*SINH(x)/4` is `1/8 - #e^(-2*x)/8`, while
+    `COSH(x)^2/2` is a power of a sum, with no constant term."""
+    if not value.has(*_HYPERBOLIC):
+        return sp.S.Zero
+    written = value.replace(
+        lambda e: isinstance(e, _HYPERBOLIC), lambda e: e.rewrite(sp.exp)
+    )
+    expanded = sp.expand(written, multinomial=False)
+    constant, _ = expanded.as_independent(variable, as_Add=True)
+    return constant
+
+
+_HYPERBOLIC = (sp.sinh, sp.cosh, sp.tanh, sp.coth, sp.sech, sp.csch)
 
 
 def _bare_term(term: sp.Basic, variable: sp.Basic) -> sp.Basic:

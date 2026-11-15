@@ -816,6 +816,13 @@ def test_an_antiderivative_is_written_with_no_constant_added():
     assert answer == "b*(SQRT(b^2 - 4*a*c) - b)/(4*a) - c*LN(SQRT(b^2 - 4*a*c) + b)"
 
 
+def test_no_constant_is_left_by_hyperbolics_written_as_exponentials():
+    """Sympy's answers have `#e^(-x)*SINH(x)` or `-#e^(-x)*COSH(x)`, depending on the
+    hash seed, each a constant away from what the exponentials print."""
+    assert simp("INT(#e^(-x)*COSH(x)/2, x)") == "x/4 - #e^(-2*x)/8"
+    assert simp("INT(#e^x*SINH(x), x)") == "#e^(2*x)/4 - x/2"
+
+
 def test_a_case_split_over_one_antiderivative_is_no_split():
     """Sympy splits cases where its table has two forms of one function.
 
