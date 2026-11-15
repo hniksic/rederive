@@ -30,11 +30,18 @@ _PLUS_MINUS = '"+-"'
 
 def is_letter(char: str) -> bool:
     """Whether `char` may begin an identifier."""
-    return unicodedata.category(char) in _LETTER_CATEGORIES
+    return (
+        unicodedata.category(char) in _LETTER_CATEGORIES
+        or char in names.CODE_PAGE_LETTERS
+    )
 
 
 def _is_continuation(char: str) -> bool:
-    return char == "_" or unicodedata.category(char) in _CONTINUATION_CATEGORIES
+    return (
+        char == "_"
+        or unicodedata.category(char) in _CONTINUATION_CATEGORIES
+        or char in names.CODE_PAGE_LETTERS
+    )
 
 
 def is_name(text: str) -> bool:
@@ -197,11 +204,10 @@ class Lexer:
         return Token(TokenKind.STRING, pos, end + 1, self.text[pos + 1 : end])
 
     def _arbitrary_constant(self, pos: int) -> Token:
+        """`@1`, an arbitrary constant, or a bare `@`, which older files use as a name."""
         end = pos + 1
         while self._digit_follows(end):
             end += 1
-        if end == pos + 1:
-            raise self.error(end, "digits")
         return Token(TokenKind.NAME, pos, end, self.text[pos:end])
 
     def _hash(self, pos: int) -> Token:

@@ -144,6 +144,7 @@ FUNCTION_GLYPHS: dict[str, str] = {
     "\ue7c5": "ZETA",  # Derive's zeta function
     "\ue7c6": "CHI",  # Derive's chi function
     "\ue7c7": "DIGAMMA",  # Derive's digamma function
+    "╥": "PRODUCT",  # the DOS character set's stand-in for a capital pi, byte 0xD2
 }
 
 # Glyph spellings of constants.
@@ -207,6 +208,9 @@ OPERATOR_GLYPHS: dict[str, str] = {
     "∨": "OR",
     "⊻": "XOR",
     "→": "IMP",
+    # The subscript arrow, byte 0x19 of the DOS character set, which DOS files store for
+    # `SUB`.
+    "\x19": "SUB",
 }
 
 # All spellings of the domain operator. A lone `ε` is the name `epsilon`, not an
@@ -263,4 +267,13 @@ OPERATORS: tuple[str, ...] = (
     "∨",
     "⊻",
     "→",
+    "\x19",
 )
+
+# Derive for DOS took every character in the upper half of its character set, code page
+# 437, for a letter, so DOS files have names such as `¿`, `£`, `W≈` and `F21` followed
+# by a no-break space. Those characters are letters here too, as decoded, except the
+# ones read as something else: a glyph for a constant, a function or an operator.
+CODE_PAGE_LETTERS: frozenset[str] = frozenset(
+    bytes(range(0x80, 0x100)).decode("cp437")
+) - frozenset(CONSTANT_GLYPHS) - frozenset(FUNCTION_GLYPHS) - frozenset(OPERATOR_GLYPHS)

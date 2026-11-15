@@ -330,6 +330,17 @@ def test_a_file_written_in_code_page_437_reads(session, file):
     assert texts(session) == ["Θn+1"]
 
 
+def test_a_dos_file_s_symbols_read_as_derive_for_dos_read_them(session, file):
+    """Older files, such as Douros's ODE.MTH, name variables `¿` and `£`, store byte
+    0x19 for `SUB` and 0xD2 for the product sign, and use a bare `@` as a name."""
+    file.write_bytes(b"\xa8:=v\x19i+\x9c\xf7\r\n\xd2(u\x19j,j,1,n)+@\r\n\x1a")
+    assert session.load(file) == 0
+    assert texts(session) == ["¿:=v SUB i+£≈", "PRODUCT(u SUB j,j,1,n)+@"]
+    session.save(file)
+    assert session.load(file) == 0
+    assert texts(session) == ["¿:=v SUB i+£≈", "PRODUCT(u SUB j,j,1,n)+@"]
+
+
 def test_a_line_that_does_not_parse_is_left_out_and_counted(session, file):
     """The original drops such lines silently. The rest of the file still loads, and
     the count lets the screen report the drop."""
