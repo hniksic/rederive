@@ -411,8 +411,35 @@ def _stated(
         return relation
     held = _answered(relation, context)
     if held is None:
-        return relation
+        return _against_zero(relation)
     return sp.true if held else sp.false
+
+
+def _against_zero(relation: Relational) -> Relational:
+    """An ordering of two rational multiples of one real expression as that expression's
+    comparison with 0, or the relation as it stands.
+
+    `c*u > d*u` holds exactly where `(c - d)*u > 0`, which is `u > 0` for `c > d` and
+    `u < 0` for `c < d`: an integral between `-p` and `p` splits on `p > -p`, which is
+    `p > 0`.
+    """
+    if isinstance(relation, (sp.Equality, sp.Unequality)):
+        return relation
+    left, right = relation.args
+    if left.is_number or right.is_number:
+        return relation
+    ratio = attempt(left / right, sp.cancel)
+    if ratio is None or not ratio.is_Rational or ratio == 1:
+        return relation
+    content, primitive = right.as_content_primitive()
+    sign, u = primitive.as_coeff_Mul()
+    if u.could_extract_minus_sign():
+        sign, u = -sign, -u
+    d = content * sign
+    c = ratio * d
+    if c > d:
+        return relation.func(u, 0, evaluate=False)
+    return relation.func(0, u, evaluate=False).reversed
 
 
 def _answered(relation: Relational, context: Context) -> bool | None:
@@ -640,6 +667,7 @@ def _simplified_expression(expression: sp.Basic, context: Context, decide: bool)
     # Before the rewrites, so they see what the intervals settle: `ABS(x) + ABS(x - 1)`
     # over `(0, 1)` cancels only once both bars are removed.
     expression = settled(expression, context)
+    expression = forced(expression, _cases_under_their_tests)
     expression = _divergent(expression, context)
     expression = forced(expression, _absorbed_by_infinity)
     expression = _rewritten_beside_standing(expression, context)
@@ -727,6 +755,156 @@ def _spliced_cases(expression: sp.Basic) -> sp.Basic:
     if not expression.has(sp.Piecewise):
         return expression
     return expression.replace(lambda e: isinstance(e, sp.Piecewise), spliced)
+
+
+def _cases_under_their_tests(expression: sp.Basic) -> sp.Basic:
+    """Each case of a conditional simplified knowing that its test holds and the tests
+    before it fail, where that makes it simpler; each test in the shorter of its boolean
+    normal forms, with its orderings `_against_zero`, and simplified knowing that the
+    tests before it fail.
+
+    A case is only ever evaluated where it applies: `SUM(SIN((2*k - 1)*x), k, 1, n)` is
+    0 where `SIN(x) = 0`, not `-n*SIN(x)`, and where `p > -p` holds `ABS(p)` is `p`. A
+    test that holds once the ones before it fail leaves the cases after it out. See
+    `_with_fact` for what a test tells. Derive's four-argument `IF` is not a
+    `Piecewise`, so its unknown case assumes nothing.
+    """
+
+    def known(cases: sp.Piecewise) -> sp.Basic:
+        failed: list[Relational] = []
+        rebuilt = []
+        for value, test in cases.args:
+            if isinstance(test, Boolean) and not isinstance(test, BooleanAtom):
+                test = _algebra(test)
+                against = attempt(
+                    test,
+                    lambda t: t.replace(
+                        lambda e: isinstance(e, Relational) and _comparable(e),
+                        _against_zero,
+                    ),
+                )
+                if against is not None:
+                    test = against
+                asked = test
+                for fact in failed:
+                    asked = _with_fact(asked, fact)
+                if isinstance(asked, BooleanAtom) or pays(asked, test):
+                    test = asked
+            candidate = value
+            for fact in _facts(test) + failed:
+                candidate = _with_fact(candidate, fact)
+            rebuilt.append((candidate if pays(candidate, value) else value, test))
+            if test is not sp.true:
+                failed += _facts(sp.to_nnf(sp.Not(test)))
+        return sp.Piecewise(*rebuilt)
+
+    if not expression.has(sp.Piecewise):
+        return expression
+    return expression.replace(lambda e: isinstance(e, sp.Piecewise), known)
+
+
+def _facts(test: sp.Basic) -> list[Relational]:
+    """The relations a test implies on its own: itself, or each relation of a
+    conjunction."""
+    if isinstance(test, Relational):
+        return [test]
+    if isinstance(test, sp.And):
+        return [part for part in test.args if isinstance(part, Relational)]
+    return []
+
+
+def _with_fact(value: sp.Basic, fact: Relational) -> sp.Basic:
+    """`value` as it is where `fact` holds, or `value` itself if it can't tell.
+
+    A relation of a polynomial in one real variable is solved for its range. A single
+    point is substituted; a ray or the line without a point puts the variable as its
+    end plus or minus a positive (or nonzero) unknown, which settles signs, and back. An
+    equation in anything else substitutes one side for the other. A substitution that
+    meets an undefined value anywhere in `value` (`1/x` at 0) is not made.
+    """
+    variables = fact.free_symbols
+    if len(variables) == 1:
+        (variable,) = variables
+        difference = fact.lhs - fact.rhs
+        if variable.is_real and difference.is_polynomial(variable):
+            values = sp.solveset(fact, variable, sp.Reals)
+            restricted = _restricted(value, variable, values)
+            if restricted != value:
+                return restricted
+    if not isinstance(fact, sp.Eq):
+        return value
+    candidates = [
+        _at(value, old, new)
+        for old, new in ((fact.lhs, fact.rhs), (fact.rhs, fact.lhs))
+        if not old.is_number and not new.has(old)
+    ]
+    candidates = [found for found in candidates if found is not None]
+    return min(candidates, key=sp.count_ops, default=value)
+
+
+def _restricted(value: sp.Basic, variable: sp.Symbol, values: sp.Set) -> sp.Basic:
+    """`value` where `variable` is restricted to the real `values` (see `_with_fact`)."""
+    if isinstance(values, sp.FiniteSet) and len(values) == 1:
+        found = _at(value, variable, values.args[0])
+        return value if found is None else found
+    if isinstance(values, sp.Union) and len(values.args) == 2:
+        left, right = sorted(values.args, key=lambda part: part.inf)
+        if (
+            left.inf is sp.S.NegativeInfinity
+            and right.sup is sp.oo
+            and left.sup == right.inf
+            and left.right_open
+            and right.left_open
+        ):
+            return _from_an_end(value, variable, left.sup, 1, "nonzero")
+        return value
+    if not isinstance(values, sp.Interval):
+        return value
+    if values.sup is sp.oo and values.inf.is_finite:
+        sign = "positive" if values.left_open else "nonnegative"
+        return _from_an_end(value, variable, values.inf, 1, sign)
+    if values.inf is sp.S.NegativeInfinity and values.sup.is_finite:
+        sign = "positive" if values.right_open else "nonnegative"
+        return _from_an_end(value, variable, values.sup, -1, sign)
+    return value
+
+
+def _from_an_end(
+    value: sp.Basic, variable: sp.Symbol, end: sp.Basic, side: int, sign: str
+) -> sp.Basic:
+    """`value` with `variable` written as `end + side*t`, for a real unknown `t` that is
+    `sign` ("positive", "nonnegative" or "nonzero"), and back."""
+    unknown = sp.Dummy("t", real=True, **{sign: True})
+    return value.subs(variable, end + side * unknown).subs(
+        unknown, side * (variable - end)
+    )
+
+
+#: Values that show a substitution met something undefined.
+_UNDEFINED = (sp.nan, sp.zoo, sp.oo, sp.S.NegativeInfinity, sp.AccumBounds)
+
+
+def _at(value: sp.Basic, old: sp.Basic, new: sp.Basic) -> sp.Basic | None:
+    """`value` with `old` replaced by `new`, or None if a part of it becomes undefined
+    or infinite there or binds a variable of `old`."""
+    bound = old.free_symbols
+
+    def put(part: sp.Basic) -> sp.Basic:
+        if part == old:
+            return new
+        if part.is_Atom or not part.has(old):
+            return part
+        if bound & set(getattr(part, "variables", ())):
+            raise ValueError("bound")
+        rebuilt = part.func(*(put(argument) for argument in part.args))
+        if rebuilt.has(*_UNDEFINED) and not part.has(*_UNDEFINED):
+            raise ValueError("undefined")
+        return rebuilt
+
+    try:
+        return put(value)
+    except Exception:
+        return None
 
 
 def _divergent(expression: sp.Basic, context: Context) -> sp.Basic:

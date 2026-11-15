@@ -190,22 +190,31 @@ def by_the_antiderivative(head: sp.Basic) -> sp.Basic | None:
     return between_the_ends(head, antiderivative)
 
 
-def between_the_ends(head: sp.Basic, antiderivative: sp.Basic) -> sp.Basic | None:
+def between_the_ends(
+    head: sp.Basic, antiderivative: sp.Basic, anywhere: bool = False
+) -> sp.Basic | None:
     """A definite integral as the endpoint difference of an antiderivative of its
     integrand if `unbroken` proves that correct, or None; see `by_the_antiderivative`.
 
     Limits whose order isn't known, as in `INT(COS(x)*(SIN(x) + 2)^12, x, 0, a)`, are
     taken only for an antiderivative continuous on the whole real line and without a
-    parameter in a divisor, and the ends are then substituted.
+    parameter in a divisor, and the ends are then substituted. With `anywhere`, finite
+    ends in known order are substituted too where the antiderivative is such, and
+    otherwise their limits are taken as usual.
     """
     if antiderivative.has(sp.Integral, sp.Piecewise):
         return None
     variable, low, high = head.limits[0]
     orientation = _orientation(low, high)
-    if orientation is None:
+    whole_line = orientation is None or (
+        anywhere and low.is_finite is True and high.is_finite is True
+    )
+    if whole_line:
         if parametric_divisors(antiderivative, variable) or not unbroken(
             antiderivative, variable, -sp.oo, sp.oo
         ):
+            if orientation is not None:
+                return between_the_ends(head, antiderivative)
             return None
         at_ends = [
             attempt(antiderivative, lambda a: a.subs(variable, end))

@@ -1408,7 +1408,7 @@ def test_a_parameter_of_known_sign_leaves_the_split_to_the_other(text, expected)
     [
         # Sympy's condition is `ABS(PHASE(1 - a) + pi) < pi/2`, on a polar argument of
         # `1 - a`, which on the principal branch is never true.
-        ("INT(#e^(t*(1 - a)), t, 0, inf)", "IF(a > 1, -1/(1 - a), inf)"),
+        ("INT(#e^(t*(1 - a)), t, 0, inf)", "IF(a > 1, 1/(a - 1), inf)"),
         ("INT(#e^(-t*(b - 2)), t, 0, inf)", "IF(b > 2, 1/(b - 2), inf)"),
     ],
 )
@@ -1646,6 +1646,25 @@ def test_a_step_antiderivative_agrees_with_the_integral_far_from_the_origin(
     at = {end: re.sub(r"\bx\b", f"({end})", antiderivative) for end in (low, high)}
     integral = f"INT({integrand}, x, {low}, {high})"
     assert simp(f"{at[high]} - ({at[low]}) - {integral}") == "0"
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("INT(ABS(x), x, a, b)", "b*ABS(b)/2 - a*ABS(a)/2"),
+        ("INT(SIGN(x - a), x, 0, 1)", "ABS(a - 1) - ABS(a)"),
+        ("INT(ABS(x - a), x, 0, b)", "a*ABS(a)/2 - a*ABS(a - b)/2 + b*ABS(a - b)/2"),
+        ("INT(MAX(x, -x), x, a, b)", "b*ABS(b)/2 - a*ABS(a)/2"),
+    ],
+    ids=str,
+)
+def test_a_continuous_antiderivative_of_a_kink_is_taken_between_the_ends(
+    text, expected
+):
+    """An antiderivative continuous on the whole line gives the integral for limits in
+    either order, with no split at the jump and none on the order of the limits. A
+    `SIGN(u)` times a multiple of `u` is written as an absolute value for the proof."""
+    assert simp(text) == expected
 
 
 def test_an_unevaluated_antiderivative_is_a_substitution():

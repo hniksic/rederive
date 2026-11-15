@@ -58,6 +58,17 @@ def test_a_relation_that_holds_for_every_value_is_decided():
     assert simp("ABS(g) < 1", declared("g :epsilon Real (0, 1)")) == "true"
 
 
+def test_an_ordering_of_multiples_of_one_expression_is_a_comparison_with_zero():
+    """`c*u > d*u` is `u > 0` for `c > d` and `u < 0` for `c < d`, also as the test of
+    a conditional answer."""
+    assert simp("p > -p") == "p > 0"
+    assert simp("2*(x - y^3) <= 3*(x - y^3)") == "x - y^3 >= 0"
+    assert simp("-SIN(x) >= SIN(x)/2") == "SIN(x) <= 0"
+    assert simp("INT(ABS(x)*COS(pi*x/p), x, -p, p)") == (
+        "IF(p > 0, -4*p^2/pi^2, 4*p^2/pi^2)"
+    )
+
+
 def test_a_relation_between_two_matrices_is_stated_of_each_pair_of_elements():
     """Same-shape matrices are related element by element, each relation judged
     separately. Section 8.5 reads a solved system this way: `[[x], [y], [z]] = A^-1 . b`
@@ -389,6 +400,27 @@ def test_a_conditional_answer_keeps_the_test_that_qualifies_it():
     """
     assert simp("SUM(k^2*x^k, k, 1, inf)") == (
         "IF(ABS(x) < 1, -x*(x + 1)/(x - 1)^3, SUM(k^2*x^k, k, 1, inf))"
+    )
+
+
+def test_each_case_of_a_conditional_answer_is_simplified_where_it_applies():
+    """A case is evaluated only where its test holds and the tests before it fail."""
+    # An equation puts its value for its side.
+    assert simp("SUM(SIN((2*k - 1)*x), k, 1, n)") == (
+        "IF(SIN(x) = 0, 0, SIN(n*x)^2/SIN(x))"
+    )
+    # A range settles a power of zero, and the last case is at the point `a = -1`.
+    assert simp("INT(ABS(a)*x^a, x, 0, 1)") == (
+        "IF(a >= 0, a/(a + 1), IF(a /= -1, a*(0^(a + 1) - 1)/(a + 1), inf))"
+    )
+    # Past `n = 0`, `pi*n/p /= 0` holds, so the case after it is never reached. The
+    # first test was `n = 0 OR n = 0 AND pi*n/p /= 0`.
+    assert simp("INT(x*SIN(n*pi*x/p), x, -p, p)") == (
+        "IF(n = 0, 0, 2*p^2*(SIN(pi*n)/(pi*n) - COS(pi*n))/(pi*n))"
+    )
+    # Undefined at `a = 0`, the last case is not given a value there.
+    assert simp("INT(1/SQRT(a^2 - x^2), x, 0, a)") == (
+        "IF(a /= 0, ASIN(a/ABS(a)), -#i*LN(-2*a) + #i*LN(2*#i*ABS(a)))"
     )
 
 

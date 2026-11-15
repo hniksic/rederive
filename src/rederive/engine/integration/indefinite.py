@@ -1034,6 +1034,92 @@ def _on_each_side_of_a_kink(head: sp.Basic) -> Candidate | None:
     return None
 
 
+def _between_the_ends_of_a_kink(head: sp.Basic) -> Candidate | None:
+    """A definite integral with parameters of an integrand with a step in its variable,
+    as the endpoint difference of its antiderivative, or None.
+
+    Sympy integrates a step between symbolic limits by splitting at the jump, which it
+    places with `MAX` and `MIN` of the limits, and the answer comes out in nested
+    absolute values, split on the order of the limits. An antiderivative that
+    `between_the_ends` proves continuous gives the integral at once, for limits in
+    either order: `INT(ABS(x), x, a, b)` is `b*ABS(b)/2 - a*ABS(a)/2`.
+
+    An antiderivative is often written with `SIGN(u)` times a multiple of `u`, as
+    `-(x - a)^2*SIGN(a - x)/2` for `ABS(x - a)`, which the proof can't take across `u
+    = 0`. For a polynomial `u` in the variable, `SIGN(u)*c` is `ABS(u)*(c/u)` wherever
+    `u` is nonzero, so where `c/u` cancels to a form continuous across the zeros, the
+    two differ at finitely many points, and the continuous one is the antiderivative
+    whose endpoint difference is the integral.
+
+    Integrands are taken only if they are polynomials in the variable and steps of
+    polynomials, whose antiderivatives come at once and are polynomials of the same
+    kind. With another function of the variable, as in `ABS(x)*COS(x)`, the
+    antiderivative takes longer and its sign doesn't cancel.
+    """
+    if not definite(head):
+        return None
+    variable, low, high = head.limits[0]
+    if not head.free_symbols or variable.is_real is not True:
+        return None
+    if not (low.is_finite and high.is_finite):
+        return None
+    # The midpoint plus or minus half the distance, as `MAX` and `MIN` are answered.
+    integrand = attempt(
+        head.function,
+        lambda f: f.replace(
+            lambda e: isinstance(e, (sp.Max, sp.Min)), lambda e: e.rewrite(sp.Abs)
+        ),
+    )
+    if integrand is None:
+        return None
+    steps = [step for step in integrand.atoms(sp.Abs, sp.sign) if step.has(variable)]
+    if not steps or not all(step.args[0].is_polynomial(variable) for step in steps):
+        return None
+    held = {step: sp.Dummy() for step in steps}
+    if not integrand.xreplace(held).is_polynomial(variable):
+        return None
+    found = integral(sp.Integral(integrand, variable))
+    if found.has(sp.Integral):
+        return None
+    for written in (found, _with_signs_as_absolute_values(found, variable)):
+        if written is None:
+            continue
+        value = between_the_ends(head, written, anywhere=True)
+        if value is not None:
+            return Candidate(value, formed=True)
+    return None
+
+
+def _with_signs_as_absolute_values(
+    expression: sp.Basic, variable: sp.Basic
+) -> sp.Basic | None:
+    """The expression with each `SIGN(u)` of a polynomial `u` in the variable, and its
+    coefficient `c`, written as `ABS(u)*(c/u)` with `c/u` cancelled, or None if there is
+    none; see `_between_the_ends_of_a_kink`."""
+    signs = [
+        step
+        for step in expression.atoms(sp.sign)
+        if step.has(variable) and step.args[0].is_polynomial(variable)
+    ]
+    if not signs:
+        return None
+    try:
+        parts = sp.collect(sp.expand(expression), signs, evaluate=False)
+    except Exception:
+        return None
+    total = sp.S.Zero
+    for factor, coefficient in parts.items():
+        if factor in signs:
+            argument = factor.args[0]
+            quotient = attempt(coefficient / argument, sp.cancel)
+            if quotient is None:
+                return None
+            total += quotient * sp.Abs(argument)
+        else:
+            total += factor * coefficient
+    return total
+
+
 def _for_each_sign_of_a_parameter(head: sp.Basic) -> sp.Basic | None:
     """An indefinite integral whose integrand has `ABS(p)` or `SIGN(p)` of a real
     parameter `p` that also occurs outside them, integrated for each sign of `p`, or
@@ -2293,6 +2379,7 @@ _METHODS: tuple[Method, ...] = (
     _of_a_radical,
     _over_an_exponential,
     _of_an_exponential_times_a_wave,
+    _between_the_ends_of_a_kink,
     _on_each_side_of_a_kink,
     _by_derivative_divides,
     _as_logarithms,
