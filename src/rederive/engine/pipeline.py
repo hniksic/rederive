@@ -2997,6 +2997,83 @@ def _exponential_key(found: sp.Basic) -> tuple[sp.Basic, sp.Basic, sp.Rational] 
     return base, rest, coefficient
 
 
+def _over_sines(expression: sp.Basic) -> sp.Basic:
+    """Exponentials of imaginary multiples of real arguments written as cosines and
+    sines, by Euler's formula `#e^(#i*t) = COS(t) + #i*SIN(t)`.
+
+    The numerator and the denominator are each first written about the mean of their
+    terms' imaginary exponents, so conjugate exponentials meet as `#e^(#i*t)` and
+    `#e^(-#i*t)`: `(#e^(2*#i*x) + 1)/#e^(#i*x)` is `2*COS(x)`, and a quotient whose
+    imaginary units cancel is real, as in `(#e^(#i*x) - #e^(-#i*x))/(2*#i)`, which is
+    `SIN(x)`. Kept by `_realized`.
+    """
+    if not isinstance(expression, sp.Expr) or not expression.has(sp.I):
+        return expression
+    if not any(_imaginary_angle(found) is not None for found in expression.atoms(sp.exp)):
+        return expression
+    if sp.count_ops(expression) > _OVER_ROOTS_SIZE:
+        return expression
+    numerator, denominator = sp.fraction(sp.together(expression))
+    numerator, above = _about_mean_angle(numerator)
+    denominator, below = _about_mean_angle(denominator)
+    return numerator / denominator * sp.exp(sp.I * (above - below))
+
+
+def _imaginary_angle(found: sp.Basic) -> tuple[sp.Basic, sp.Basic] | None:
+    """`(a, t)` for an exponential `#e^(a + #i*t)` with `a` and `t` real and `t` not
+    zero, or None."""
+    if not isinstance(found, sp.exp):
+        return None
+    real, imaginary = [], []
+    for term in sp.Add.make_args(sp.expand(found.args[0])):
+        if term.is_real:
+            real.append(term)
+            continue
+        angle = term.as_coefficient(sp.I)
+        if angle is None or angle.is_real is not True:
+            return None
+        imaginary.append(angle)
+    if not imaginary:
+        return None
+    return sp.Add(*real), sp.Add(*imaginary)
+
+
+def _about_mean_angle(total: sp.Basic) -> tuple[sp.Basic, sp.Basic]:
+    """`(s, m)` with `total = s*#e^(#i*m)`, `m` the mean imaginary exponent of the terms
+    of `total` and `s` written over cosines and sines."""
+
+    def angle(term: sp.Basic) -> sp.Basic:
+        found = [_imaginary_angle(factor) for factor in sp.Mul.make_args(term)]
+        return sp.Add(*(parts[1] for parts in found if parts is not None))
+
+    def euler(found: sp.Basic) -> sp.Basic:
+        real, imaginary = _imaginary_angle(found)
+        return sp.exp(real) * (sp.cos(imaginary) + sp.I * sp.sin(imaginary))
+
+    terms = sp.Add.make_args(sp.expand(total))
+    mean = sp.Add(*(angle(term) for term in terms)) / len(terms)
+    shifted = sp.expand(total * sp.exp(-sp.I * mean))
+    written = shifted.replace(lambda e: _imaginary_angle(e) is not None, euler)
+    return sp.expand(written), mean
+
+
+def _realized(expression: sp.Basic, rewrite: Rewrite) -> sp.Basic:
+    """`rewrite`, if the result is simpler, or free of the imaginary unit and at most
+    twice as long: a real quantity written as one."""
+    candidate = attempt(expression, rewrite)
+    if candidate is None or candidate is expression:
+        return expression
+    if pays(candidate, expression):
+        return candidate
+    if not expression.has(sp.I) or candidate.has(sp.I):
+        return expression
+    try:
+        short = sp.count_ops(candidate) <= 2 * sp.count_ops(expression)
+    except Exception:
+        return expression
+    return candidate if short else expression
+
+
 def _gated(expression: sp.Basic, rewrite: Rewrite) -> sp.Basic:
     """`rewrite`, if the result is simpler than what went in."""
     candidate = attempt(expression, rewrite)
@@ -5750,6 +5827,8 @@ _IDENTITIES = (
           "a quotient in x and SQRT(y) cancels: (x*SQRT(y) + y)/(x + SQRT(y)) is SQRT(y)"),
     _Rule("over surds", _over_surds, _gated,
           "a quotient cancels over the numeric roots in it: (x^2 - 2)/(x - SQRT(2))"),
+    _Rule("over sines", _over_sines, _realized,
+          "(#e^(#i*x) + #e^(-#i*x))/2 is COS(x): imaginary exponentials of real angles"),
     _Rule("over exponentials", _over_exponentials, _gated,
           "(#e^x - 1)/(#e^(x/2) + 1) is #e^(x/2) - 1: exponentials over one measure"),
     _Rule("one denominator", _one_denominator, _gated,

@@ -480,6 +480,29 @@ def test_a_quotient_in_exponentials_of_one_exponent_cancels(text, expected):
     assert simp(text) == expected
 
 
+#: Exponentials of imaginary multiples of real angles are cosines and sines where that
+#: makes the expression real or shorter. Where neither holds, as with arbitrary
+#: coefficients or a lone exponential, they stay.
+OVER_SINES = [
+    ("(#e^(#i*x) - #e^(-#i*x))/(2*#i)", "SIN(x)"),
+    ("(a - #i*b)*#e^(#i*x)/2 + (a + #i*b)*#e^(-#i*x)/2", "a*COS(x) + b*SIN(x)"),
+    ("#e^((-1 + #i)*x)/2 + #e^((-1 - #i)*x)/2", "COS(x)*#e^(-x)"),
+    ("(#e^(2*#i*x) - 1)/(#e^(2*#i*x) + 1)", "#i*TAN(x)"),
+    (
+        "(a*#e^(#i*y) - b)*#e^(-#i*x*y)/(#e^(#i*y) - #e^(-#i*y))"
+        " + (a - b*#e^(#i*y))*#e^(#i*x*y)/(1 - #e^(2*#i*y))",
+        "(b*SIN(x*y) - a*SIN(y*(x - 1)))/SIN(y)",
+    ),
+    ("a*#e^(#i*x) + b*#e^(-#i*x)", "a*#e^(#i*x) + b*#e^(-#i*x)"),
+    ("#e^(x + #i*y)", "#e^(x + #i*y)"),
+]
+
+
+@pytest.mark.parametrize(("text", "expected"), OVER_SINES, ids=str)
+def test_imaginary_exponentials_of_real_angles_are_cosines_and_sines(text, expected):
+    assert simp(text) == expected
+
+
 #: The power of a variable every term of a numerator sum has cancels against the
 #: denominator's where an exponent is a fraction or a symbol, which the gcd doesn't see.
 #: ODE.MTH's canonic forms read the denominator: `4*x^(18/7) - 3*x^2` over `4*x^4`
