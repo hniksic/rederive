@@ -683,12 +683,38 @@ def test_a_nonlinear_system_with_a_cubic_resolvent_has_all_four_solutions():
     assert answers[0] == "[x = 2, y = 3]"
 
 
-def test_a_polynomial_system_with_roots_of_a_quintic_is_left_unsolved():
-    """Besides `[x = 1, y = 1, z = 1]` and `[x = -1, y = 1, z = 1]`, `z` can be a root of
-    a quintic with no radicals, so listing the two would leave solutions out."""
+def test_a_polynomial_system_keeps_its_non_real_solutions():
+    """As for `SOLVE(x^5 + x + 1 = 0, x)`: the roots of `x^2 + x + 1` are as much
+    solutions as the complex roots of the cubic factor."""
+    answers = sol("[x^5 + x + y = 0, y = 1]", ("x", "y"))
+    assert len(answers) == 5
+    assert "[x = -1/2 - SQRT(3)*#i/2, y = 1]" in answers
+
+
+def test_a_polynomial_system_keeps_the_roots_of_a_quintic_as_its_equations():
+    """Besides `[x = -1, y = 1, z = 1]`, `[x = 1, y = 1, z = 1]` and four non-real
+    solutions on `3*z^2 - 2*z + 1`, `z` can be a root of a quintic with no radicals.
+    Those solutions come last, as the reduced equations of that part alone, with `y`
+    written in `z`."""
     eqn = "[x^2*y + 3*y*z = 4, 2*y^2 - 3*x^2*z = -1, 2*y*z^2 - z^2 = 1]"
-    (answer,) = sol(eqn, ("x", "y", "z"))
-    assert answer.count("= 0") == 3
+    answers = sol(eqn, ("x", "y", "z"))
+    assert len(answers) == 7
+    assert answers[0] == "[x = -1, y = 1, z = 1]"
+    rest = answers[-1]
+    assert rest.endswith(", 6*z^5 - 6*z^4 - 9*z^3 - 7*z^2 - 3*z - 1 = 0]")
+    assert ", y = " in rest and "x = " not in rest
+
+
+def test_a_system_in_shape_position_writes_the_others_in_the_last_variable():
+    """`y = 0` makes `x` a root of the quintic, written as its equation, as for `SOLVE((x
+    - 1)*(x^5 + x + 3) = 0, x)`."""
+    assert sol("[y = x^5 + x + 3, (x - 1)*y = 0]", ("y", "x")) == [
+        "[y = 5, x = 1]",
+        "[y = 0, x^5 + x + 3 = 0]",
+    ]
+    assert sol("[x^5 + x + 3 = y, x = y + 1]", ("x", "y")) == [
+        "[x = y + 1, y^5 + 5*y^4 + 10*y^3 + 10*y^2 + 5*y + 5 = 0]"
+    ]
 
 
 def test_a_complex_equation_in_real_variables_is_split_into_its_parts():

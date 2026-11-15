@@ -294,7 +294,10 @@ def _in_parts(
         return None
     solved = _linear(parts, tuple(unknowns), constants)
     if solved is None:
-        solved = _nonlinear(parts, tuple(unknowns))
+        split = _nonlinear(parts, tuple(unknowns))
+        if split is None or split[1]:
+            return None
+        solved = split[0]
     if not solved:
         return None
     answers = []
@@ -1468,7 +1471,10 @@ def _system(
 
     Each solution is one entry, the solution vector. Unchosen variables stay on the
     right, so `[x + y + z = 1, x - y = 0]` can be solved for `x` and `y`. With `real`,
-    a solution with any known non-real value is dropped.
+    a solution with any known non-real value is dropped. Solutions that can't be written
+    follow as the vector of their reduced equations, one per factor of the eliminating
+    polynomial without radical roots, as a single equation keeps such a factor (see
+    `_split`).
     """
     joined = Vector(*equations)
     chosen = _chosen(joined, context, variables, len(equations))
@@ -1478,17 +1484,19 @@ def _system(
         return _inequalities(equations, chosen, context, constants)
     residuals = [_residual(equation) for equation in equations]
     solved = _linear(residuals, chosen, constants)
+    remaining: list[_Unwritten] = []
     if solved is None:
-        solved = _nonlinear(residuals, chosen)
-    if solved is None:
-        return _unsolvable(joined, context)
+        split = _nonlinear(residuals, chosen)
+        if split is None:
+            return _unsolvable(joined, context)
+        solved, remaining = split
     if real:
         solved = [
             mapping
             for mapping in solved
             if not any(_imaginary(value) for value in mapping.values())
         ]
-    return tuple(
+    answers = [
         Vector(
             *(
                 _equated(variable, mapping.get(variable, variable), context)
@@ -1496,7 +1504,19 @@ def _system(
             )
         )
         for mapping in solved
-    )
+    ]
+    for part in remaining:
+        answers.append(
+            Vector(
+                *(
+                    _relation(sp.Eq, normal_form(value, context.order), sp.Integer(0))
+                    if variable is None
+                    else _equated(variable, value, context)
+                    for variable, value in part
+                )
+            )
+        )
+    return tuple(answers)
 
 
 def _inequalities(
@@ -1557,27 +1577,70 @@ def _linear(
     ]
 
 
+_Unwritten = list[tuple[sp.Symbol | None, sp.Basic]]
+"""What remains of a system once its written solutions are listed: `(v, value)` for `v =
+value`, `(None, polynomial)` for `polynomial = 0`."""
+
+
 def _nonlinear(
     residuals: list[sp.Basic], chosen: tuple[sp.Symbol, ...]
-) -> list[dict[sp.Symbol, sp.Basic]] | None:
+) -> tuple[list[dict[sp.Symbol, sp.Basic]], list[_Unwritten]] | None:
     """A system `linsolve` refused, solved as far as `solve` can, beyond what the original
-    handles. An empty answer means "nothing found", not "no solutions".
+    handles: the solutions, and the equations of those that can't be written (see
+    `_split`). None means "nothing found", not "no solutions".
+
+    A rational system is solved over the complexes, as a single equation is: `solve`
+    would otherwise drop the roots it can prove non-real for real variables, but keep
+    those it can't, so `[x^5 + x + y = 0, y = 1]` lost the roots of `x^2 + x + 1` while
+    keeping the complex ones of the cubic factor.
     """
+    plain = {variable: sp.Dummy(variable.name) for variable in chosen}
+    if not all(residual.is_rational_function(*chosen) for residual in residuals):
+        plain = {variable: variable for variable in chosen}
+    back = {stand_in: variable for variable, stand_in in plain.items()}
+    residuals = [residual.xreplace(plain) for residual in residuals]
+    stand_ins = tuple(plain[variable] for variable in chosen)
     try:
-        found = sp.solve(residuals, list(chosen), dict=True)
+        found = sp.solve(residuals, list(stand_ins), dict=True)
     except Exception:
         return None
-    if not found or _roots_unwritten(residuals, chosen):
+    split = _split(residuals, stand_ins)
+    if split is None:
+        split = ([dict(mapping) for mapping in found], [])
+    solutions, remaining = split
+    if not (solutions or remaining):
         return None
-    return [dict(mapping) for mapping in found]
+    return (
+        [
+            {back[key]: value.xreplace(back) for key, value in mapping.items()}
+            for mapping in solutions
+        ],
+        [
+            [
+                (None if key is None else back[key], value.xreplace(back))
+                for key, value in part
+            ]
+            for part in remaining
+        ],
+    )
 
 
-def _roots_unwritten(residuals: list[sp.Basic], chosen: tuple[sp.Symbol, ...]) -> bool:
-    """Whether a polynomial system has solutions that `solve` leaves out: those whose
-    last variable is a root of a factor of the eliminating polynomial that has no
-    radicals, which `solve` drops without a word. For `[x^2*y + 3*y*z = 4, 2*y^2 -
-    3*x^2*z = -1, 2*y*z^2 - z^2 = 1]` it finds two solutions, but `z` is also a root of
-    a quintic.
+def _split(
+    residuals: list[sp.Basic], chosen: tuple[sp.Symbol, ...]
+) -> tuple[list[dict[sp.Symbol, sp.Basic]], list[_Unwritten]] | None:
+    """A polynomial system split by the factors of its eliminating polynomial, when some
+    have no radicals for their roots, or None if none lacks them.
+
+    `solve` drops the solutions whose last variable is a root of such a factor without a
+    word. For `[x^2*y + 3*y*z = 4, 2*y^2 - 3*x^2*z = -1, 2*y*z^2 - z^2 = 1]` the lex
+    basis eliminates to `(z - 1)*(3*z^2 - 2*z + 1)*q(z)`, `q` a quintic. The solutions
+    on the other factors are solved from the basis joined with their product; those on
+    each factor without radicals are the reduced basis joined with it, each element
+    written as `v = value` where linear in its leading variable `v`: `[3*x^2 + r(z) = 0,
+    y = s(z), q(z) = 0]`. Each solution of the system is in exactly one of the parts.
+
+    A system with a variable in a denominator, or whose parts can't be solved, gives
+    nothing at all: it is left unsolved rather than answered in part.
     """
     try:
         polynomials = [
@@ -1586,20 +1649,67 @@ def _roots_unwritten(residuals: list[sp.Basic], chosen: tuple[sp.Symbol, ...]) -
         ]
         basis = sp.groebner(polynomials, *chosen, order="lex")
     except Exception:
-        return False
+        return None
     last = chosen[-1]
-    for polynomial in basis.exprs:
-        if polynomial.free_symbols & set(chosen) != {last}:
+    eliminants = [
+        polynomial
+        for polynomial in basis.exprs
+        if polynomial.free_symbols & set(chosen) == {last}
+    ]
+    if not eliminants:
+        return None
+    try:
+        _, factors = sp.factor_list(eliminants[0], last)
+    except Exception:
+        return None
+    written: list[sp.Basic] = []
+    unwritten: list[sp.Basic] = []
+    for factor, _ in factors:
+        degree = sp.degree(factor, last)
+        if degree < 1:
             continue
+        roots = sum(sp.roots(factor, last).values())
+        (written if roots == degree else unwritten).append(factor)
+    if not unwritten:
+        return None
+    unsolved: tuple[list[dict[sp.Symbol, sp.Basic]], list[_Unwritten]] = ([], [])
+    if any(
+        sp.fraction(sp.together(residual))[1].has(*chosen) for residual in residuals
+    ):
+        return unsolved
+    solutions: list[dict[sp.Symbol, sp.Basic]] = []
+    if written:
         try:
-            _, factors = sp.factor_list(polynomial, last)
+            found = sp.solve(
+                [*basis.exprs, sp.Mul(*written)], list(chosen), dict=True
+            )
         except Exception:
-            return False
-        for factor, _ in factors:
-            degree = sp.degree(factor, last)
-            if degree > 0 and sum(sp.roots(factor, last).values()) < degree:
-                return True
-    return False
+            return unsolved
+        if not found:
+            return unsolved
+        solutions = [dict(mapping) for mapping in found]
+    remaining: list[_Unwritten] = []
+    for factor in unwritten:
+        try:
+            part = sp.groebner([*basis.exprs, factor], *chosen, order="lex")
+        except Exception:
+            return unsolved
+        remaining.append([_solved_for_leading(e, chosen) for e in part.exprs])
+    return solutions, remaining
+
+
+def _solved_for_leading(
+    polynomial: sp.Basic, chosen: tuple[sp.Symbol, ...]
+) -> tuple[sp.Symbol | None, sp.Basic]:
+    """A basis element as `(v, value)` when linear in its leading variable `v` with a
+    coefficient free of the chosen variables, else as `(None, polynomial)`."""
+    leading = next(variable for variable in chosen if polynomial.has(variable))
+    poly = sp.Poly(polynomial, leading)
+    if poly.degree() == 1:
+        coefficient, rest = poly.all_coeffs()
+        if not coefficient.has(*chosen):
+            return leading, sp.expand(-rest / coefficient)
+    return None, polynomial
 
 
 # -- numbers -----------------------------------------------------------------
