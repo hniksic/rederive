@@ -138,8 +138,9 @@ linear algebra, eigenvalues, and vector calculus. In the original Derive, loadab
 files extended the core with ordinary differential equations, recurrence equations,
 special functions (Bessel, elliptic, hypergeometric, zeta, and others), number theory, and
 unit conversion. These utilities, [still found](https://archive.org/details/derive314cas)
-in Internet archives, work in Rederive. A small functional programming language based on
-conditionals, iteration, and recursion lets users define their own functions.
+in Internet archives, work in Rederive, which also bundles some definitions that were
+autoloaded by the original. A small functional programming language based on conditionals,
+iteration, and recursion lets users define their own functions.
 
 Its chief strength is the care behind its simplifier. The goal is a "sufficiently simple"
 result, one with no superfluous variables, roots, or reducible degrees, while transforming
@@ -157,28 +158,25 @@ represent numbers. Numeric literals are rational, and irrationals are symbolic, 
 that 0.1 is exactly 1/10, √2 and π stay as they are, and √2·√2 becomes 2. Approximating an
 irrational expression to n digits works out its value with sufficient precision and then
 replaces it by the simplest rational that matches those digits (π to six digits becomes
-355/113). The only inexactness is the one you request.
+355/113, displayed as 3.14159). The only inexactness is the one you request.
 
 Compared with large systems such as Mathematica or Maple, Rederive's coverage is narrower.
-Exact polynomial solving works only for equations reducible to quartics, and numeric
-root-finding requires a user-supplied search interval. Much functionality lives in utility
-files rather than in the core. The programming language is minimal, with no local
-variables, explicit loops, or data structures beyond vectors and matrices, so libraries
-introducing advanced polynomial algebra or sophisticated definite integration are out of
-reach. If you need that, you should probably turn to SymPy (or Mathematica) directly.
-Within its chosen scope, however, Rederive strives to be small and dependable. That
-trade-off defined the original: a system simple but powerful enough to be useful,
-especially in the classroom.
+Exact polynomial solving works only for equations reducible to quartics. The programming
+language is minimal, with few data structures beyond vectors and matrices, so libraries
+that extend it with substantial new mathematics are impractical. If you need that, you
+should probably turn to SymPy (or Mathematica) directly. Within its chosen scope, however,
+Rederive strives to be small and dependable. That trade-off defined the original: a system
+simple but powerful enough to be useful, especially in the classroom.
 
 ## Differences from Derive
 
-Rederive follows Derive 6. In a few places it deliberately gives a different answer:
+Wherever possible, Rederive tries to follow the behavior of Derive 6. In a few places it
+deliberately gives a different answer:
 
 **Approximation.** Derive approximates in fixed precision: every intermediate value is
 rounded to the digits asked for, and the rounding errors add up, most visibly where nearly
-equal values cancel. Rederive computes from the exact value with as many working digits as
-the answer needs and only then cuts the result to the digits asked for, so the digits
-shown are the value's own. At six digits:
+equal values cancel. Rederive computes with enough extra digits that the result is the
+exact value truncated to the requested precision. At six digits:
 
 ```
 SQRT(10001) - 100              0.00499987          Derive: 0.00499722
