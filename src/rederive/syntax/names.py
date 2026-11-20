@@ -6,20 +6,41 @@ wrong parses, not errors.
 
 from __future__ import annotations
 
-# The functions Derive itself defines.
+# The functions of Derive 6 that Rederive evaluates, by their Derive 6 names.
 DERIVE_FUNCTIONS: frozenset[str] = frozenset(
     """
-    ABS ACOS ACOSH ACOT ACOTH ACSC ACSCH APPEND APPROX ASEC ASECH ASIN ASINH
-    ATAN ATANH AVERAGE CHARPOLY CHI COMB CONJ COS COSH COT COTH CROSS CSC CSCH
-    CURL DELETE_ELEMENT DENOMINATOR DET DIF DIMENSION DIV EIGENVALUES ELEMENT ERF
-    ERFC EXP EXPAND FACTOR FACTORS FIT FLOOR FVAL GAMMA GCD GRAD IDENTITY_MATRIX
-    IF IM INSERT_ELEMENT INT INTERVAL ITERATE ITERATES LAPLACIAN LCM LHS LIM LN LOG
-    MAX MIN MOD MODS NEXT_PRIME NORMAL NPER NUMBER NUMERATOR PERM PHASE PMT POLY_GCD
-    POTENTIAL POWER_SET PRIME PRODUCT PVAL QUOTIENT RANDOM RATE RE REMAINDER
-    REPLACE_ELEMENT REVERSE_VECTOR RHS RMS ROOT_OF ROOT_SUM ROW_REDUCE SELECT SEC SECH
-    SIGN SIN SINH SOLVE SORT SQRT STDEV STEP SUM TAN TANH TAYLOR TERMS TRACE TRUTH_TABLE
-    VAR VARIABLES VECTOR VECTOR_POTENTIAL ZETA
+    ABS ACOS ACOSH ACOT ACOTH ACSC ACSCH ADJOIN APPEND APPROX ARCCOS ARCCOT ARCCSC
+    ARCSEC ARCSIN ARCTAN ASEC ASECH ASIN ASINH ATAN ATANH AVERAGE CEILING CHARPOLY CHI
+    CODES_TO_NAME COMB CONJ COS COSH COT COTH CROSS CSC CSCH CURL DELETE DENOMINATOR DET
+    DIF DILOG DIM DIV EIGENVALUES ELEMENT ERF ERFC EVEN? EVERY EXP EXPAND FACTOR FACTORS
+    FIRST FIT FLOOR FVAL GAMMA GCD GRAD GROEBNER_BASIS IDENTICAL? IDENTITY_MATRIX IF IM
+    INSERT INT INTEGER? INTEGER_TYPE? INTERVAL INVERSE_MOD ITERATE ITERATES LAPLACIAN
+    LCM LHS LIM LN LOG LOGICAL? LOGICAL_TYPE? MAP MAP_LIST MATRIX? MAX MEMBER? MIN MOD
+    MODS NAME_TO_CODES NEXT_PRIME NORMAL NPER NSOLUTIONS NSOLVE NUMBER NUMBER?
+    NUMBER_TYPE? NUMERATOR ODD? PERM PHASE PMT POLY_GCD POLY_MOD POLY_MODS POSITION
+    POTENTIAL POWER? POWER_MOD POWER_SET PREVIOUS_PRIME PRIME PRIME? PRODUCT PRODUCT?
+    PVAL QUOTIENT RANDOM RANK RATE RATIONAL? RE REAL_TYPE? REMAINDER REPLACE REST
+    REVERSE RHS RMS ROOT_OF ROOT_SUM ROUND ROW_REDUCE SEC SECH SELECT SET? SET_TYPE?
+    SHIFT SIGN SIN SINH SOLUTIONS SOLVE SOME SORT SQRT STDEV STEP STRING STRING? SUBST
+    SUBST_DIFF SUM SUM? TABLE TAN TANH TAYLOR TERMS TRACE TRUTH_TABLE VAR VARIABLE?
+    VARIABLES VARIANCE VECTOR VECTOR? VECTOR_POTENTIAL VECTOR_TYPE? ZETA
     """.split()
+)
+
+# The built-in functions of Derive 6 that Rederive does not evaluate yet. They are names
+# all the same: the lexer knows them, so `DIM` is one name in Character mode and `PROG(x)`
+# a call in any mode, a definition of one is refused, and a call stays as written with
+# its arguments simplified. A built-in is added by moving its name to `DERIVE_FUNCTIONS`
+# and giving it a converter in `engine/to_sympy.py`'s `FUNCTIONS`.
+PENDING_FUNCTIONS: frozenset[str] = frozenset()
+
+# The program constructs of Derive 6, which the evaluator runs rather than converts: their
+# arguments are statements, evaluated in an order and as often as the construct says, so
+# they have no converter. With them are the built-ins done for their effect on the
+# session or the screen: showing text, and loading a file. A definition of one is
+# refused, like any built-in's.
+PROGRAM_FUNCTIONS: frozenset[str] = frozenset(
+    "ASSIGN DISPLAY LOAD LOOP PROG RETURN WRITE".split()
 )
 
 # Special functions rederive adds to Derive's. They arise from operations on elementary
@@ -40,18 +61,49 @@ EXTENDED_FUNCTIONS: frozenset[str] = frozenset(
 # contain it, so the user can type it back.
 NOTATION_FUNCTIONS: frozenset[str] = frozenset("SUBS".split())
 
+# The functions Rederive evaluates.
 BUILTIN_FUNCTIONS: frozenset[str] = (
     DERIVE_FUNCTIONS | EXTENDED_FUNCTIONS | NOTATION_FUNCTIONS
 )
 
-# Builtin functions the user can't redefine; Derive rejects `SIN(x):=x+1` with a syntax
-# error at the `:=`. The exceptions are functions defined by older utility files (2.01's
-# MISC.MTH and VECTOR.MTH, 1.62's SPECIAL.MTH) from before they were built in, so those
-# files still load. Rederive's extended functions stay definable, since EXP_INT.MTH,
-# PROBABIL.MTH and ZETA.MTH define most of them.
-UNDEFINABLE_FUNCTIONS: frozenset[str] = (
-    DERIVE_FUNCTIONS - frozenset("DELETE_ELEMENT FLOOR MOD REVERSE_VECTOR ZETA".split())
-) | NOTATION_FUNCTIONS
+# Old names of Derive's functions that Derive 6 still accepts, which are replaced by the
+# Derive 6 name when an expression is read, so an entry and a saved file show the new
+# name.
+REWRITTEN_ALIASES: dict[str, str] = {
+    "DIMENSION": "DIM",
+    "DELETE_ELEMENT": "DELETE",
+    "REPLACE_ELEMENT": "REPLACE",
+    "INSERT_ELEMENT": "INSERT",
+    "REVERSE_VECTOR": "REVERSE",
+}
+
+# Old names that keep their spelling in the tree and compute as the Derive 6 function
+# named here. `ELEMENT` and `CROSS` have converters of their own.
+KEPT_ALIASES: dict[str, str] = {
+    "PRIME": "PRIME?",
+    "NUMBER": "NUMBER?",
+    "VAR": "VARIANCE",
+}
+
+# Every function name the lexer knows without a declaration.
+KNOWN_FUNCTIONS: frozenset[str] = (
+    BUILTIN_FUNCTIONS
+    | PROGRAM_FUNCTIONS
+    | PENDING_FUNCTIONS
+    | frozenset(REWRITTEN_ALIASES)
+)
+
+# Built-ins that a definition of the same spelling takes over for the session: functions
+# older utility files defined before they were built in, which those files still define.
+# An empty definition gives the name back to the built-in.
+YIELDING_FUNCTIONS: frozenset[str] = frozenset(
+    "DELETE_ELEMENT FLOOR MOD REVERSE_VECTOR VAR ZETA".split()
+)
+
+# Builtin functions the user can't redefine in their exact spelling; Derive rejects
+# `SIN(x):=x+1` with a syntax error at the `:=`. Another spelling, `sin(x) := x + 1`, is
+# another name.
+UNDEFINABLE_FUNCTIONS: frozenset[str] = KNOWN_FUNCTIONS - YIELDING_FUNCTIONS
 
 # Functions whose second argument names a bound variable, such as a sum's index or a
 # derivative's variable. Within the first argument that name stands for itself, even if
@@ -59,8 +111,8 @@ UNDEFINABLE_FUNCTIONS: frozenset[str] = (
 # uses the bound `x` in its first argument and the outer `x` in its third.
 BINDING_FUNCTIONS: frozenset[str] = frozenset(
     """
-    DIF INT ITERATE ITERATES LIM PRODUCT ROOT_OF ROOT_SUM SELECT SUM TAYLOR
-    VECTOR
+    DIF EVERY INT ITERATE ITERATES LIM MAP MAP_LIST PRODUCT ROOT_OF ROOT_SUM SELECT
+    SOME SUBST_DIFF SUM TABLE TAYLOR VECTOR
     """.split()
 )
 
@@ -74,13 +126,29 @@ CONSTANTS: frozenset[str] = frozenset(
     "pi inf deg #e #i true false euler_gamma unit_circle".split()
 )
 
-# Predefined variable names, so they lex as one token in Character mode. `gamma`, `zeta`
-# and `chi` are deliberately absent because they are functions, and `pi` is a constant.
-GREEK_VARIABLES: frozenset[str] = frozenset(
-    "alpha beta delta epsilon theta mu phi sigma tau omega".split()
+KEYWORD_OPERATORS: frozenset[str] = frozenset("SUB AND OR XOR IMP NOT".split())
+
+# The word operators of Derive 6. Each is recognized only as a whole run of letters, and
+# only in its upper-case spelling, except where an operator can stand: there another
+# spelling (`row`, `iff`) is the operator too, unless a user name has that exact
+# spelling. Anywhere else such a spelling is an ordinary name. `DEG` is postfix, the
+# others infix. The spelling `deg` is the constant in operand position.
+WORD_OPERATORS: frozenset[str] = frozenset(
+    "IFF SUBSET ROW COL DOTPRODUCT CROSSPRODUCT DEG".split()
 )
 
-KEYWORD_OPERATORS: frozenset[str] = frozenset("SUB AND OR XOR IMP NOT".split())
+# The word operators that stand between two operands.
+INFIX_WORDS: frozenset[str] = WORD_OPERATORS - {"DEG"}
+
+# The keyword that ends a `LOOP` or a `PROG`. It stands alone as a primary, and is
+# spelled in lower case; `EXIT` is the same keyword.
+EXIT = "exit"
+
+# Words that can't be bound, and that are found only as a whole run, never inside a
+# longer one: `returns` is no `RETURN`.
+RESERVED_WORDS: frozenset[str] = WORD_OPERATORS | frozenset(
+    ("RETURN", EXIT, EXIT.upper())
+)
 
 # Keyword operators a definition displaces. Utility files from before sets were built
 # in define `UNION(u, v)` and `INTERSECTION(u, v)` on vectors, and keep working.
@@ -94,20 +162,25 @@ SET_OPERATORS: tuple[str, ...] = ("UNION", "INTERSECTION", "\\")
 # set: `[0, 2, ..., 10]`.
 ELLIPSIS = "..."
 
-# The derivative mark: `BB'(r)` is the derivative of `BB` at `r`, one mark per order. It
-# is part of the name, not an operator, so it's not in `OPERATORS`. (Transposition uses
-# the backtick.)
+# The apostrophe. Directly after a name and before `(` or another mark it is a derivative
+# mark: `BB'(r)` is the derivative of `BB` at `r`, one mark per order, and the marks are
+# part of the name. Where an operand may start it is the quote, `'u`. So it is not in
+# `OPERATORS`. (Transposition uses the backtick.)
 PRIME_MARK = "'"
 
 # Settings the parser accepts as ordinary assignments. These three change how later
 # expressions lex; the other `SETTINGS` pass through untouched.
 PARSING_SETTINGS: frozenset[str] = frozenset("InputMode CaseMode InputBase".split())
 
+# The state variables of Derive 6. An assignment to one is a setting, never a variable,
+# whether or not Rederive has the setting: `DisplaySteps` and `SimplifyRelations` are
+# recognized and have no effect, and `ScientificThreshold`, which Derive reserved
+# without using, is ignored.
 SETTINGS: frozenset[str] = PARSING_SETTINGS | frozenset(
     """
     Precision PrecisionDigits Notation NotationDigits OutputBase DisplayFormat
     TimesOperator Angle Trigonometry Trigpower Exponential Logarithm Branch
-    ArrowKeyMode
+    ArrowKeyMode VariableOrder DisplaySteps SimplifyRelations ScientificThreshold
     """.split()
 )
 
@@ -119,11 +192,44 @@ SETTING_VALUES: frozenset[str] = frozenset(
     Decimal Hexadecimal Exact Approximate Mixed Rational Scientific Normal
     Compressed Asterisk Dot Implicit Degree Radian Auto Collect Expand Sines
     Cosines Principal Real Any Integer Complex Nonscalar Trivial Squarefree
-    raDical
+    raDical Turing Schmidt
     """.split()
 )
 
-DOMAINS: frozenset[str] = frozenset("Integer Real Complex Nonscalar".split())
+# The values each setting takes, for telling a setting line in another case spelling
+# (`inputmode:=word`) from an assignment to a variable (`angle:=30`). `NUMBER` stands for
+# an integer, `VECTOR` for a vector, and `true` and `false` for themselves.
+NUMBER = "#number"
+VECTOR = "#vector"
+_DIRECTIONS = frozenset("Auto Collect Expand".split())
+_RADICES = frozenset(("Decimal", "Binary", "Octal", "Hexadecimal", NUMBER))
+SETTING_CHOICES: dict[str, frozenset[str]] = {
+    "Precision": frozenset("Exact Approximate Mixed".split()),
+    "PrecisionDigits": frozenset((NUMBER,)),
+    "Notation": frozenset("Rational Decimal Mixed Scientific".split()),
+    "NotationDigits": frozenset((NUMBER,)),
+    "Branch": frozenset("Principal Real Any".split()),
+    "Exponential": _DIRECTIONS,
+    "Logarithm": _DIRECTIONS,
+    "Trigonometry": _DIRECTIONS,
+    "Trigpower": frozenset("Auto Sines Cosines".split()),
+    "Angle": frozenset("Radian Degree".split()),
+    "CaseMode": frozenset("Insensitive Sensitive".split()),
+    "VariableOrder": frozenset((VECTOR,)),
+    "OutputBase": _RADICES,
+    "InputBase": _RADICES,
+    "InputMode": frozenset("Character Word".split()),
+    "DisplayFormat": frozenset("Normal Compressed".split()),
+    "TimesOperator": frozenset("Dot Asterisk Implicit".split()),
+    "DisplaySteps": frozenset("true false".split()),
+    "SimplifyRelations": frozenset("true false".split()),
+    "ArrowKeyMode": frozenset("LineEdit Subexpression".split()),
+    "ScientificThreshold": frozenset((NUMBER,)),
+}
+
+DOMAINS: frozenset[str] = frozenset(
+    "Integer Real Complex Nonscalar Vector Set Logical".split()
+)
 
 # Glyph spellings of function names. They are resolved in the lexer and have no grammar
 # of their own: `√x^2` parses exactly like `SQRT x^2`.
@@ -160,32 +266,60 @@ CONSTANT_GLYPHS: dict[str, str] = {
     "\ue7c3": "euler_gamma",  # Derive's Euler gamma
 }
 
-# How each predefined Greek variable prints: as the lowercase letter, as in Derive's
-# manual.
-GREEK_CANONICAL: dict[str, str] = {
-    "alpha": "α",
-    "beta": "β",
-    "delta": "δ",
-    "epsilon": "ε",
-    "theta": "θ",
-    "mu": "μ",
-    "sigma": "σ",
-    "tau": "τ",
-    "phi": "φ",
-    "omega": "ω",
+# The Greek letters by name: the lower-case spelling names the small letter, the
+# capitalized one the capital. They are predeclared, so they lex as one name in Character
+# mode, and their case is respected in every case mode: `GAMMA` is the function, `gamma`
+# the letter. `pi` is not among them, since it is the constant in any spelling.
+GREEK_LETTERS: dict[str, str] = {
+    spelling: letter
+    for name, small, capital in (
+        ("alpha", "α", "Α"),
+        ("beta", "β", "Β"),
+        ("gamma", "γ", "Γ"),
+        ("delta", "δ", "Δ"),
+        ("epsilon", "ε", "Ε"),
+        ("zeta", "ζ", "Ζ"),
+        ("eta", "η", "Η"),
+        ("theta", "θ", "Θ"),
+        ("iota", "ι", "Ι"),
+        ("kappa", "κ", "Κ"),
+        ("lambda", "λ", "Λ"),
+        ("mu", "μ", "Μ"),
+        ("nu", "ν", "Ν"),
+        ("xi", "ξ", "Ξ"),
+        ("omicron", "ο", "Ο"),
+        ("rho", "ρ", "Ρ"),
+        ("sigma", "σ", "Σ"),
+        ("tau", "τ", "Τ"),
+        ("upsilon", "υ", "Υ"),
+        ("phi", "φ", "Φ"),
+        ("chi", "χ", "Χ"),
+        ("psi", "ψ", "Ψ"),
+        ("omega", "ω", "Ω"),
+    )
+    for spelling, letter in ((name, small), (name.capitalize(), capital))
 }
 
-# Every glyph that resolves to one of those names. Derive stored Greek letters in the IBM
-# PC character set, whose Greek characters decode to `ß` for beta, `Θ` for theta, `Φ` for
-# phi, `Ω` for omega and the micro sign for mu (GRAPHICS.MTH writes `Θn`, for example).
-# Text decoded that way must name the same variables.
-GREEK_GLYPHS: dict[str, str] = {glyph: name for name, glyph in GREEK_CANONICAL.items()} | {
-    "ß": "beta",  # sharp s, U+00DF
-    "Θ": "theta",  # capital theta
-    "µ": "mu",  # micro sign, U+00B5
-    "Φ": "phi",  # capital phi
-    "Ω": "omega",  # capital omega
+# The name of each Greek letter, which result lines use, and files where the letter
+# itself would read as something else.
+GREEK_NAMES: dict[str, str] = {letter: name for name, letter in GREEK_LETTERS.items()}
+
+# Characters of the IBM PC character set read as Greek letters. Derive for DOS stored
+# Greek letters in it, and its Greek characters decode to `ß` for beta, `Θ` for theta,
+# `Φ` for phi, `Ω` for omega and the micro sign for mu (GRAPHICS.MTH writes `Θn`, for
+# example). Text decoded that way must name the same variables. A declaration that uses
+# one of these characters as a name takes it for that name.
+DOS_GREEK: dict[str, str] = {
+    "ß": "β",  # sharp s, U+00DF
+    "Θ": "θ",  # capital theta
+    "µ": "μ",  # micro sign, U+00B5
+    "Φ": "φ",  # capital phi
+    "Ω": "ω",  # capital omega
 }
+
+# Letters that read as a constant or a built-in function until a declaration uses the
+# letter as a name, as `π(a) := a + 1` does; from then on they are that name.
+DISPLACEABLE_GLYPHS: frozenset[str] = frozenset("πΓΣΠêî")
 
 # Operator glyphs and their canonical spelling, ASCII or a keyword operator. Note that
 # `·` U+00B7 is multiplication, and `∙` U+2219 and Derive's `⋅` U+22C5 the dot product.
@@ -194,6 +328,8 @@ OPERATOR_GLYPHS: dict[str, str] = {
     "≥": ">=",
     "≠": "/=",
     "≔": ":=",
+    # Read as an ordinary assignment, as Derive 6 shows and treats it.
+    ":==": ":=",
     "·": "*",
     "∙": ".",
     "⋅": ".",
@@ -208,6 +344,14 @@ OPERATOR_GLYPHS: dict[str, str] = {
     "∨": "OR",
     "⊻": "XOR",
     "→": "IMP",
+    "↔": "IFF",
+    "⊆": "SUBSET",
+    "∪": "UNION",
+    "∩": "INTERSECTION",
+    "•": "DOTPRODUCT",
+    "⨯": "CROSSPRODUCT",
+    # The minus sign, which text pasted from documents carries.
+    "\u2212": "-",
     # The subscript arrow, byte 0x19 of the DOS character set, which DOS files store for
     # `SUB`.
     "\x19": "SUB",
@@ -221,6 +365,10 @@ DOMAIN_OPERATORS: tuple[str, ...] = (":epsilon", ":ε", ":∈", "\ue7c8")
 OPERATORS: tuple[str, ...] = (
     ":==",
     ":=",
+    ":+",
+    ":-",
+    ":*",
+    ":/",
     ":epsilon",
     ":ε",
     ":∈",
@@ -254,6 +402,7 @@ OPERATORS: tuple[str, ...] = (
     "}",
     "\\",
     ",",
+    ";",
     "?",
     "·",
     "∙",
@@ -267,13 +416,25 @@ OPERATORS: tuple[str, ...] = (
     "∨",
     "⊻",
     "→",
+    "↔",
+    "⊆",
+    "∪",
+    "∩",
+    "•",
+    "⨯",
+    "\u2212",
     "\x19",
 )
 
-# Derive for DOS took every character in the upper half of its character set, code page
-# 437, for a letter, so DOS files have names such as `¿`, `£`, `W≈` and `F21` followed
-# by a no-break space. Those characters are letters here too, as decoded, except the
-# ones read as something else: a glyph for a constant, a function or an operator.
-CODE_PAGE_LETTERS: frozenset[str] = frozenset(
-    bytes(range(0x80, 0x100)).decode("cp437")
-) - frozenset(CONSTANT_GLYPHS) - frozenset(FUNCTION_GLYPHS) - frozenset(OPERATOR_GLYPHS)
+# Characters at or above U+0080 that are not letters: the glyphs of constants, functions
+# and operators, the minus sign U+2212, and the rest of Derive's block in the Private Use
+# Area. Every other such character is a letter, as in Derive 6 and in
+# Derive for DOS, so names such as `Lotfußpunkt`, `■`, `m₀` or `F21` followed by a
+# no-break space read whole. The letters `DISPLACEABLE_GLYPHS` begin a name or stand for
+# a constant or a function, depending on the declarations.
+NON_LETTERS: frozenset[str] = (
+    ((frozenset(CONSTANT_GLYPHS) | frozenset(FUNCTION_GLYPHS)) - DISPLACEABLE_GLYPHS)
+    | frozenset(op for op in OPERATOR_GLYPHS if len(op) == 1)
+    | frozenset("\u2212")
+    | frozenset(chr(code) for code in range(0xE7C0, 0xE7C9))
+)

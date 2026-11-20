@@ -29,7 +29,7 @@ This module offers:
 
 from __future__ import annotations
 
-from rederive.engine.boundary import Amount, Result
+from rederive.engine.boundary import SETTLING, Amount, PlotForm, Result
 from rederive.engine.context import (
     Angle,
     Branch,
@@ -39,8 +39,10 @@ from rederive.engine.context import (
     Domain,
     DomainKind,
     Precision,
+    StepLimitExceeded,
     TrigPower,
     domain_of_node,
+    reporting,
 )
 from rederive.engine.ordering import ORDER_LIST, main_order
 from rederive.engine.replacing import Replacement, replace
@@ -48,6 +50,7 @@ from rederive.model.expr import Kind, Node
 
 __all__ = [
     "ORDER_LIST",
+    "PATIENCE",
     "Amount",
     "Angle",
     "Branch",
@@ -62,15 +65,21 @@ __all__ = [
     "EngineDown",
     "EngineError",
     "EngineMemoryExceeded",
+    "EngineStepLimit",
+    "EngineTimedOut",
+    "PlotForm",
     "Precision",
     "Replacement",
     "Result",
+    "StepLimitExceeded",
     "TrigPower",
     "decomposes",
     "domain_of_node",
     "equations_in",
     "main_order",
     "replace",
+    "reporting",
+    "written_as_matrix",
     "written_as_ratio",
 ]
 
@@ -88,6 +97,23 @@ class EngineAborted(EngineError):
 
 class EngineMemoryExceeded(EngineError):
     """The worker met the memory cap, from the inside or from the watchdog."""
+
+
+class EngineStepLimit(EngineError):
+    """The command took more program steps than the session allows (see
+    `Context.step_limit`), and was abandoned like an aborted one."""
+
+
+class EngineTimedOut(EngineError):
+    """A request that must answer promptly took too long, and the worker computing it
+    was stopped as for an abort (see `PATIENCE`)."""
+
+
+#: Seconds a client that can stop its worker waits for the simplification a plot
+#: starts from (see `PlotForm`) before stopping it. The engine ends the simplification
+#: itself after `SETTLING` seconds at a program step; this is for one that takes no
+#: steps.
+PATIENCE = 2 * SETTLING
 
 
 class EngineDied(EngineError):
@@ -133,6 +159,18 @@ def decomposes(node: Node) -> bool:
     return False
 
 
+def written_as_matrix(node: Node) -> bool:
+    """Whether `node` is written as a matrix, a vector of rows of one nonzero length,
+    for which Factor also offers the matrix factorizations. Like `decomposes` the test
+    is on how the expression is written."""
+    if node.kind is not Kind.VECTOR or not node.children:
+        return False
+    rows = node.children
+    return all(row.kind is Kind.VECTOR for row in rows) and (
+        len({len(row.children) for row in rows}) == 1 and bool(rows[0].children)
+    )
+
+
 def written_as_ratio(node: Node) -> bool:
     """Whether `node` is written as a quotient, and so has a denominator to factor.
 
@@ -169,6 +207,7 @@ _NO_EQUATION = frozenset(
         Kind.OR,
         Kind.XOR,
         Kind.IMP,
+        Kind.IFF,
         Kind.ASSIGN,
         Kind.FUNDEF,
         Kind.DOMAIN,

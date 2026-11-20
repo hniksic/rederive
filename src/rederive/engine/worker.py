@@ -36,15 +36,20 @@ import traceback
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+from rederive.engine.context import StepLimitExceeded, reporting
+
 if TYPE_CHECKING:
     from multiprocessing.connection import Connection
 
 __all__ = [
     "BUG",
     "MEMORY",
+    "PROGRESS",
     "READY",
+    "STEPS",
     "log_path",
     "methods",
+    "reporter",
     "serve",
 ]
 
@@ -52,11 +57,21 @@ __all__ = [
 #: handshake from an answer.
 READY = -1
 
-#: The two kinds of error an answer can report. A bug is an exception the engine
-#: promised not to raise, and the worker survives it. Memory is a `MemoryError`, after
-#: which the worker exits, since the heap can't be trusted after a failed allocation.
+#: The kinds of error an answer can report. A bug is an exception the engine promised
+#: not to raise, and the worker survives it. Memory is a `MemoryError`, after which the
+#: worker exits, since the heap can't be trusted after a failed allocation. Steps is a
+#: command that exceeded the step limit its context set.
 BUG = "bug"
 MEMORY = "memory"
+STEPS = "steps"
+
+#: The kind of a message sent while a request runs, before its answer: a text a
+#: program's `DISPLAY` or `WRITE` showed, `(number, PROGRESS, text, displayed)`.
+PROGRESS = "progress"
+
+#: The shortest time between two `WRITE` texts sent. A loop may write thousands a
+#: second, which no one can read; the last one comes with the answer anyway.
+WRITE_PERIOD = 0.1
 
 #: Log file name, keyed by pid so the parent can find it without asking the worker.
 _LOG_NAME = "rederive-worker-{pid}.log"
@@ -99,7 +114,11 @@ def _loop(connection: Connection, methods: dict[str, Callable[..., Any]]) -> Non
             return
         number, method, args = request
         try:
-            connection.send((number, "ok", methods[method](*args)))
+            with reporting(reporter(connection.send, number)):
+                answer = methods[method](*args)
+            connection.send((number, "ok", answer))
+        except StepLimitExceeded:
+            _report(connection, number, STEPS)
         except MemoryError:
             # Report before exiting, so the parent knows how memory ran out.
             _report(connection, number, MEMORY)
@@ -108,6 +127,30 @@ def _loop(connection: Connection, methods: dict[str, Callable[..., Any]]) -> Non
             # Including `RecursionError`. The engine promises not to raise on parser
             # output, so this is a bug to report, but not worth a respawn.
             _report(connection, number, BUG)
+
+
+def reporter(
+    send: Callable[[tuple[Any, ...]], None], number: int
+) -> Callable[[str, bool], None]:
+    """A listener for the texts request `number` shows (see `reporting`), which sends
+    each as a progress message: every `DISPLAY` text, since the app adds them to the
+    worksheet if the command is aborted, but `WRITE` texts at most every
+    `WRITE_PERIOD`."""
+    last = -WRITE_PERIOD
+
+    def report(text: str, displayed: bool) -> None:
+        nonlocal last
+        if not displayed:
+            now = time.monotonic()
+            if now - last < WRITE_PERIOD:
+                return
+            last = now
+        try:
+            send((number, PROGRESS, text, displayed))
+        except (OSError, ValueError):
+            pass
+
+    return report
 
 
 def _report(connection: Connection, number: int, kind: str) -> None:
@@ -274,6 +317,7 @@ def methods() -> dict[str, Callable[..., Any]]:
         "solve": computing.solve,
         "expression_variables": computing.expression_variables,
         "relation_of": computing.relation_of,
+        "plot_form": computing.plot_form,
         "hang": _hang,
         "allocate": _allocate,
     }

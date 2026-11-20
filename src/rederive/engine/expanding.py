@@ -64,12 +64,24 @@ def expanded_expression(
     is the session's order list, used to order "all of them".
 
     Each scalar in the expression is expanded and then passed through `finish`, so
-    rounding applies to the terms rather than to the original.
+    rounding applies to the terms rather than to the original. A logical formula is
+    put in disjunctive normal form.
 
     Never raises on output of the conversion layer; a failed rewrite is skipped.
     """
     request = _Request(amount, tuple(variables), finish, tuple(order))
-    return distributed(expression, lambda scalar: _leaf(scalar, request))
+    return distributed(
+        expression, lambda scalar: _leaf(scalar, request), _disjunctive
+    )
+
+
+def _disjunctive(formula: sp.Basic) -> sp.Basic:
+    """A logical formula in disjunctive normal form: `p AND (q OR r)` is `(p AND q) OR
+    (p AND r)`."""
+    try:
+        return sp.to_dnf(formula)
+    except Exception:
+        return formula
 
 
 @dataclass(frozen=True)
@@ -270,17 +282,29 @@ def _collected(
     """
     if not isinstance(expression, sp.Add):
         return expression
-    groups: dict[tuple[sp.Expr, ...], list[sp.Expr]] = {}
+    groups: dict[tuple[tuple[sp.Expr, ...], sp.Expr], list[sp.Expr]] = {}
     for term in expression.args:
         degrees, rest = _degrees(term, variables)
-        groups.setdefault(degrees, []).append(rest)
+        kernel, coefficient = _kernel(rest, variables)
+        groups.setdefault((degrees, kernel), []).append(coefficient)
     return sp.Add(
         *(
             sp.Mul(*(base**power for base, power in zip(variables, degrees)))
-            * _coefficient(rest, degrees)
-            for degrees, rest in groups.items()
+            * kernel
+            * _coefficient(coefficients, (*degrees, kernel != 1))
+            for (degrees, kernel), coefficients in groups.items()
         )
     )
+
+
+def _kernel(rest: sp.Expr, variables: tuple[sp.Symbol, ...]) -> tuple[sp.Expr, sp.Expr]:
+    """What of a term's factors past the powers of the variables still involves them,
+    such as `SIN(x)`, and the rest, its coefficient. Terms of different kernels are
+    independent and are not collected: `x^2*SIN(x) + x^2` stays two terms."""
+    involved, free = [], []
+    for factor in sp.Mul.make_args(rest):
+        (involved if factor.free_symbols & set(variables) else free).append(factor)
+    return sp.Mul(*involved), sp.Mul(*free)
 
 
 def _coefficient(terms: list[sp.Expr], degrees: tuple[sp.Expr, ...]) -> sp.Expr:

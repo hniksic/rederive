@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import functools
 import math
+import re
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -45,15 +46,17 @@ from sympy.printing.precedence import (
 )
 
 from rederive.engine import notation
-from rederive.engine.approximation import is_approximation, reapproximated
-from rederive.engine.context import Angle, Context, Notation, Precision
+from rederive.engine.approximation import is_approximation
+from rederive.engine.context import Context, Notation, Precision
 from rederive.engine.ordering import main_order
+from rederive.model.expr import Node
 from rederive.syntax.names import (
     BUILTIN_FUNCTIONS,
-    EXTENDED_FUNCTIONS,
-    GREEK_GLYPHS,
+    GREEK_NAMES,
     PRIME_MARK,
+    YIELDING_FUNCTIONS,
 )
+from rederive.syntax.writer import write_expression
 
 # Binding strength of the inert heads, at the precedence of the operator each prints
 # as. Without an entry sympy treats a `Function` as tight as `SIN(x)`, printing
@@ -78,8 +81,24 @@ PRECEDENCE_VALUES.setdefault("SetOf", PRECEDENCE["Atom"])
 PRECEDENCE_VALUES.setdefault("SetUnion", PRECEDENCE["Relational"] + 1)
 PRECEDENCE_VALUES.setdefault("SetIntersection", PRECEDENCE["Relational"] + 2)
 PRECEDENCE_VALUES.setdefault("SetDifference", PRECEDENCE["Relational"] + 3)
+# `RETURN(u)` reads what follows into its operand, so it is parenthesized as an operand.
+PRECEDENCE_VALUES.setdefault("RETURN", PRECEDENCE["Lambda"])
 # A truth value used as an arithmetic operand binds as tightly as its content.
 PRECEDENCE_FUNCTIONS.setdefault("Truth", lambda expr: precedence(expr.args[0]))
+# A logical operator sympy declined (`Logical`, such as `3 AND p`) binds as its word
+# does, every one of them more loosely than a relation: `(5 AND d) = 0` keeps its
+# parentheses.
+_LOGICAL_LEVELS = {
+    "NOT": PRECEDENCE["And"] + 1,
+    "AND": PRECEDENCE["And"],
+    "OR": PRECEDENCE["Or"],
+    "XOR": PRECEDENCE["Xor"],
+    "IMP": PRECEDENCE["Xor"],
+    "IFF": PRECEDENCE["Xor"],
+}
+PRECEDENCE_FUNCTIONS.setdefault(
+    "Logical", lambda expr: _LOGICAL_LEVELS.get(str(expr.args[0]), PRECEDENCE["Xor"])
+)
 
 _DIGITS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
@@ -120,22 +139,48 @@ _FUNCTION_NAMES = {
     "Shi": "SINH_INT",
     "Determinant": "DET",
     "Trace": "TRACE",
+    "Modulo": "MOD",
+    "SymmetricModulo": "MODS",
 }
 
 #: Logical operator precedence, tightest first, to decide when an operand needs
 #: parentheses. Relations and anything tighter never do.
-_LOGICAL_PRECEDENCE = {"NOT": 5, "AND": 4, "OR": 3, "XOR": 2, "IMP": 1}
+_LOGICAL_PRECEDENCE = {"NOT": 5, "AND": 4, "OR": 3, "XOR": 2, "IMP": 1, "IFF": 0}
 
 _LOGICAL_HEADS = {
     "And": "AND",
     "Or": "OR",
     "Xor": "XOR",
     "Implies": "IMP",
+    "Equivalent": "IFF",
     "Not": "NOT",
 }
 
 
-def _logical_order(operands, order: Sequence[str]) -> list[sp.Basic]:
+def _is_primary(text: str) -> bool:
+    """Whether `text` reads as one primary, which an index may be without parentheses:
+    a name, a nonnegative numeral, a string, or a single call, vector or set."""
+    if re.fullmatch(r"[\w.#@?']+", text) and not text.startswith("."):
+        return True
+    if text.startswith('"') and text.endswith('"') and text.count('"') == 2:
+        return True
+    opening = re.match(r"[\w?']*", text).end()
+    if opening == len(text) or text[opening] not in "([{":
+        return False
+    if opening == 0 and text[0] == "(":
+        return False
+    depth = 0
+    for at, char in enumerate(text[opening:], start=opening):
+        if char in "([{":
+            depth += 1
+        elif char in ")]}":
+            depth -= 1
+            if depth == 0:
+                return at == len(text) - 1
+    return False
+
+
+def logical_order(operands, order: Sequence[str]) -> list[sp.Basic]:
     """The operands of a conjunction or disjunction, in order-list order.
 
     `c OR b AND a` is written `a AND b OR c`. `NOT` doesn't move a term, but a negated
@@ -190,7 +235,7 @@ _OVER_A_SUM, _OVER_THE_VARIABLE = range(2)
 _AFTER_EVERY_KERNEL = (_NOTHING,)
 
 
-def _term_order(terms: Sequence[sp.Basic], order: Sequence[str]) -> list[sp.Basic]:
+def term_order(terms: Sequence[sp.Basic], order: Sequence[str]) -> list[sp.Basic]:
     """The terms of a sum, in the original's order. The sort is stable, so terms the order
     list doesn't distinguish keep sympy's order, which makes printing a fixed point.
     """
@@ -316,7 +361,7 @@ def _raised(base: sp.Basic, power: sp.Basic) -> sp.Basic:
     return base**power
 
 
-def _factor_order(factors: Sequence[sp.Basic], order: Sequence[str]) -> list[sp.Basic]:
+def factor_order(factors: Sequence[sp.Basic], order: Sequence[str]) -> list[sp.Basic]:
     """The factors of a product, in the original's order.
 
     Variables compare as in a sum, but kinds of factor run the other way (calls last),
@@ -479,28 +524,27 @@ def _magnitude(number: sp.Basic) -> Fraction | float:
 P = ParamSpec("P")
 R = TypeVar("R")
 
-#: The added built-ins (`EXTENDED_FUNCTIONS`) whose names the user has taken for a
-#: function or variable of their own, during the command that is running.
+#: The built-ins that yield to a definition (`YIELDING_FUNCTIONS`) whose names the user
+#: has taken for a function or variable of their own, during the command that is running.
 _shadowed: ContextVar[frozenset[str]] = ContextVar("shadowed", default=frozenset())
 
 
 def shadowed(context: Context) -> frozenset[str]:
-    """The added built-ins that a user function or variable in `context` shadows.
+    """The built-ins that a user function or variable in `context` shadows.
 
-    Derive has no such built-ins, so its utility files define functions of the same
-    names, often differently: EXP_INT.MTH's `EI(x, m)` is a series of `m` terms. The
-    user's definition then owns the name, on input and in every answer. An answer can't
-    spell the built-in, since reading it back would call the user's function, so it is
-    left standing as if the engine had no name for it: with EXP_INT.MTH loaded,
-    `INT(#e^(-t)/t, t, 1, inf)` stays an integral rather than becoming `-EI(-1)`.
-    Derive's own built-ins can't be redefined, so they are never shadowed.
+    Old utility files define functions that later became built-ins, such as `ZETA` and
+    `FLOOR`, and those names yield to a definition. The user's definition then owns the
+    name, on input and in every answer. An answer can't spell the built-in, since
+    reading it back would call the user's function, so it is left standing as if the
+    engine had no name for it. The other built-ins can't be redefined, so they are
+    never shadowed.
     """
     taken = frozenset(context.functions) | frozenset(context.assignments)
-    return EXTENDED_FUNCTIONS & taken
+    return YIELDING_FUNCTIONS & taken
 
 
 def shadowed_names() -> frozenset[str]:
-    """The added built-ins shadowed during the running command; see `shadowed`."""
+    """The built-ins shadowed during the running command; see `shadowed`."""
     return _shadowed.get()
 
 
@@ -564,6 +608,35 @@ def function_name(expression: sp.Basic) -> str:
     return spelling(expression) or type(expression).__name__.upper()
 
 
+class WrittenBase(AppliedUndef):
+    """An expression kept as the user wrote it, which nothing evaluates: the body of a
+    definition that holds a program (see `_Evaluator._fundef`). Each is its own class
+    with the tree in `node`, applied to nothing, and prints as the tree is written."""
+
+    node: Node
+
+
+class HeldBase(AppliedUndef):
+    """A held value, the value of a quote `'u`: the expression `u` as written, with the
+    values of the locals in scope filled in, and nothing evaluated. Each is its own
+    class with the tree in `node`, applied to nothing, so that sympy builds sums and
+    products of it without looking inside: it has no free symbols and is no number.
+    Equal trees are one class (see `to_sympy.held`), so two equal held values are the
+    same term. It prints as the tree is written, at the tree's `precedence`.
+    """
+
+    node: Node
+    precedence: int
+
+
+def has_held(expression: object) -> bool:
+    """Whether `expression` has a held value in it."""
+    try:
+        return isinstance(expression, sp.Basic) and bool(expression.atoms(HeldBase))
+    except Exception:
+        return False
+
+
 def is_written(expression: sp.Basic) -> bool:
     """Whether the notation can express every function head in `expression`, i.e. each has
     a spelling or its own print method in `AuthorPrinter`. Calculus heads whose answer
@@ -608,11 +681,16 @@ def _is_digamma(expression: sp.Basic) -> bool:
 
 
 def _degree(exponent: sp.Basic) -> tuple:
-    """A sort key for a power, descending. Symbolic exponents share one position after
-    every numeric one.
+    """A sort key for a power, descending. A real constant exponent sorts by its value
+    (`x^(2*#e)` before `x^pi` before `x^SQRT(5)`); symbolic exponents share one position
+    after every numeric one.
     """
     if exponent.is_Rational:
         return (0, -Fraction(int(exponent.p), int(exponent.q)))
+    if exponent.is_number and exponent.is_extended_real:
+        value = sp.N(exponent, 30)
+        if value.is_Float:
+            return (0, -Fraction(str(value)))
     return (1, Fraction(0))
 
 
@@ -632,94 +710,7 @@ def author_text(
     `authored` maps subexpressions to text to print instead; `pipeline.simplify` fills
     it with author-written conditionals, whose arms are shown as written.
     """
-    if context is not None and context.angle is Angle.DEGREE:
-        expression = in_degrees(expression, context)
-        authored = {
-            in_degrees(key, context): text for key, text in (authored or {}).items()
-        }
     return AuthorPrinter(context, authored).doprint(named(expression))
-
-
-#: Heads that take an angle and heads that return one, mapped to their printed names.
-#: `PHASE` returns one, being `ATAN(y, x)` of the parts.
-_TAKING_ANGLE = {
-    sp.sin: "SIN",
-    sp.cos: "COS",
-    sp.tan: "TAN",
-    sp.cot: "COT",
-    sp.sec: "SEC",
-    sp.csc: "CSC",
-}
-_GIVING_ANGLE = {
-    sp.asin: "ASIN",
-    sp.acos: "ACOS",
-    sp.atan: "ATAN",
-    sp.acot: "ACOT",
-    sp.asec: "ASEC",
-    sp.acsc: "ACSC",
-    sp.atan2: "ATAN",
-    sp.arg: "PHASE",
-}
-
-
-def in_degrees(expression: sp.Basic, context: Context) -> sp.Basic:
-    """`expression`, with angles in radians, rewritten to use degrees.
-
-    Under `Angle := Degree` the sine of `pi*x/180` radians prints as `SIN(x)`. Each
-    head is replaced by an inert one of the same name, and `pi/180` factors cancel. In
-    an approximate answer the leftover `pi` coefficient is re-approximated so that
-    `SIN(0.0174532*x)` prints as `SIN(x)`.
-    """
-    if not expression.has(*_TAKING_ANGLE, *_GIVING_ANGLE):
-        return expression
-    for head, name in _TAKING_ANGLE.items():
-        inert = sp.Function(name)
-        expression = expression.replace(
-            head, lambda angle, inert=inert: inert(angle * 180 / sp.pi)
-        )
-    for head, name in _GIVING_ANGLE.items():
-        inert = sp.Function(name)
-        expression = expression.replace(
-            head, lambda *args, inert=inert: inert(*args) * sp.pi / 180
-        )
-    expression = expression.replace(lambda e: e.is_Mul, _cancelling_pi)
-    if context.precision is Precision.EXACT:
-        return expression
-    return expression.replace(
-        lambda e: e.is_Mul, lambda product: _approximate_pi(product, context)
-    )
-
-
-def _approximate_pi(product: sp.Basic, context: Context) -> sp.Basic:
-    """`product` with its numeric coefficient approximated, if it contains `pi`."""
-    number, rest = product.as_independent(*product.free_symbols, as_Add=False)
-    if not number.has(sp.pi) or number == product:
-        return product
-    return reapproximated(number, context) * rest
-
-
-def _pi_power(term: sp.Basic) -> sp.Basic:
-    return term.as_powers_dict().get(sp.pi, sp.Integer(0))
-
-
-def _cancelling_pi(product: sp.Basic) -> sp.Basic:
-    """`product` with a `pi` common to every term of a sum cancelled against a `pi`
-    divisor, as in `(180*pi - pi*ASIN(a))/pi` from converting an inverse function.
-    """
-    below = -_pi_power(product)
-    if not below.is_Integer or below <= 0:
-        return product
-    factors = list(product.args)
-    for place, factor in enumerate(factors):
-        if not factor.is_Add:
-            continue
-        powers = [_pi_power(term) for term in factor.args]
-        if not all(power.is_Integer and power > 0 for power in powers):
-            continue
-        cancelled = min(below, *powers)
-        factors[place] = sp.Add(*(term / sp.pi**cancelled for term in factor.args))
-        return sp.Mul(*factors) * sp.pi**cancelled
-    return product
 
 
 def named(expression: sp.Basic) -> sp.Basic:
@@ -964,7 +955,7 @@ class AuthorPrinter(sp.StrPrinter):
         `SQRT(3) - 1`, not `-1 + SQRT(3)`, but `-x^2 + 2*x - 1` keeps its order, as in
         the original. A complex number like `-2 + 2*#i` isn't swapped.
         """
-        terms = _term_order(super()._as_ordered_terms(expr, order), self.context.order)
+        terms = term_order(super()._as_ordered_terms(expr, order), self.context.order)
         if len(terms) == 2 and self._minus_first(terms[0]):
             if not self._minus_first(terms[1]) and not terms[1].has(sp.I):
                 return [terms[1], terms[0]]
@@ -992,7 +983,7 @@ class AuthorPrinter(sp.StrPrinter):
         text can be typed on the author line.
         """
         return _SUBSCRIPT.join(
-            GREEK_GLYPHS.get(part, part) for part in expr.name.split(_SUBSCRIPT)
+            GREEK_NAMES.get(part, part) for part in expr.name.split(_SUBSCRIPT)
         )
 
     def _print_Dummy(self, expr):
@@ -1029,18 +1020,41 @@ class AuthorPrinter(sp.StrPrinter):
     def _print_Mul(self, expr):
         """A product, in order-list order.
 
-        In a decimal style, a rational coefficient goes in front as a number (`x/3` is
-        `0.333333·x`). An unevaluated product, like `Factor`'s `2*3^2*5*3607*3803`, is
-        printed by sympy as is.
+        In a decimal style, a rational coefficient goes in front as a number (`x/4` is
+        `0.25·x`). Under Decimal, an exact coefficient that the decimal would cut short
+        keeps its ratio where the ratio is no longer than the decimal (`x/3`, but
+        `0.948699·x` for 10541/11111 at six digits), so a short exact factor is shown as
+        computed. An unevaluated product, like `Factor`'s `2*3^2*5*3607*3803`, is printed
+        by sympy as is.
         """
         if _unevaluated(expr):
             return super()._print_Mul(expr)
         coefficient, rest = expr.as_coeff_Mul()
+        if getattr(rest, "degree_unit", False) and coefficient.is_Rational:
+            # An angle in degrees, written with the postfix operator: `30 DEG`.
+            if coefficient.q == 1:
+                return f"{self._print(coefficient)} DEG"
+            return f"({self._print(coefficient)}) DEG"
         if isinstance(coefficient, sp.Rational) and coefficient.q != 1:
-            written = self._number(Fraction(coefficient.p, coefficient.q))
-            if "/" not in written:
+            value = Fraction(coefficient.p, coefficient.q)
+            written = self._number(value)
+            if "/" not in written and not self._keeps_ratio(value, written):
                 return self._beside(written, rest)
         return self._divided(expr)
+
+    def _keeps_ratio(self, value: Fraction, written: str) -> bool:
+        """Whether an exact coefficient `written` as a cut-short decimal is better
+        written as its ratio, which is not longer. Only Decimal writes whole numbers in
+        full, as a ratio needs.
+        """
+        if (
+            self.context.notation is not Notation.DECIMAL
+            or is_approximation(value)
+            or notation.value_of(written) == value
+        ):
+            return False
+        ratio = len(str(value.numerator)) + 1 + len(str(value.denominator))
+        return ratio <= len(written)
 
     def _divided(self, expr) -> str:
         """A product with its denominator determined as `_print_Pow` determines one.
@@ -1058,7 +1072,7 @@ class AuthorPrinter(sp.StrPrinter):
         if expr.could_extract_minus_sign():
             expr, sign = -expr, "-"
         above, below = [], []
-        factors = _factor_order(
+        factors = factor_order(
             _merged_roots(expr.as_ordered_factors()), self.context.order
         )
         for index, factor in enumerate(factors):
@@ -1110,7 +1124,7 @@ class AuthorPrinter(sp.StrPrinter):
         """
         above, below = [], []
         factors = _merged_roots(rest.as_ordered_factors())
-        for factor in _factor_order(factors, self.context.order):
+        for factor in factor_order(factors, self.context.order):
             base, power = factor.as_base_exp()
             if power.is_Rational and power.is_negative:
                 below.append(base if power == -1 else _raised(base, -power))
@@ -1272,8 +1286,14 @@ class AuthorPrinter(sp.StrPrinter):
     def _print_Relational(self, expr):
         level = PRECEDENCE["Relational"]
         operator = _RELATIONS.get(expr.rel_op, expr.rel_op)
-        left = self.parenthesize(expr.lhs, level)
-        right = self.parenthesize(expr.rhs, level)
+        left, right = (
+            # Sympy rates `NOT` as tight as an atom; written, it binds more loosely than
+            # a relation, so `(NOT d) = 0` needs its parentheses.
+            f"({self._print(side)})"
+            if isinstance(side, sp.Not)
+            else self.parenthesize(side, level)
+            for side in (expr.lhs, expr.rhs)
+        )
         return f"{left} {operator} {right}"
 
     # -- functions ----------------------------------------------------------
@@ -1284,6 +1304,10 @@ class AuthorPrinter(sp.StrPrinter):
         """
         if _is_suspended(expr):
             return self._print_Suspended(expr)
+        if isinstance(expr, WrittenBase):
+            return self._print_WrittenBase(expr)
+        if isinstance(expr, HeldBase):
+            return self._print_HeldBase(expr)
         name = spelling(expr)
         if name is None:
             if not self._unspelling:
@@ -1324,6 +1348,14 @@ class AuthorPrinter(sp.StrPrinter):
             expr.args, key=lambda term: _term_key(term, order), reverse=True
         )
         return f"GCD({self.stringify(operands, ', ')})"
+
+    def _print_Modulo(self, expr):
+        """`MOD(m, n)` and `MODS(m, n)`, written `MOD(m)` for the unit modulus."""
+        name = spelling(expr)
+        value, modulus = expr.args
+        if name is None or modulus != 1:
+            return self._print_Function(expr)
+        return f"{name}({self._print(value)})"
 
     def _print_Min(self, expr):
         return f"MIN({self.stringify(expr.args, ', ')})"
@@ -1505,7 +1537,10 @@ class AuthorPrinter(sp.StrPrinter):
 
     def _print_And(self, expr):
         chained = self._chain(expr)
-        return chained if chained is not None else self._infix("AND", expr.args)
+        if chained is not None:
+            return chained
+        order = not getattr(expr, "in_order", False)
+        return self._infix("AND", expr.args, order=order)
 
     def _chain(self, expr) -> str | None:
         """Two bounds on one variable as the chain `-2 < x < 2`, as the original writes a
@@ -1529,7 +1564,8 @@ class AuthorPrinter(sp.StrPrinter):
         )
 
     def _print_Or(self, expr):
-        return self._infix("OR", expr.args)
+        order = not getattr(expr, "in_order", False)
+        return self._infix("OR", expr.args, order=order)
 
     def _print_Xor(self, expr):
         return self._infix("XOR", expr.args)
@@ -1538,24 +1574,41 @@ class AuthorPrinter(sp.StrPrinter):
         # `IMP` isn't commutative, so its operands keep their order.
         return self._infix("IMP", expr.args, order=False)
 
+    def _print_Equivalent(self, expr):
+        if len(expr.args) != 2:
+            # All operands have one truth value: each equivalent to the next.
+            links = [
+                sp.Equivalent(first, second, evaluate=False)
+                for first, second in zip(expr.args, expr.args[1:], strict=False)
+            ]
+            return self._infix("AND", links, order=False)
+        return self._infix("IFF", expr.args, order=False)
+
     def _print_Not(self, expr):
         return f"NOT {self._logical_operand(expr.args[0], 'NOT')}"
 
     def _infix(self, word: str, operands, order: bool = True) -> str:
         if order:
-            operands = _logical_order(operands, self.context.order)
+            operands = logical_order(operands, self.context.order)
         return f" {word} ".join(
             self._logical_operand(operand, word) for operand in operands
         )
 
     def _logical_operand(self, operand: sp.Basic, word: str) -> str:
-        """The operand, parenthesized if it binds more loosely than `word`."""
+        """The operand, parenthesized if it binds more loosely than `word`, or if it is
+        a conjunction inside a disjunction, as the original writes a disjunction of
+        solutions, `(x = -a AND y = -a) OR (x = a AND y = a)`. A range drawn as a chain,
+        `-2 < x < 2`, reads as one relation and is not parenthesized."""
         inner = _LOGICAL_HEADS.get(type(operand).__name__)
         if isinstance(operand, sp.Function) and type(operand).__name__ == "Logical":
             inner = str(operand.args[0])
         text = self._print(operand)
         if inner is None:
             return text
+        if word == "OR" and inner == "AND":
+            if isinstance(operand, sp.And) and self._chain(operand) is not None:
+                return text
+            return f"({text})"
         if _LOGICAL_PRECEDENCE[inner] > _LOGICAL_PRECEDENCE[word]:
             return text
         return f"({text})"
@@ -1597,7 +1650,26 @@ class AuthorPrinter(sp.StrPrinter):
     def _print_Subscript(self, expr):
         level = PRECEDENCE["Func"]
         base, index = expr.args
-        return f"{self.parenthesize(base, level)} SUB {self.parenthesize(index, level)}"
+        return f"{self.parenthesize(base, level)} SUB {self._index(index)}"
+
+    def _index(self, index: sp.Basic) -> str:
+        """The index of a subscript link, in parentheses unless it is one primary: a
+        name, a nonnegative numeral, a vector, a set, a string or a call."""
+        text = self._print(index)
+        if _is_primary(text):
+            return text
+        return f"({text})"
+
+    def _print_InfixBase(self, expr):
+        """A word operator that stands. A subscript link binds like `SUB`, and the
+        others are left-associative."""
+        left, right = expr.args[:2]
+        level = precedence(expr)
+        if level >= PRECEDENCE["Atom"] - 1:
+            base = self.parenthesize(left, PRECEDENCE["Func"])
+            return f"{base} {expr.operator} {self._index(right)}"
+        first = self.parenthesize(left, level)
+        return f"{first} {expr.operator} {self.parenthesize(right, level, strict=True)}"
 
     def _print_Added(self, expr):
         text = ""
@@ -1618,9 +1690,16 @@ class AuthorPrinter(sp.StrPrinter):
         return f"{self.parenthesize(left, level)}/{over}"
 
     def _print_Dot(self, expr):
+        """`u . v`; a chain nested to the left, `P . L . D`, needs no parentheses, the
+        operator being left-associative."""
         level = PRECEDENCE["Mul"]
         left, right = expr.args
-        return f"{self.parenthesize(left, level)} . {self.parenthesize(right, level)}"
+        written = (
+            self._print(left)
+            if type(left) is type(expr)
+            else self.parenthesize(left, level)
+        )
+        return f"{written} . {self.parenthesize(right, level)}"
 
     def _print_Truth(self, expr):
         return self._print(expr.args[0])
@@ -1673,6 +1752,14 @@ class AuthorPrinter(sp.StrPrinter):
             return f"{word} {self._logical_operand(operands[0], word)}"
         return self._infix(word, operands, order=False)
 
+    def _print_WrittenBase(self, expr):
+        return write_expression(type(expr).node, spaced=True)
+
+    def _print_HeldBase(self, expr):
+        """A held value as its expression is written; the operator around it
+        parenthesizes it by its `precedence`."""
+        return write_expression(type(expr).node, spaced=True)
+
     def _print_Assign(self, expr):
         target, operator, *value = expr.args
         parts = [self._print(target), str(operator), *(self._print(v) for v in value)]
@@ -1680,7 +1767,11 @@ class AuthorPrinter(sp.StrPrinter):
 
     def _print_FunDef(self, expr):
         name, parameters, *body = expr.args
-        head = f"{name}({', '.join(self._print(p) for p in parameters)})"
+        if isinstance(parameters, sp.Tuple):
+            head = f"{name}({', '.join(self._print(p) for p in parameters)})"
+        else:
+            # The variadic head `F v`, whose one parameter takes all the arguments.
+            head = f"{name} {self._print(parameters)}"
         return " ".join([head, ":=", *(self._print(part) for part in body)])
 
     def _print_Declare(self, expr):

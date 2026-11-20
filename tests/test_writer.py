@@ -10,7 +10,7 @@ from __future__ import annotations
 import expr_cases
 import pytest
 from sexpr import to_sexpr
-from test_expr_library import GROUPS, starting_state
+from test_expr_library import GROUPS, refused, starting_state
 
 from rederive.model.expr import Kind, Node
 from rederive.syntax import (
@@ -33,8 +33,9 @@ SPELLINGS = [
     ("[1, 2, 3]", "[1,2,3]"),
     ("INT(x^2, x)", "INT(x^2,x)"),
     ("x := 3", "x:=3"),
-    # a name is written as the symbol table spells it
-    ("f(y) := y^2", "F(y):=y^2"),
+    # a name is written as it was declared, a built-in in upper case
+    ("f(y) := y^2", "f(y):=y^2"),
+    ("sin(y)+Sin(y)", "SIN(y)+SIN(y)"),
     # a bare application becomes a call, and `|u|` the call it means
     ("SIN x", "SIN(x)"),
     ("(SIN x)^2", "SIN(x)^2"),
@@ -73,7 +74,7 @@ SPELLINGS = [
     ("a SUB b SUB c", "a SUB b SUB c"),
     ("x SUB (a+b)", "x SUB (a+b)"),
     ("(a+b) SUB 2", "(a+b) SUB 2"),
-    ("a AND b OR c", "a AND b OR c"),
+    ("a AND b OR c", "(a AND b) OR c"),
     ("a XOR b IMP c", "a XOR b IMP c"),
     ("a AND (b AND c)", "a AND (b AND c)"),
     ("NOT a AND b", "NOT(a) AND b"),
@@ -100,6 +101,61 @@ SPELLINGS = [
     # sets, and the set operators: the difference unspaced, the words spaced
     ("{1, ..., 10} \\ {2, 3, 5, 7}", "{1,...,10}\\{2,3,5,7}"),
     ("{1} union {2} = {1, 2}", "{1} UNION {2}={1,2}"),
+    # Derive 6's word operators, in upper case and spaced; glyphs as words
+    ("p iff q", "p IFF q"),
+    ("u ⊆ v", "u SUBSET v"),
+    ("a UNION b SUBSET c", "a UNION b SUBSET c"),
+    ("a - b DOTPRODUCT c + d", "a-b DOTPRODUCT c+d"),
+    ("c - (-a) DOTPRODUCT b", "c-(-a DOTPRODUCT b)"),
+    ("(a+b) CROSSPRODUCT c", "(a+b) CROSSPRODUCT c"),
+    ("x deg", "x DEG"),
+    ("100°", "100 DEG"),
+    ("m ROW 2", "m ROW 2"),
+    # an index is one primary, so a signed or larger one is parenthesized
+    ("v SUB -1", "v SUB (-1)"),
+    ("a SUB (i SUB j)", "a SUB (i SUB j)"),
+    ("(a SUB i)!", "a SUB i!"),
+    ("a SUB (i!)", "a SUB (i!)"),
+    # `RETURN u` as the call, parenthesized where something follows it
+    ("IF(v=[], RETURN w)", "IF(v=[],RETURN(w))"),
+    ("(RETURN x)+1", "(RETURN(x))+1"),
+    ("IF(i>n, exit)", "IF(i>n,exit)"),
+    # assignments, updates and their targets; `:==` is `:=`
+    ("k :+ 1", "k:+1"),
+    ("w SUB j := q", "w SUB j:=q"),
+    ("x :== 3", "x:=3"),
+    # matrix rows are written as nested vectors
+    ("[a, b; c, d]", "[[a,b],[c,d]]"),
+    ("m :epsilon Real [0, inf)", "m:epsilonReal [0, inf)"),
+    ("x :epsilon Vector", "x:epsilonVector"),
+    # definition heads
+    ("f(x, n := 0, tmp) := x + n", "f(x,n:=0,tmp):=x+n"),
+    ("Block commands := commands SUB DIM(commands)", (
+        "Block commands:=commands SUB DIM(commands)"
+    )),
+    ("F() := 5", "F():=5"),
+    # the column subscript with two blanks; a call indexed is parenthesized
+    ("m↓↓2", "m SUB  SUB 2"),
+    ("FIRST(t) SUB 2", "(FIRST(t)) SUB 2"),
+    ("SOLUTIONS(e, [a, b]) COL 1", "(SOLUTIONS(e,[a,b])) COL 1"),
+    ("v SUB 1 SUB 1", "v SUB 1 SUB 1"),
+    ("v SUB DIM(v)", "v SUB DIM(v)"),
+    # a conjunction in a disjunction is parenthesized, a final assignment is not
+    ("x=1 AND y=-2 OR x=3 AND y=0", "(x=1 AND y=-2) OR (x=3 AND y=0)"),
+    ("(m:=v SUB 3) AND c:=v SUB 4", "(m:=v SUB 3) AND c:=v SUB 4"),
+    ("[(m:=3) AND c:=4, 1]", "[(m:=3) AND c:=4,1]"),
+    ("((m:=3) AND c:=4) OR d", "((m:=3) AND (c:=4)) OR d"),
+    # the quote, its operand parenthesized unless a primary
+    ("BRUCH(a, b) := '(a/b)", "BRUCH(a,b):='(a/b)"),
+    ("s_ := INSERT('[a = q_*b + r_], s_, 0)", "s_:=INSERT('[a=q_*b+r_],s_,0)"),
+    ("[a = '(q_*b) + r_]", "[a='(q_*b)+r_]"),
+    ("'p^2", "'p^2"),
+    ("'(-x)", "'(-x)"),
+    ("''(1 + 2)", "''(1+2)"),
+    ("'IF(x >= 0, g)", "'IF(x>=0,g)"),
+    ("'(RETURN x)", "'(RETURN(x))"),
+    # the minus sign is the hyphen
+    ("a − b", "a-b"),
 ]
 
 
@@ -111,13 +167,48 @@ def test_the_original_writes_it_this_way(authored: str, expected: str) -> None:
     assert write_expression(parse_expression(authored, state).node) == expected
 
 
+#: Lines entered in turn, and how the last is written: names as they were declared,
+#: built-ins in upper case, and old names of Derive's either replaced by the Derive 6
+#: name or kept.
+NAMED = [
+    (["first([a,b,c])"], "FIRST([a,b,c])"),
+    (["Transform(f):=f", "transform(x)+TRANSFORM(x)"], "Transform(x)+Transform(x)"),
+    (["DIMENSION(v)"], "DIM(v)"),
+    (["AUX(a,b):=", "CONV(a,x_):=[REVERSE_VECTOR(AUX(a,x_))]"], (
+        "CONV(a,x_):=[REVERSE(AUX(a,x_))]"
+    )),
+    (["DELETE_ELEMENT(v,1)"], "DELETE(v,1)"),
+    (["REPLACE_ELEMENT(c,p,n)"], "REPLACE(c,p,n)"),
+    (["IF(NUMBER(n),1,0)"], "IF(NUMBER(n),1,0)"),
+    (["ELEMENT(v,2)"], "ELEMENT(v,2)"),
+    (['LOAD("D:\\DfD\\x.mth")'], 'LOAD("D:\\DfD\\x.mth")'),
+    # A Greek letter that would read back as something else is written by name.
+    (["gamma+Omega+Gamma+Theta"], "γ+Omega+Gamma+Theta"),
+    (["gamma(k):=k+1"], "γ(k):=k+1"),
+]
+
+
+@pytest.mark.parametrize(
+    ("lines", "expected"), NAMED, ids=[str(lines) for lines, _ in NAMED]
+)
+def test_a_name_is_written_as_it_was_declared(lines: list[str], expected: str) -> None:
+    state = ParseState()
+    for line in lines:
+        result = parse_expression(line, state)
+        for declaration in result.declarations:
+            state.declare(declaration)
+    written = write_expression(result.node)
+    assert written == expected
+    assert write_expression(parse_expression(written, state).node) == expected
+
+
 SPACINGS = [
     ("IF(h <= 40, 10*h, 400 + 15*(h - 40))", "IF(h <= 40, 10*h, 400 + 15*(h - 40))"),
     ("x (x+1)-1", "x*(x + 1) - 1"),
     ("[1,2,3]", "[1, 2, 3]"),
     ("-x^2+2*x-1", "-x^2 + 2*x - 1"),
     ("a/(b+c)", "a/(b + c)"),
-    ("f(x):=x^2", "F(x) := x^2"),
+    ("f(x):=x^2", "f(x) := x^2"),
     # `NOT` is prefix, parenthesized only around looser-binding operands.
     ("NOT p AND q", "NOT p AND q"),
     ("NOT(p AND q)", "NOT (p AND q)"),
@@ -194,6 +285,8 @@ def test_a_shipped_file_survives_being_written(group: str) -> None:
     """Every expression in the original's shipped utility files."""
     state = starting_state(group)
     for text in GROUPS[group]:
+        if refused(text):
+            continue
         result = parse_expression(text, state)
         for declaration in result.declarations:
             state.declare(declaration)

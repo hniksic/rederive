@@ -18,10 +18,6 @@ terminal UIO over over a SymPy-based engine. Python 3.14+, managed with `uv`.
 - Derive's behavior is used as a guideline, and we try to remain compatible with Derive's
   utility files and demos. Where Derive is buggy, limited or arbitrary, do what a good
   algebra system would do instead.
-- `CAPABILITIES.md` is a short, high-level overview of where Rederive goes beyond Derive
-  and the few places it deliberately differs. Almost no commit touches it: a fix, an
-  internal rule or a design decision is not a capability. Edit it only for a new
-  built-in or a difference a user would notice and want explained, in a line or two.
 - Don't edit `README.md` unless asked to.
 - Update a document where a change makes it wrong or incomplete by its own standard: a
   new built-in gets an entry where the built-ins are listed, a changed command gets its
@@ -32,11 +28,16 @@ terminal UIO over over a SymPy-based engine. Python 3.14+, managed with `uv`.
   unpushed commits). Don't use the harness's worktree features (`isolation: "worktree"`,
   `EnterWorktree`, `--worktree`); run `git worktree add <path> -b <name> HEAD` yourself,
   and check that the worktree's HEAD matches yours before any agent works in it.
-- A test's expected value is not evidence of intent: tests often just record what the
-  code did when they were written. If a change gives a better result than a test
-  expects, update the test. Keep the old expectation only where a comment or docstring
-  gives a well-argued rationale for it; a bare assertion that the result is right is
-  not one.
+- Mind memory: SymPy processes are heavy and a runaway computation or too many parallel
+  test runs can freeze the machine. When spawning several agents, limit how many run at
+  once and tell each one to watch its memory use; when running a sweep or the suite
+  alongside other work, do the same yourself.
+- A test or docstring is not evidence of intent just by being there: tests often record
+  what the code did when they were written, and a docstring often just restates the
+  code. Give weight to a rationale in proportion to its argument and sources: one that
+  cites a Derive transcript or manual, or makes a mathematical case you can check,
+  counts; a bare assertion that the result is right, or that the behavior is deliberate,
+  does not. If a change gives a better result than a test expects, update the test.
 - An identity is applied only where it holds for every value the variables may take.
   An undeclared variable is real, so `SQRT(x^2)` is `ABS(x)`, not `x`.
 - Arithmetic is exact: no floating point in computing or representing numbers.

@@ -41,7 +41,7 @@ end exactly with a well-formed trailer, and either refuses the whole file.
 
 Text is decoded here, so callers see Unicode. Version 6 writes Windows code page 1252,
 and characters beyond it as `\\x7fXXXX` escapes, as in its math files. Version 5 writes
-its own font's codes, of which only some are known; see `_DERIVE5`.
+its own font's codes, of which only some are known; see `DERIVE_CHARACTERS`.
 """
 
 from __future__ import annotations
@@ -53,6 +53,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import ClassVar
 
+from rederive.syntax.names import SETTINGS
 from rederive.syntax.source import unescaped
 
 #: The banner that identifies a worksheet, up to and including the end marker.
@@ -63,12 +64,22 @@ _BANNER = re.compile(
 #: The longest banner looked for; real ones are well under this.
 _BANNER_LENGTH = 200
 
-#: Version 5's codes for characters outside ASCII, as far as they are known. Bytes
-#: `0x80`-`0xBF` are its font's symbols and Greek letters. Above them, the German letters
-#: are as in ISO 8859-1, but other codes there are Greek letters too (`0xDE` below, and
-#: others seen only in names), so no other code is taken to be what ISO 8859-1 says.
-_DERIVE5 = {
+#: Version 5's codes for characters outside ASCII, as far as they are known. They are
+#: neither code page 437 nor ISO 8859-1: they were found by aligning the same definitions
+#: as version 5 and version 6 worksheets save them, or a state line with the typed
+#: expressions of the same worksheet that spell its letter by name (`rho`, `kappa`,
+#: `PHI`); the NOT sign is ISO 8859-1's (`IF(¬ DIM(a) = n ∨ ¬ DIM(b) = n, ...)`). Where
+#: version 6 writes a constant or function in the Private Use Area (the constants e, i
+#: and pi, GAMMA, ZETA), so does this table. The German letters are as in ISO 8859-1.
+#: `NAME_TO_CODES` and `CODES_TO_NAME` use these codes too, as Derive's own programs test
+#: them; the bracket pieces at 0x80, 0x82 and 0x84 are what Derive 6's CODES_TO_NAME
+#: gives for those codes.
+DERIVE_CHARACTERS = {
+    0x80: "⎛",
+    0x82: "⎞",
+    0x84: "⎡",
     0x8B: "√",
+    0x8E: "∪",
     0x8F: "∧",
     0x90: "∨",
     0x92: "≥",
@@ -77,21 +88,70 @@ _DERIVE5 = {
     0x95: "⋅",
     0x96: "∞",
     0x99: "↓",
+    0x9B: "\ue7c4",
+    0x9D: "Δ",
     0x9E: "Θ",
     0xA3: "∏",
     0xA4: "∑",
+    0xA5: "Φ",
     0xA8: "Ω",
     0xA9: "α",
-    0xAB: "Δ",
+    0xAA: "γ",
+    0xAB: "δ",
+    0xAC: "¬",
+    0xAD: "ε",
+    0xAE: "\ue7c5",
+    0xB0: "°",
     0xB1: "±",
+    0xB2: "θ",
+    0xB4: "κ",
     0xB5: "μ",
     0xB7: "·",
-    0xB9: "π",
+    0xB9: "\ue7c2",
+    0xBA: "ρ",
+    0xBC: "τ",
     0xBE: "φ",
+    0xBF: "λ",
     0xDE: "σ",
+    0xDF: "β",
     0xEA: "\ue7c0",
     0xEE: "\ue7c1",
-} | {code: chr(code) for code in b"\xc4\xd6\xdc\xdf\xe4\xf6\xfc"}
+    0xF7: "ω",
+    0xFE: "ν",
+} | {code: chr(code) for code in b"\xc4\xd6\xdc\xe4\xf6\xfc"}
+
+#: The letters of ISO 8859-1 that version 5 writes as they are, and ASCII's.
+_LATIN_LETTERS = frozenset(
+    b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz\xc4\xd6\xdc\xe4\xf6\xfc"
+)
+
+
+def _version5_text(stored: bytes) -> str:
+    """Version 5 text as Unicode (see `DERIVE_CHARACTERS`).
+
+    The code 0xDF is beta in Derive's font and sharp s in ISO 8859-1, which a German
+    user typing text gets: it is sharp s inside a string, and between two letters of a
+    word (`"größter Wert"`), and beta otherwise (`β0_`).
+    """
+    characters = []
+    quoted = False
+    for place, code in enumerate(stored):
+        if code == 0x22:
+            quoted = not quoted
+        if code == 0xDF and (
+            quoted
+            or (
+                place
+                and stored[place - 1] in _LATIN_LETTERS
+                and place + 1 < len(stored)
+                and stored[place + 1] in _LATIN_LETTERS
+            )
+        ):
+            characters.append("ß")
+            continue
+        characters.append(DERIVE_CHARACTERS.get(code, chr(code)))
+    return "".join(characters)
+
 
 #: Annotations of expressions the user typed, in the languages Derive was localized to.
 #: Derive 6 annotates an expression simplified with a trailing `=` as `User=Simp(User)`,
@@ -100,15 +160,6 @@ _TYPED = frozenset("User Benutzer Utilisateur Utente Nueva Användare".split())
 
 #: The classes of the objects a worksheet lists.
 _TOP_CLASSES = ("CExpnObj", "CTextObj", "CRuleObj", "CDispOleObj", "CPlotObj")
-
-#: The settings Derive 6 saves at the end of the state block, as `Name:=Value`.
-SETTINGS = frozenset(
-    """
-    Precision PrecisionDigits Notation NotationDigits Branch Exponential Logarithm
-    Trigonometry Trigpower Angle CaseMode VariableOrder OutputBase InputBase InputMode
-    DisplayFormat TimesOperator DisplaySteps
-    """.split()
-)
 
 #: A line of the state block that assigns a setting, if the name is one.
 _SETTING = re.compile(r"\s*([A-Za-z]+)\s*:=(.*)", re.DOTALL)
@@ -163,8 +214,7 @@ class Expression:
     @property
     def typed(self) -> bool:
         """Whether the user typed the expression rather than a command producing it."""
-        name, _, rest = self.annotation.strip().partition("=")
-        return name.strip() in _TYPED and rest in ("", f"Simp({name})")
+        return typed(self.annotation)
 
 
 @dataclass(frozen=True)
@@ -180,15 +230,31 @@ class Worksheet:
 
     `state` has a line of the state block wherever it was decoded with certainty and
     None where it holds a version 5 code whose meaning is unknown. `objects` are the
-    expressions and texts in order, without the plots and embedded objects.
+    expressions and texts in order, without the plots and embedded objects, of which
+    `plots` and `embedded` count how many there were.
     """
 
     state: tuple[str | None, ...]
     objects: tuple[Expression | Text, ...]
+    plots: int = 0
+    embedded: int = 0
+
+
+def typed(annotation: str) -> bool:
+    """Whether `annotation` says the user typed the expression, in any of Derive's
+    languages: `User`, `Benutzer`, ..., alone or as `User=Simp(User)`, which a typed
+    `expr=` gets. A digit glued to the word, as in `Simp(User02)`, is what Derive made of
+    a reference to an expression it deleted, and is no such annotation."""
+    name, _, rest = annotation.strip().partition("=")
+    name = name.strip()
+    return name in _TYPED and rest.strip() in ("", f"Simp({name})")
 
 
 def setting_of(line: str) -> tuple[str, str] | None:
-    """The setting a state line assigns and its value, or None if it assigns none."""
+    """The setting a state line assigns and its value, or None if it assigns none.
+
+    Derive 6 saves its settings at the end of the state block, as `Name:=Value`.
+    """
     found = _SETTING.fullmatch(line)
     if found is None or found.group(1) not in SETTINGS:
         return None
@@ -213,7 +279,7 @@ def read(raw: bytes) -> Worksheet:
         if found is not None:
             objects.append(found)
     reader.trailer()
-    return Worksheet(state, tuple(objects))
+    return Worksheet(state, tuple(objects), reader.plots, reader.embedded)
 
 
 class _Archive:
@@ -232,6 +298,9 @@ class _Archive:
         self.classes: dict[int, str] = {}
         #: The last index taken.
         self.taken = 0
+        #: How many plots and embedded objects were skipped.
+        self.plots = 0
+        self.embedded = 0
 
     # -- values -------------------------------------------------------------
 
@@ -306,7 +375,7 @@ class _Archive:
             return unescaped(stored)
         if self.modern:
             return unescaped(stored.decode("cp1252", "replace"))
-        return unescaped("".join(_DERIVE5.get(code, chr(code)) for code in stored))
+        return unescaped(_version5_text(stored))
 
     def state_line(self) -> str | None:
         """The next line of the state block, or None if it can't be decoded for certain.
@@ -325,7 +394,7 @@ class _Archive:
             except UnicodeDecodeError:
                 return None
         else:
-            if any(code > 0x7F and code not in _DERIVE5 for code in line):
+            if any(code > 0x7F and code not in DERIVE_CHARACTERS for code in line):
                 return None
             decoded = self.text(line)
         decoded = unescaped(decoded)
@@ -386,6 +455,7 @@ class _Archive:
         self.rectangle()
         self.byte()
         self._object(("CDispItem",))
+        self.embedded += 1
 
     def _embedded_item(self) -> None:
         self.skip(18)
@@ -399,6 +469,7 @@ class _Archive:
         self.byte()
         self.word()
         self._object(("C2DPlotView", "C3DPlotView"))
+        self.plots += 1
 
     def _plot_view(self) -> None:
         """A plot view: labels, then items and settings, skipped as the module says."""

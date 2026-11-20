@@ -496,6 +496,24 @@ async def test_a_number_is_decomposed_without_being_asked_about(app):
         assert highlighted_menu_option(app) == "Author"
 
 
+async def test_a_matrix_can_be_factored_into_matrices(app):
+    async with app.run_test() as pilot:
+        authored(app, "[[5, 1], [12, 3]]")
+        await pilot.press("f", "enter")
+        assert band(app) == [
+            " FACTOR: Amount: Trivial Squarefree Rational raDical Complex tUring scHmidt"
+        ]
+        await pilot.press("h")
+        assert entries(app)[-1] == (
+            "[[5/13, -12/13], [12/13, 5/13]] . [[13, 41/13], [0, 3/13]]"
+        )
+        authored(app, "x^2 - 4")
+        await pilot.press("f", "enter")
+        assert band(app) == [
+            " FACTOR: Amount: Trivial Squarefree Rational raDical Complex"
+        ]
+
+
 async def test_the_amount_menu_opens_on_what_was_chosen_last(app):
     async with app.run_test() as pilot:
         authored(app, "x^2 - 4")
@@ -681,14 +699,14 @@ async def test_an_underdetermined_system_is_asked_about_once_per_equation(app):
         # The next default is the next variable not yet chosen.
         assert prompt(app) == ("SOLVE variable:", "y")
         await pilot.press("enter")
-        assert entries(app)[-1] == "[x = (1 - z)/2, y = (1 - z)/2]"
+        assert entries(app)[-1] == "x = (1 - z)/2 AND y = (1 - z)/2"
 
 
 async def test_a_square_system_is_asked_nothing(app):
     async with app.run_test() as pilot:
         authored(app, "[x + y = 3, x - y = 1]")
         await pilot.press("l", "enter")
-        assert entries(app)[-1] == "[x = 2, y = 1]"
+        assert entries(app)[-1] == "x = 2 AND y = 1"
 
 
 async def test_a_name_that_is_no_variable_leaves_the_line_up(app):
@@ -708,7 +726,7 @@ async def test_approximate_precision_asks_for_the_interval(app):
         assert band(app) == [" SOLVE: Lower: -10                Upper: 10"]
         assert message(app) == "Enter bound on solution"
         await pilot.press("enter")
-        assert entries(app)[-1] == "x = -1.16730"
+        assert entries(app)[-1] == "x = -1.167303978"
 
 
 async def test_the_other_two_precisions_never_ask_for_an_interval(app):
@@ -716,7 +734,7 @@ async def test_the_other_two_precisions_never_ask_for_an_interval(app):
         authored(app, "Precision := Mixed")
         authored(app, "3^x = x^2")
         await pilot.press("l", "enter")
-        assert entries(app)[-1] == "x = -0.686026"
+        assert entries(app)[-1] == "x = -0.6860267245"
 
 
 async def test_no_solutions_appends_nothing_and_says_so(app):
@@ -763,8 +781,8 @@ async def test_approx_offers_the_highlighted_expression(app):
         assert prompt(app) == ("APPROX expression:", "#1")
         assert message(app) == "Enter expression"
         await pilot.press("enter")
-        assert work_area(app) == ["#1:  π", "", "#2:  3.14159"]
-        assert highlighted_expression(app) == "3.14159"
+        assert work_area(app) == ["#1:  π", "", "#2:  3.141592653"]
+        assert highlighted_expression(app) == "3.141592653"
         assert message(app).startswith("Compute time:")
         assert annotation(app) == "Approx(#1)"
         assert highlighted_menu_option(app) == "Author"
@@ -775,7 +793,7 @@ async def test_approx_leaves_the_precision_setting_alone(app):
     async with app.run_test() as pilot:
         authored(app, "1/3")
         await pilot.press("x", "enter")
-        assert entries(app)[-1] == "0.333333"
+        assert entries(app)[-1] == "0.3333333333"
         await pilot.press("s")
         assert prompt(app) == ("SIMPLIFY expression:", "#2")
         await pilot.press(*"1")
@@ -1039,7 +1057,7 @@ async def test_a_variable_is_named_then_given_a_domain_then_an_interval(app):
         assert message(app) == 'Enter name or type "default"'
         await pilot.press(*"x", "enter")
         assert band(app) == [
-            " DECLARE VARIABLE: Value Integer Real Complex Nonscalar"
+            " DECLARE VARIABLE: Value Integer Real Complex vecTor Set Logical"
         ]
         assert highlighted_menu_option(app) == "Real"
         assert message(app) == "Select value or domain of x"
@@ -1061,6 +1079,22 @@ async def test_a_domain_with_no_interval_is_the_last_question(app):
         await pilot.press(*"z", "enter", "c")
         assert work_area(app) == ["#1:  z :ε Complex"]
         assert highlighted_menu_option(app) == "Author"
+
+
+async def test_a_variable_can_be_declared_a_vector_a_set_or_a_truth_value(app):
+    """`vecTor` declares the domain `Vector`; the menu opens on a declared vector's
+    word, also for one declared with the older word `Nonscalar`."""
+    async with app.run_test() as pilot:
+        await pilot.press("d", "v", *"a", "enter", "t")
+        await pilot.press("d", "v", *"s", "enter", "s")
+        await pilot.press("d", "v", *"p", "enter", "l")
+        assert [line for line in work_area(app) if line] == [
+            "#1:  a :ε Vector",
+            "#2:  s :ε Set",
+            "#3:  p :ε Logical",
+        ]
+        await pilot.press("d", "v", *"a", "enter")
+        assert highlighted_menu_option(app) == "vecTor"
 
 
 async def test_the_bounds_screen_asks_for_both_ends_and_their_strictness(app):
@@ -1117,7 +1151,7 @@ async def test_the_domain_menu_opens_on_what_the_variable_already_is(app):
 async def test_a_pre_defined_name_is_refused_and_the_question_put_again(app):
     async with app.run_test() as pilot:
         await pilot.press("d", "v")
-        await pilot.press(*"sin", "enter")
+        await pilot.press(*"SIN", "enter")
         assert prompt(app) == ("DECLARE VARIABLE name:", "")
         assert message(app) == 'Enter name or type "default"'
 
@@ -1131,7 +1165,7 @@ async def test_a_function_takes_its_parameters_from_its_definition(app):
         assert prompt(app) == ("DECLARE FUNCTION value:", "")
         assert message(app) == "Enter expression"
         await pilot.press(*"sqrt(a^2+b^2)", "enter")
-        assert work_area(app)[-1] == "#1:  HYP(a, b) := √(a  + b )"
+        assert work_area(app)[-1] == "#1:  hyp(a, b) := √(a  + b )"
         assert highlighted_menu_option(app) == "Author"
 
 
@@ -1144,8 +1178,8 @@ async def test_a_blank_definition_asks_for_the_variables_instead(app):
         await pilot.press(*"x", "enter")
         await pilot.press(*"y", "enter")
         await pilot.press("enter")
-        assert entries(app) == ["F(x,y):="]
-        assert work_area(app) == ["#1:  F(x, y) :="]
+        assert entries(app) == ["f(x,y):="]
+        assert work_area(app) == ["#1:  f(x, y) :="]
 
 
 async def test_a_vector_asks_for_a_dimension_then_an_element_at_a_time(app):
@@ -1368,14 +1402,14 @@ async def test_ctrl_enter_on_done_enters_one_expression(app):
         assert annotation(app) == "Simp(#1+#1)"
 
 
-# -- Calculus, whose seven commands ask an expression, a variable, and a line -
+# -- Calculus, whose eight commands ask an expression, a variable, and a line -
 
 
-async def test_the_calculus_menu_lists_seven_commands(app):
+async def test_the_calculus_menu_lists_eight_commands(app):
     async with app.run_test() as pilot:
         await pilot.press("c")
         assert band(app) == [
-            " CALCULUS: Differentiate Integrate Limit Product Sum Taylor Vector"
+            " CALCULUS: Differentiate Integrate Limit Product Sum Taylor Vector tAble"
         ]
         assert message(app) == "Enter option"
         assert highlighted(app) == "Differentiate"
@@ -1486,6 +1520,19 @@ async def test_the_vector_line_opens_on_the_field_it_cannot_do_without(app):
         ]
 
 
+async def test_the_table_command_writes_a_table_over_a_range(app):
+    async with app.run_test() as pilot:
+        authored(app, "x^2")
+        await pilot.press("c", "a", "enter", "enter")
+        await pilot.press("5")
+        assert band(app) == [
+            " CALCULUS TABLE: Start: 1               End: 5               Step: 1"
+        ]
+        await pilot.press("enter")
+        assert entries(app)[-1] == "TABLE(x^2,x,1,5)"
+        assert annotation(app) == "Table(#1,x)"
+
+
 @pytest.mark.parametrize(
     ("keys", "step"),
     [
@@ -1560,7 +1607,7 @@ async def test_a_blank_expression_line_abandons_the_command(app):
         await pilot.press("c", "d")
         await pilot.press("backspace", "backspace", "enter")
         assert band(app) == [
-            " CALCULUS: Differentiate Integrate Limit Product Sum Taylor Vector"
+            " CALCULUS: Differentiate Integrate Limit Product Sum Taylor Vector tAble"
         ]
         assert entries(app) == ["x^2*y"]
 
@@ -1590,7 +1637,7 @@ async def test_nothing_is_computed_until_a_simplify_asks_for_it(app):
 
 COMMAND_MENU = " COMMAND:"
 DECLARE_MENU = " DECLARE: Function Variable Matrix vectoR"
-CALCULUS_MENU = " CALCULUS: Differentiate Integrate Limit Product Sum Taylor Vector"
+CALCULUS_MENU = " CALCULUS: Differentiate Integrate Limit Product Sum Taylor Vector tAble"
 
 
 @pytest.mark.parametrize(

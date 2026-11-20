@@ -21,22 +21,25 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 import sympy as sp
+from sympy.functions.elementary.trigonometric import TrigonometricFunction
 
 from rederive.engine.boundary import Result
-from rederive.engine.context import Context, Precision
+from rederive.engine.context import Angle, Context, Precision
+from rederive.engine.fresh import afresh
 from rederive.engine.from_sympy import from_sympy
 from rederive.engine.printer import shadowing_built_ins
 from rederive.engine.approximation import approximated, noting_approximations
 from rederive.engine.evaluate import divisors
 from rederive.engine.pipeline import simplified
 from rederive.engine.solving import minting, solutions
-from rederive.engine.to_sympy import to_sympy
+from rederive.engine.to_sympy import InOrder, Vector, in_degrees, to_sympy
 from rederive.model.expr import Node
 from rederive.syntax.state import ParseState
 
 __all__ = ["solve", "solved"]
 
 
+@afresh
 @noting_approximations
 @shadowing_built_ins
 def solve(
@@ -54,7 +57,7 @@ def solve(
     only in Approximate mode. `state` is the symbol table used to reparse the answers;
     a session in a non-default input or case mode must pass its own.
     """
-    context = context or Context()
+    context = (context or Context()).fresh()
     return tuple(
         from_sympy(answer, context, state)
         for answer in solved(node, context, variables, bounds)
@@ -88,4 +91,24 @@ def solved(
             else (to_sympy(bounds[0], exact), to_sympy(bounds[1], exact))
         )
         answers = solutions(expression, context, variables, interval, divided)
-    return tuple(approximated(answer, context) for answer in answers)
+    if context.angle is Angle.DEGREE and expression.has(TrigonometricFunction):
+        answers = [_in_degrees(answer) for answer in answers]
+    return tuple(approximated(_entry(answer), context) for answer in answers)
+
+
+def _in_degrees(answer: sp.Basic) -> sp.Basic:
+    """A solution of a trigonometric equation with its angles shown in degrees, as
+    `Angle := Degree` asks: `x = 30*deg`."""
+    if isinstance(answer, Vector):
+        return Vector(*(_in_degrees(part) for part in answer.args))
+    if isinstance(answer, sp.Equality):
+        return sp.Eq(answer.lhs, in_degrees(answer.rhs), evaluate=False)
+    return answer
+
+
+def _entry(answer: sp.Basic) -> sp.Basic:
+    """A solution as its entry shows it: a system's solution is the conjunction of its
+    equations, `x = 2 AND y = 1`, as `SOLVE` writes it."""
+    if isinstance(answer, Vector):
+        return InOrder(*answer.args)
+    return answer

@@ -13,7 +13,7 @@ import pytest
 from screen import entries, message, prompt
 
 from rederive.engine import computing
-from rederive.engine.client import EngineAborted
+from rederive.engine.client import EngineAborted, reporting
 from rederive.model.session import Session
 from rederive.ui import app as app_module
 from rederive.ui.app import (
@@ -340,3 +340,34 @@ async def test_control_enter_aborted_leaves_what_it_entered_standing(app, runner
         assert await settle(pilot, lambda: app.mode == MODE_MENU)
         assert entries(app) == ["2+3"]
         assert message(app).startswith("Aborted after")
+
+
+class Reporting(Blocking):
+    """A blocking engine that passes on what a running program shows, as the app's
+    engine does."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.progress = None
+
+    async def simplify(self, node, context, state=None):
+        await self._held()
+        with reporting(self.progress):
+            return computing.simplify(node, context, state)
+
+
+async def test_what_a_program_writes_is_on_the_message_line():
+    """The last text a `WRITE` wrote stays when the command ends, and each `DISPLAY`
+    adds its text before the answer."""
+    runner = Reporting()
+    app = RederiveApp(Session(runner=runner))
+    shown = []
+    app._show_progress = shown.append
+    async with app.run_test() as pilot:
+        await author(pilot, "PROG(WRITE(7),DISPLAY(5),8)")
+        await simplify(pilot, runner)
+        runner.release()
+        assert await settle(pilot, lambda: app.mode == MODE_MENU)
+        assert entries(app) == ["PROG(WRITE(7),DISPLAY(5),8)", '"5"', "8"]
+        assert message(app) == "7"
+        assert await settle(pilot, lambda: shown == ["7", "5"])

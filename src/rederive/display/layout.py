@@ -29,7 +29,8 @@ from rederive.display.boxes import (
     text,
 )
 from rederive.display.options import DisplayOptions
-from rederive.model.expr import Kind, Node
+from rederive.model.expr import VARIADIC, Kind, Node, is_chain
+from rederive.syntax.names import EXIT
 
 #: Word operators keep their spaces in both formats, since `xANDy` would lex as one
 #: name. `NOT` is handled separately as a prefix, and `SUB` never prints as a word (a
@@ -39,6 +40,7 @@ _WORD_OPERATORS = {
     Kind.OR: "OR",
     Kind.XOR: "XOR",
     Kind.IMP: "IMP",
+    Kind.IFF: "IFF",
 }
 
 #: Beyond this level a script is written flat, `^` as `a^b` and `SUB` as `a↓b`.
@@ -56,9 +58,13 @@ _DEFAULTS = DisplayOptions()
 
 
 def render(node: Node, options: DisplayOptions = _DEFAULTS) -> Layout:
-    """Typeset `node`. The width is unlimited; the pane clips it."""
+    """Typeset `node`. The width is unlimited; the pane clips it.
+
+    A program is drawn as an indented block (see `Engine.block`).
+    """
     engine = Engine(options)
-    return paint(engine.box(node, 0, options.height))
+    block = engine.block(node, options.height, whole=True)
+    return paint(block if block is not None else engine.box(node, 0, options.height))
 
 
 class Engine:
@@ -157,6 +163,88 @@ class Engine:
             return False
         return budget is None or self.free(node, level).height <= budget
 
+    # -- program blocks -----------------------------------------------------
+
+    def block(self, node: Node, budget: int | None, whole: bool = False) -> Box | None:
+        """`node` drawn as an indented block of lines, or None if it isn't one.
+
+        As in Derive, a program is drawn one statement to a line: `PROG` as a line
+        `Prog` with its statements indented under it, `LOOP` likewise as `Loop`, and an
+        `IF` as a line `If test` with its clauses indented under the test (`IF(test,
+        exit)` stays on its line, `If test exit`). A definition whose body is a block,
+        and a `whole` expression assigning one, have the head on a line of its own and
+        the block indented under it. A `PROG`, `LOOP` or `IF` anywhere else is drawn as
+        the call it is.
+        """
+        if node.kind is Kind.FUNDEF and len(node.children) == 2:
+            body = self.block(node.children[1], budget)
+            if body is None:
+                return None
+            head = self._head(node, budget)
+            lines = [(0, row([head, text(" :=")])), (2, body)]
+            return _stacked(lines, node, (head, body))
+        if whole and node.kind is Kind.ASSIGN and len(node.children) == 2:
+            value = self.block(node.children[1], budget)
+            if value is None:
+                return None
+            target = self.box(node.children[0], 0, budget)
+            operator = text(f" {node.value}")
+            return _stacked(
+                [(0, row([target, operator])), (2, value)], node, (target, value)
+            )
+        if node.kind is not Kind.CALL:
+            return None
+        name, *arguments = node.children
+        keyword = _BLOCKS.get(str(name.value))
+        if keyword is None or not arguments:
+            return None
+        if keyword == "If":
+            return self._if_block(node, arguments, budget)
+        statements = [self.statement(argument, budget) for argument in arguments]
+        lines = [(0, text(keyword)), *((2, line) for line in statements)]
+        return _stacked(lines, node, tuple(statements))
+
+    def statement(self, node: Node, budget: int | None) -> Box:
+        """`node` as a line of a block: a block itself, `RETURN u`, or as drawn
+        anywhere."""
+        block = self.block(node, budget)
+        if block is not None:
+            return block
+        if node.kind is Kind.CALL and len(node.children) == 2:
+            name, operand = node.children
+            if name.value == "RETURN":
+                inner = self.box(operand, 0, budget)
+                return row([text("RETURN "), inner], node, (inner,))
+        return self.box(node, 0, budget)
+
+    def _if_block(
+        self, node: Node, arguments: list[Node], budget: int | None
+    ) -> Box | None:
+        test_node, *clauses = arguments
+        if not clauses or len(clauses) > 3:
+            return None
+        test = self.box(test_node, 0, budget)
+        if len(clauses) == 1 and clauses[0].kind is Kind.NAME and (
+            clauses[0].value == EXIT
+        ):
+            leave = self.box(clauses[0], 0, budget)
+            return row([text("If "), test, text(" "), leave], node, (test, leave))
+        lines = [self.statement(clause, budget) for clause in clauses]
+        header = row([text("If "), test])
+        return _stacked(
+            [(0, header), *((3, line) for line in lines)], node, (test, *lines)
+        )
+
+    def _head(self, node: Node, budget: int | None) -> Box:
+        """The head `F(x, y)` of a definition, selectable as one operand, name
+        included, offering the parameters inside it."""
+        parameters = node.children[0]
+        listed = self._joined(parameters.children, 0, budget)
+        if parameters.value == VARIADIC:
+            return row([text(f"{node.value} "), listed], parameters, (listed,))
+        listed = fenced(listed, glyphs.PARENS)
+        return row([text(str(node.value)), listed], parameters, (listed,))
+
     # -- dispatch -----------------------------------------------------------
 
     def _build(self, node: Node, level: int, budget: int | None) -> Box:
@@ -185,7 +273,10 @@ class Engine:
                 inner = self.operand(
                     node.children[0], level, budget, forms.POSTFIX, forms.POSTFIX
                 )
-                return row([inner, text(str(node.value))], node, (inner,))
+                operator = str(node.value)
+                if operator == "DEG":
+                    operator = glyphs.DEGREE
+                return row([inner, text(operator)], node, (inner,))
             case Kind.SUB:
                 return self._subscript(node, level, budget)
             case Kind.ABS:
@@ -217,8 +308,10 @@ class Engine:
             case Kind.NOT:
                 inner = self.operand(node.children[0], level, budget, forms.NOT)
                 return row([text("NOT "), inner], node, (inner,))
-            case Kind.AND | Kind.OR | Kind.XOR | Kind.IMP:
+            case Kind.AND | Kind.OR | Kind.XOR | Kind.IMP | Kind.IFF:
                 return self._logical(node, level, budget)
+            case Kind.INFIX:
+                return self._infix(node, level, budget)
             case Kind.ASSIGN:
                 return self._assignment(node, level, budget)
             case Kind.FUNDEF:
@@ -236,6 +329,9 @@ class Engine:
                     node.children[0], level, budget, forms.ASSIGNMENT, forms.RELATION
                 )
                 return row([inner, text(self._spaced("=").rstrip())], node, (inner,))
+            case Kind.QUOTE:
+                inner = self.operand(node.children[0], level, budget, forms.ATOM)
+                return row([text("'"), inner], node, (inner,))
         raise AssertionError(f"unrenderable node kind: {node.kind}")
 
     # -- spacing ------------------------------------------------------------
@@ -416,10 +512,34 @@ class Engine:
         """A union, intersection or difference, left-associative like the grammar."""
         own = forms.precedence(node)
         left, right = node.children
-        first = self.operand(left, level, budget, own, own)
-        second = self.operand(right, level, budget, own + 1)
+        # A conjunction inside a disjunction is fenced although `AND` binds more
+        # tightly, as the original draws a disjunction of solutions.
+        fenced = forms.AND + 1 if node.kind is Kind.OR else 0
+        first_needs = max(own, fenced if left.kind is Kind.AND else 0)
+        second_needs = max(own + 1, fenced if right.kind is Kind.AND else 0)
+        first = self.operand(left, level, budget, first_needs, own)
+        second = self.operand(right, level, budget, second_needs)
         operator = str(node.value)
         symbol = operator if operator == "\\" else f" {operator} "
+        return row([first, text(symbol), second], node, (first, second))
+
+    def _infix(self, node: Node, level: int, budget: int | None) -> Box:
+        """A word operator of Derive 6. A subscript link (`A ROW i`, `A↓↓j`) takes an
+        index as a lowered subscript does; the others are left-associative."""
+        left, right = node.children
+        word = str(node.value)
+        symbol = f" {glyphs.INFIX.get(word, word)} "
+        if is_chain(node):
+            first = self.operand(left, level, budget, forms.POSTFIX, forms.POSTFIX)
+            second = self.operand(right, level, budget, forms.SCRIPT)
+            if word in glyphs.INFIX:
+                symbol = glyphs.INFIX[word]
+            elif word.startswith("SUB"):
+                symbol = glyphs.LOWERED * len(word.split())
+        else:
+            own = forms.precedence(node)
+            first = self.operand(left, level, budget, own, own)
+            second = self.operand(right, level, budget, own + 1)
         return row([first, text(symbol), second], node, (first, second))
 
     def _logical(self, node: Node, level: int, budget: int | None) -> Box:
@@ -556,11 +676,7 @@ class Engine:
         return row([left, text(self._spaced(operator)), right], node, (left, right))
 
     def _definition(self, node: Node, level: int, budget: int | None) -> Box:
-        # The head `F(x)` is selectable as one operand, name included, and offers the
-        # parameters inside it.
-        parameters = node.children[0]
-        listed = fenced(self._joined(parameters.children, level, budget), glyphs.PARENS)
-        head = row([text(str(node.value)), listed], parameters, (listed,))
+        head = self._head(node, budget)
         if len(node.children) == 1:
             spelling = ":=" if self.options.compressed else " :="
             return row([head, text(spelling)], node, (head,))
@@ -594,6 +710,25 @@ class Engine:
         return row(
             [text(opening), low, text(", "), high, text(closing)], node, (low, high)
         )
+
+
+#: The program constructs drawn as blocks, by name, with the keyword that heads them.
+_BLOCKS = {"PROG": "Prog", "LOOP": "Loop", "IF": "If"}
+
+
+def _stacked(
+    lines: list[tuple[int, Box]], node: Node, operands: tuple[Box, ...]
+) -> Box:
+    """Boxes one under the other, each at its indentation, the baseline the first's."""
+    first = lines[0][1]
+    parts = []
+    bottom = -1 - first.above
+    for indent, box in lines:
+        dy = bottom + 1 + box.above
+        parts.append(Placed(box, indent, dy))
+        bottom = dy + box.below
+    width = max(indent + box.width for indent, box in lines)
+    return Box(width, first.above, bottom, node, "", tuple(parts), operands)
 
 
 def _is_quotient(node: Node) -> bool:

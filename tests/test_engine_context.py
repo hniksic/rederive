@@ -22,7 +22,14 @@ from rederive.engine.computing import (
     evaluated,
     to_sympy,
 )
-from rederive.engine.context import Angle, Branch, Direction, Precision, TrigPower
+from rederive.engine.context import (
+    Angle,
+    Branch,
+    Definition,
+    Direction,
+    Precision,
+    TrigPower,
+)
 from rederive.model.settings import Settings
 from rederive.syntax import (
     DomainDeclaration,
@@ -70,7 +77,7 @@ def symbol(declaration):
 def test_the_factory_context():
     context = Context()
     assert context.precision is Precision.EXACT
-    assert context.precision_digits == 6
+    assert context.precision_digits == 10
     assert context.branch is Branch.PRINCIPAL
     assert context.exponential is Direction.AUTO
     assert context.logarithm is Direction.AUTO
@@ -294,20 +301,20 @@ def test_a_declaration_keeps_the_variable_it_declares():
 
 
 def test_a_call_becomes_the_body_with_its_arguments_written_in():
-    context = Context(functions={"F": (("x", "y"), parse("x^2 + y"))})
+    context = Context(functions={"F": Definition(("x", "y"), parse("x^2 + y"))})
     assert written("F(a, 3)", context, declaring("F")) == same_as("a^2 + 3")
 
 
 def test_a_call_with_fewer_arguments_substitutes_the_leading_parameters():
     # Derive's partial application: `ACCELERATION(6)` is `6/m`.
-    context = Context(functions={"ACCELERATION": (("f", "m"), parse("f/m"))})
+    context = Context(functions={"ACCELERATION": Definition(("f", "m"), parse("f/m"))})
     state = declaring("ACCELERATION")
     assert written("ACCELERATION(6)", context, state) == same_as("6/m")
 
 
 def test_an_argument_is_substituted_before_it_is_written_in():
     context = Context(
-        assignments={"u": parse("7")}, functions={"F": (("x",), parse("x + 1"))}
+        assignments={"u": parse("7")}, functions={"F": Definition(("x",), parse("x + 1"))}
     )
     assert written("F(u)", context, declaring("F")) == same_as("7 + 1")
 
@@ -315,8 +322,8 @@ def test_an_argument_is_substituted_before_it_is_written_in():
 def test_a_recursion_that_never_arrives_stops_at_the_nesting_bound():
     # Each level adds one, and the call left at the bottom shows it didn't finish.
     state = declaring("G")
-    context = Context(functions={"G": (("x",), parse("G(x) + 1", state))})
-    assert written("G(2)", context, state) == same_as("G(2) + 300", state)
+    context = Context(functions={"G": Definition(("x",), parse("G(x) + 1", state))})
+    assert written("G(2)", context, state) == same_as("G(2) + 10000", state)
 
 
 def test_a_parameter_stands_for_itself_inside_the_definition():
@@ -351,9 +358,9 @@ def test_an_argument_after_the_bound_variable_is_read_outside_the_binding():
 
 def test_a_bound_variable_shadows_a_parameter_of_the_same_name():
     state = declaring("F")
-    context = Context(functions={"F": (("x",), parse("SUM(x^2, x, 1, n)"))})
+    context = Context(functions={"F": Definition(("x",), parse("SUM(x^2, x, 1, n)"))})
     assert written("F(9)", context, state) == same_as("SUM(x^2, x, 1, n)")
-    context = Context(functions={"F": (("x",), parse("SUM(x^2, x, 1, 3)"))})
+    context = Context(functions={"F": Definition(("x",), parse("SUM(x^2, x, 1, 3)"))})
     assert written("F(9)", context, state) == 14
 
 
@@ -376,7 +383,7 @@ def test_a_parameter_supplied_with_a_vector_of_names_is_written_in():
     # `NEWTONS` passes it a vector of variables. Definitions are textual substitution,
     # so the vector replaces `x` in the limit variable too; otherwise the limit would be
     # over a variable nobody named.
-    context = Context(functions={"F": (("x",), parse("LIM(x*y, x, 1)"))})
+    context = Context(functions={"F": Definition(("x",), parse("LIM(x*y, x, 1)"))})
     assert written("F([u, v])", context, declaring("F")) == same_as(
         "LIM([u, v]*y, [u, v], 1)"
     )

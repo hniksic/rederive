@@ -29,7 +29,7 @@ async def test_options_lists_the_commands_that_still_mean_something(app):
     async with app.run_test() as pilot:
         await options(pilot)
         assert band(app) == [
-            " OPTIONS: Color Input Mute Notation Output Precision Radix"
+            " OPTIONS: Color Defaults Input Mute Notation Output Precision Radix"
         ]
         assert highlighted(app) == "Color"
         assert message(app) == "Enter option"
@@ -103,6 +103,36 @@ async def test_a_lone_field_settles_the_dialog_on_one_keystroke(app):
         assert highlighted(app) == "Author"
 
 
+async def test_defaults_restores_the_state_variables_after_asking(app):
+    """Options Defaults, Derive 6's Reset All: one assignment per setting that was not
+    at its factory default, recorded as the dialogs record theirs."""
+    async with app.run_test() as pilot:
+        app.session.author("Precision := Approximate")
+        app.session.author("Angle := Degree")
+        app.session.author("VariableOrder := [y, x]")
+        await options(pilot, "d")
+        assert message(app) == "Restore factory defaults (Y/N)?"
+        await pilot.press("y")
+        assert app.settings["Precision"] == "Exact"
+        assert app.settings["Notation"] == "Rational"
+        assert app.settings["Angle"] == "Radian"
+        assert app.session.order == ("x", "y", "z")
+        assert entries(app)[3:] == [
+            "Precision := Exact",
+            "Angle := Radian",
+            "VariableOrder := [x, y, z]",
+        ]
+
+
+async def test_defaults_answered_no_changes_nothing(app):
+    async with app.run_test() as pilot:
+        app.session.author("Angle := Degree")
+        await options(pilot, "d")
+        await pilot.press("n")
+        assert app.settings["Angle"] == "Degree"
+        assert entries(app) == ["Angle:=Degree"]
+
+
 async def test_escape_leaves_the_settings_alone(app):
     async with app.run_test() as pilot:
         await options(pilot, "p", "a")
@@ -116,10 +146,10 @@ async def test_escape_leaves_the_settings_alone(app):
 
 async def test_committing_records_one_expression_per_changed_field(app):
     async with app.run_test() as pilot:
-        await options(pilot, "p", "a", "9", "enter")
+        await options(pilot, "p", "a", "1", "2", "enter")
         assert app.settings["Precision"] == "Approximate"
-        assert app.settings["PrecisionDigits"] == 9
-        assert entries(app) == ["Precision := Approximate", "PrecisionDigits := 9"]
+        assert app.settings["PrecisionDigits"] == 12
+        assert entries(app) == ["Precision := Approximate", "PrecisionDigits := 12"]
         # The highlight is left on the last one.
         assert app.session.selected == 1
 

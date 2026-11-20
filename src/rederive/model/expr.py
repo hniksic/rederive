@@ -46,12 +46,27 @@ class Kind(StrEnum):
     OR = "or"
     XOR = "xor"
     IMP = "imp"
+    IFF = "iff"
+    #: A word operator of Derive 6 between two operands; `value` is the word: `ROW`,
+    #: `COL`, `SUB SUB` (with one more `SUB` per level deeper), `DOTPRODUCT`,
+    #: `CROSSPRODUCT` or `SUBSET`.
+    INFIX = "infix"
+    #: `target := u`, an update `target :+ u` (`:-`, `:*`, `:/`), or `target :=` with no
+    #: value; `value` is the operator. The target is a name, a string, or a name with
+    #: subscripts (`a SUB i`).
     ASSIGN = "assign"
+    #: A definition `F(x, y := 0) := u`; `value` is the name, the children are the
+    #: `PARAMS` and the body, if any.
     FUNDEF = "fundef"
+    #: A definition's parameters: each a `NAME`, or an `ASSIGN` of its default. `value`
+    #: is `VARIADIC` for the head `F v :=`, whose one parameter takes all the arguments.
     PARAMS = "params"
     DOMAIN = "domain"
     INTERVAL = "interval"
     SHOWVALUE = "showvalue"
+    #: The quote `'u`, whose one child is the quoted primary: `u` as written, not
+    #: evaluated (a held value).
+    QUOTE = "quote"
 
 
 @dataclass(frozen=True)
@@ -83,3 +98,59 @@ class Node:
     @property
     def is_atom(self) -> bool:
         return not self.children
+
+
+#: The `value` of the `PARAMS` of a variadic head.
+VARIADIC = "variadic"
+
+#: The chain operators of `INFIX`, which bind like `SUB`.
+CHAIN_WORDS = frozenset(("ROW", "COL"))
+
+
+def is_chain(node: Node) -> bool:
+    """Whether `node` is a link of the subscript chain other than `SUB`: `A ROW i`, `A
+    COL j`, `A SUB SUB j`."""
+    return node.kind is Kind.INFIX and (node.value in CHAIN_WORDS or is_deep(node))
+
+
+def is_deep(node: Node) -> bool:
+    """Whether `node` is `A SUB SUB j`, or a longer run of `SUB`."""
+    return node.kind is Kind.INFIX and set(str(node.value).split()) == {"SUB"}
+
+
+def depth(node: Node) -> int:
+    """How many levels down the index of `A SUB SUB j` applies: one per extra `SUB`."""
+    return len(str(node.value).split()) - 1
+
+
+def parameters(params: Node) -> tuple[tuple[str, Node | None], ...]:
+    """The parameters of a definition's `PARAMS`, each a name and its default or None.
+
+    A string parameter, a string variable, is named by its text in quotes, which no other
+    name can be.
+    """
+    found = []
+    for child in params.children:
+        default = None
+        if child.kind is Kind.ASSIGN:
+            default = child.children[1] if len(child.children) > 1 else None
+            child = child.children[0]
+        found.append((variable_key(child), default))
+    return tuple(found)
+
+
+def parameter_names(params: Node) -> tuple[str, ...]:
+    """The names of the parameters of a definition's `PARAMS`."""
+    return tuple(name for name, _ in parameters(params))
+
+
+def variable_key(node: Node) -> str:
+    """The name of the variable a `NAME` or `STRING` node is, as `parameters` names it:
+    a string variable by its text in quotes, so `"a1"` and `a1` are two variables."""
+    if node.kind is Kind.STRING:
+        return f'"{node.value}"'
+    return str(node.value)
+
+
+#: `parameters`, under a name that leaves the word free for local variables.
+parameters_of = parameters

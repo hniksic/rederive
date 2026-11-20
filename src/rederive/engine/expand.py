@@ -24,16 +24,18 @@ import sympy as sp
 from rederive.engine.boundary import DEFAULT_AMOUNT, Amount, Result
 from rederive.engine.context import Context, Precision
 from rederive.engine.expanding import expanded_expression
+from rederive.engine.fresh import afresh
 from rederive.engine.from_sympy import from_sympy
 from rederive.engine.printer import shadowing_built_ins
 from rederive.engine.approximation import approximated, noting_approximations
-from rederive.engine.pipeline import simplified
+from rederive.engine.pipeline import simplified, top_level_equation
 from rederive.model.expr import Node
 from rederive.syntax.state import ParseState
 
 __all__ = ["expand", "expanded"]
 
 
+@afresh
 @noting_approximations
 @shadowing_built_ins
 def expand(
@@ -53,7 +55,7 @@ def expand(
     `(x + 2*y + 1)^3` about `y` then `x` gives a polynomial led by `8*y^3`, about `x`
     then `y` one led by `x^3`.
     """
-    context = context or Context()
+    context = (context or Context()).fresh()
     answer = expanded(node, context, amount, variables)
     return from_sympy(answer, _about(context, variables), state)
 
@@ -82,7 +84,12 @@ def expanded(
     and reparsing.
     """
     context = context or Context()
-    expression = simplified(node, context.with_precision(Precision.EXACT))
+    # A top-level equation keeps its form, so that it is expanded or factored as such.
+    expression = simplified(
+        node,
+        context.with_precision(Precision.EXACT),
+        top=top_level_equation(node, context),
+    )
     return expanded_expression(
         expression,
         amount,

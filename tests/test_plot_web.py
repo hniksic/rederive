@@ -11,6 +11,7 @@ and the bridge is a pair of identity functions. Everything in between is real.
 """
 
 import asyncio
+import dataclasses
 import re
 import types
 from pathlib import Path
@@ -2010,3 +2011,26 @@ def test_a_surfaces_closure_is_cached_by_content_like_a_curves():
     assert first.closure is None
     sampler._gridded(held, _grid("SIN(x y)"))
     assert sampler._standing(held, _solid("SIN(x y)")).closure is not None
+
+
+def test_an_expression_evaluated_point_by_point_is_sampled_in_the_worker():
+    # The browser samples in the engine worker, where the points run as they do on the
+    # desktop's sampling thread.
+    from rederive.model.session import Session
+
+    session = Session()
+    session.author("stp(x) := PROG(IF(x < 0, RETURN 0), IF(x < 1, RETURN x), 1)")
+    model = dataclasses.replace(
+        _plot("stp(x)", context=session.context),
+        node=parse_expression("stp(x)", session.state).node,
+        pointwise=True,
+    )
+    request = asking.Sample(1, 1, 1, model, (-2.0, 2.0), (-2.0, 2.0), CANVAS)
+    answer = _answered(request)
+    assert answer["trouble"] == ""
+    xs = np.asarray(answer["xs"], dtype=np.float64)
+    ys = np.asarray(answer["ys"], dtype=np.float64)
+    kept = np.isfinite(ys)
+    assert kept.all()
+    expected = np.where(xs < 0, 0.0, np.where(xs < 1, xs, 1.0))
+    assert np.allclose(ys, expected, atol=1e-6)

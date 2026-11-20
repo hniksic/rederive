@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 
 
@@ -24,6 +25,9 @@ class Source:
     origin: str | None = None
     offsets: tuple[int, ...] = field(default=(), repr=False)
     """For each character of `text`, its index in `original`."""
+    annotations: Mapping[int, str] = field(default_factory=dict, repr=False)
+    """For a file, the annotation of each expression line that has one, keyed by where
+    the line starts in `text`."""
 
     def map_offset(self, offset: int) -> int:
         """Where an offset into `text` falls in `original`."""
@@ -46,20 +50,37 @@ class Source:
 
     @classmethod
     def from_file(cls, text: str, origin: str | None = None) -> Source:
-        """A .MTH/.DMO source, with comments stripped and `~` continuations joined.
+        """A math or demonstration file's decoded text, prepared for reading.
 
-        Comments are stripped before splicing, so a `~` inside a comment doesn't join
-        lines: `; a comment ~` followed by `1+2` loads `1+2` on its own. Escapes are
-        decoded after splicing, since Derive breaks a line wherever it is long, even
-        inside an escape.
+        The steps run in this order, each on the result of the one before:
+
+        1. cut the text at the DOS end marker, Ctrl-Z;
+        2. normalize CR LF, CR and LF line ends to LF;
+        3. join each line ending in `~` to the next, on raw characters, so that a line
+           Derive broke inside a name, a number, a string or an escape is whole again;
+        4. expand the `\\x7fXXXX` escapes;
+        5. classify the lines: a line starting with `;` is an annotation, which applies
+           to the next expression line (a later one before it replaces it) and is
+           blanked; in any other line a `;` outside strings and square brackets starts a
+           comment, which is cut off.
+
+        Strings are tracked on the joined line, so a `;` in a string that a wrap split
+        is still data. Blank lines remain, so `source_lines` finds each expression
+        line, and `annotations` holds the annotation of each.
         """
         body, offsets = _identity(text)
         body, offsets = _cut_at_end_marker(body, offsets)
         body, offsets = _normalize_line_endings(body, offsets)
-        body, offsets = _strip_comments(body, offsets)
         body, offsets = _splice_continuations(body, offsets)
         body, offsets = _decode_escapes(body, offsets)
-        return cls(text=body, original=text, origin=origin, offsets=tuple(offsets))
+        body, offsets, annotations = _classify_lines(body, offsets)
+        return cls(
+            text=body,
+            original=text,
+            origin=origin,
+            offsets=tuple(offsets),
+            annotations=annotations,
+        )
 
 
 #: Derive 6's escape for a character outside ASCII: DEL and four hex digits, so that
@@ -134,27 +155,66 @@ def _normalize_line_endings(text: str, offsets: list[int]) -> tuple[str, list[in
     return "".join(out), kept
 
 
-def _strip_comments(text: str, offsets: list[int]) -> tuple[str, list[int]]:
-    """Drop `;` to end of line. A `;` inside a string literal is data."""
+#: What starts an annotation line, and a comment after an expression.
+COMMENT = ";"
+
+
+def _classify_lines(
+    text: str, offsets: list[int]
+) -> tuple[str, list[int], dict[int, str]]:
+    """Blank the annotation lines and cut the comments off the expression lines.
+
+    Returns the text, its offsets, and the annotation of each expression line, keyed by
+    where the line starts in the returned text.
+    """
     out: list[str] = []
     kept: list[int] = []
+    annotations: dict[int, str] = {}
+    pending: str | None = None
+    start = 0
+    while start <= len(text):
+        stop = text.find("\n", start)
+        if stop < 0:
+            stop = len(text)
+        line = text[start:stop]
+        stripped = line.strip()
+        if stripped.startswith(COMMENT):
+            pending = stripped[len(COMMENT) :].strip()
+        else:
+            end = start + _comment_start(line)
+            if stripped:
+                if pending is not None:
+                    annotations[len(kept)] = pending
+                pending = None
+            out.append(text[start:end])
+            kept.extend(offsets[start:end])
+        if stop < len(text):
+            out.append("\n")
+            kept.append(offsets[stop])
+        start = stop + 1
+    return "".join(out), kept, annotations
+
+
+def _comment_start(line: str) -> int:
+    """Where the comment of an expression line starts, or its length if it has none.
+
+    A `;` inside a string is data, and one inside square brackets separates the rows of
+    a matrix.
+    """
     in_string = False
-    index = 0
-    while index < len(text):
-        char = text[index]
+    depth = 0
+    for index, char in enumerate(line):
         if char == '"':
             in_string = not in_string
-        elif char == "\n":
-            in_string = False
-        elif char == ";" and not in_string:
-            index = text.find("\n", index)
-            if index < 0:
-                break
+        elif in_string:
             continue
-        out.append(char)
-        kept.append(offsets[index])
-        index += 1
-    return "".join(out), kept
+        elif char == "[":
+            depth += 1
+        elif char == "]":
+            depth = max(0, depth - 1)
+        elif char == COMMENT and not depth:
+            return index
+    return len(line)
 
 
 def _splice_continuations(text: str, offsets: list[int]) -> tuple[str, list[int]]:

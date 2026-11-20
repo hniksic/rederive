@@ -35,7 +35,8 @@ import traceback
 from collections.abc import Callable
 from typing import Any
 
-from rederive.engine.worker import BUG, MEMORY, READY, methods
+from rederive.engine.context import reporting
+from rederive.engine.worker import BUG, MEMORY, READY, methods, reporter
 from rederive.plot.web import protocol as plots
 
 __all__ = ["serve"]
@@ -77,7 +78,8 @@ def _asked(table: dict[str, Callable[..., Any]], data: Any) -> None:
     """One request, answered however it turns out."""
     number, method, args = pickle.loads(bytes(data.to_py()))
     try:
-        answer = table[method](*args)
+        with reporting(reporter(lambda message: _post(pickle.dumps(message)), number)):
+            answer = table[method](*args)
         if method in plots.DRAWING:
             _drawing({"number": number} | answer)
         else:

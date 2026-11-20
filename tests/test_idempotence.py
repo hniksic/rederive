@@ -193,6 +193,12 @@ SETTLES_LATER = {
         "a heading is simplified once the table is a matrix on the worksheet, which "
         "the original does too: p XOR q reads back as NOT p AND q OR p AND NOT q"
     ),
+    "TRUTH_TABLE(p, q, p IFF q)": "as for the table above: p IFF q is simplified too",
+    "TRUTH_TABLE(a, b, a IFF b)": "as for the tables above",
+    "TRUTH_TABLE(a, b, NOT(a AND b), NOT(a) OR NOT(b))": "as for the tables above",
+    "TRUTH_TABLE(p, q, p AND q, p OR q, p XOR q, p IMP q, p IFF q)": (
+        "as for the tables above"
+    ),
 }
 
 #: Further expected texts that don't simplify to themselves, mapped to the reason. These

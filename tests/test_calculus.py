@@ -10,7 +10,7 @@ from __future__ import annotations
 import pytest
 from simplifying import declared, declaring, parse, simp
 
-from rederive.engine.computing import Context, simplify
+from rederive.engine.computing import Context, Definition, simplify
 from rederive.model.expr import Kind
 
 
@@ -19,6 +19,31 @@ from rederive.model.expr import Kind
 CALCULUS = [
     ("DIF(SIN(a*x^2), x)", "2*a*x*COS(a*x^2)"),
     ("DIF(x^2, x, 2)", "2"),
+    # A high derivative of a product of polynomials is taken of the expanded product.
+    ("DIF((x + 1)^3*(x - 2)^2, x, 2)", "20*x^3 - 12*x^2 - 30*x + 2"),
+    ("SUBST(DIF(PRODUCT(1 + x^i, i, 1, 10), x, 10), x, 0)", "36288000"),
+    ("SUBST(DIF(PRODUCT(1 + x^i, i, 1, 10), x, 10), x, 1)", "1795652415251251200"),
+    # Powers of reciprocal constants cancel under a limit; command answers in it are
+    # their values.
+    (
+        "LIM((SQRT(2) - 1)^(4*n + 4)*(SQRT(2) + 1)^(4*n)*n/(n + 1), n, inf)",
+        "17 - 12*SQRT(2)",
+    ),
+    (
+        "LIM(EXPAND((SQRT(2) + 1)^(4*n)*(3 + (SQRT(2) - 1)^(4*n)))/"
+        "EXPAND((SQRT(2) + 1)^(4*n)*(1 + (SQRT(2) - 1)^(4*n))), n, inf)",
+        "3",
+    ),
+    # A geometric term with ratio below 1 in absolute value vanishes, whatever its
+    # coefficient; one whose ratio is not proved to be stays.
+    ("LIM(b*(-3/4)^n, n, inf)", "0"),
+    ("LIM(a + b*(-3/4)^n + c*2^(-n), n, inf)", "a"),
+    ("LIM(b*r^n, n, inf)", "LIM(b*r^n, n, inf)"),
+    # An error function tends to 1 along any ray within pi/4 of the positive axis.
+    ("LIM(ERF((1 + #i)*z), z, inf)", "1"),
+    ("LIM(3*ERF((1 + #i)*z) + ERF((2 - #i)*z), z, inf)", "4"),
+    ("LIM(ERF((1 + #i)*z), z, -inf)", "-1"),
+    ("LIM(ERF((1 + 2*#i)*z), z, inf)", "LIM(ERF((1 + 2*#i)*z), z, inf)"),
     ("INT(x*SIN(x), x)", "SIN(x) - x*COS(x)"),
     ("INT(1/x, x, 1, 2)", "LN(2)"),
     ("INT(1/x^2, x, 1, inf)", "1"),
@@ -127,9 +152,171 @@ CALCULUS = [
 ]
 
 
+
+def test_an_integral_or_limit_at_an_undefined_point_is_undefined():
+    # As a sum to `?` is.
+    assert simp("INT(x, x, ?, 1)") == "?"
+    assert simp("LIM(x, x, ?)") == "?"
+
+
 @pytest.mark.parametrize(("text", "expected"), CALCULUS, ids=str)
 def test_a_calculus_head_is_evaluated(text, expected):
     assert simp(text) == expected
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        # A one-element vector is its element; a longer one is no variable.
+        ("DIF(x^2*y^3, [x])", "2*x*y^3"),
+        ("DIF(x^2*y^3, [x, y])", "DIF(x^2*y^3, [x, y])"),
+        ("DIF(x^2, 2)", "DIF(x^2, 2)"),
+        ("DIF({x^2, x^3}, x)", "{2*x, 3*x^2}"),
+        # A third argument of an antiderivative is its constant, added to each element
+        # of a vector or set and to the right side of an equation.
+        ("INT(x^2, x, c)", "x^3/3 + c"),
+        ("INT(COS(x), x, 5)", "SIN(x) + 5"),
+        ("INT(x^2, x, c) - INT(x^2, x, d)", "c - d"),
+        ("INT(1/SQRT(1 - x^4), x, c)", "INT(1/SQRT(1 - x^4), x) + c"),
+        ("INT([1, x], x, c)", "[x + c, x^2/2 + c]"),
+        ("INT({1, x}, x, c)", "{x + c, x^2/2 + c}"),
+        ("INT(y = x, x, c)", "x*y = x^2/2 + c"),
+        ("INT(x^2)", "INT(x^2)"),
+        ("INT(x^2, 2)", "INT(x^2, 2)"),
+        ("INT(x^2, x, 0, 1, 2)", "INT(x^2, x, 0, 1, 2)"),
+        # Three arguments of a Taylor polynomial are about 0; an equation is expanded
+        # side by side, a set element by element.
+        ("TAYLOR(1/(1 + 2*x), x, 4)", "16*x^4 - 8*x^3 + 4*x^2 - 2*x + 1"),
+        (
+            "TAYLOR(COS(x), x, 10)",
+            "-x^10/3628800 + x^8/40320 - x^6/720 + x^4/24 - x^2/2 + 1",
+        ),
+        ("TAYLOR(SIN(x) = COS(x), x, 0, 3)", "x - x^3/6 = 1 - x^2/2"),
+        ("TAYLOR({SIN(x), COS(x)}, x, 0, 3)", "{1 - x^2/2, x - x^3/6}"),
+        ("TAYLOR(SIN(x), x)", "TAYLOR(SIN(x), x)"),
+        ("TAYLOR(x < 1, x, 0, 3)", "TAYLOR(x < 1, x, 0, 3)"),
+    ],
+)
+def test_the_calculus_heads_take_their_argument_forms(text, expected):
+    assert simp(text) == expected
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("SUBST_DIFF(-SQRT(1 - a*x)/a, x, 0, 1)", "(1 - SQRT(1 - a))/a"),
+        ("SUBST_DIFF(x^2, x, 1, 3)", "8"),
+        ("SUBST_DIFF(x^2, x, a, b)", "b^2 - a^2"),
+        ("SUBST_DIFF([x, x^2], x, 0, 2)", "[2, 4]"),
+        ("SUBST_DIFF(0, i, 0, n + 1)", "0"),
+        # An infinite end, or one where substituting is undefined, is a limit from the
+        # side of the other end; with the side unknown, the call stands.
+        ("SUBST_DIFF(-1/x, x, 1, inf)", "1"),
+        ("SUBST_DIFF(SIN(x)/x, x, 0, pi)", "-1"),
+        ("SUBST_DIFF(1/x, x, 0, b)", "SUBST_DIFF(1/x, x, 0, b)"),
+        ("SUBST_DIFF(x^2, 2, 0, 1)", "SUBST_DIFF(x^2, 2, 0, 1)"),
+        ("SUBST_DIFF(INT(#e^(-ABS(x - 1) - x), x), x, 0, 2)", "(3*#e^2 - 1)*#e^(-3)/2"),
+    ],
+)
+def test_a_difference_of_values_at_two_ends_is_taken_as_a_definite_integral_is(
+    text, expected
+):
+    assert simp(text) == expected
+
+
+def test_the_derivative_of_a_rounded_value_is_the_derivative_rounded():
+    # In a definition's body, APPROX of an expression in a parameter stays a call.
+    assert simp("F(a) := DIF(APPROX(SIN(a*x)), x)") == "F(a) := a*APPROX(COS(a*x))"
+    assert simp("DIF(APPROX(x^2/3), x)") == "2*x/3"
+
+
+def test_subst_diff_of_a_declared_function_is_the_difference_of_its_calls():
+    context = Context(functions={"F": Definition(("x",), None)})
+    assert simp("SUBST_DIFF(F(x), x, a, b)", context) == "F(b) - F(a)"
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        # The index runs over the elements of a set, and a set adds up as a vector does.
+        ("SUM(k^2, k, {2, 3, 5})", "38"),
+        ("SUM(x^k, k, {1, 2, 3})", "x^3 + x^2 + x"),
+        ("PRODUCT(x - k, k, {1, 2})", "(x - 1)*(x - 2)"),
+        ("SUM({1, 2, 3})", "6"),
+        ("PRODUCT({2, 3})", "6"),
+        ("SUM([])", "0"),
+        ("PRODUCT([])", "1"),
+        # A fifth argument is a step, the index range of VECTOR: one running the wrong
+        # way is empty, unlike the four-argument form, which counts back.
+        ("SUM(k, k, 1, 10, 2)", "25"),
+        ("SUM(k, k, 10, 1, -3)", "22"),
+        ("PRODUCT(k, k, 1, 10, 3)", "280"),
+        ("SUM(k, k, 5, 3, 1)", "0"),
+        ("PRODUCT(k, k, 5, 3, 1)", "1"),
+        ("SUM(k, k, 5, 3)", "-4"),
+        ("PRODUCT(k, k, 5, 3)", "1/4"),
+        ("SUM(x^i, i, 0, 6, 2)", "x^6 + x^4 + x^2 + 1"),
+        ("SUM(k, k, 1, 3, 0)", "SUM(k, k, 1, 3, 0)"),
+        ("SUM(k, k, 1, 3, s)", "SUM(k, k, 1, 3, s)"),
+        # With a symbolic end, a step of 1 is the four-argument form, and another step
+        # counts the terms.
+        ("SUM(k^2, k, 1, n, 1)", "n*(n + 1)*(2*n + 1)/6"),
+        ("SUM(k, k, 0, n, 2)", "FLOOR(n/2)^2 + FLOOR(n/2)"),
+        # Every term is computed, however many.
+        ("GCD(10^100 + 9, PRODUCT(n^IF(PRIME?(n)), n, 2, 1000, 1))", "1"),
+    ],
+)
+def test_a_sum_runs_over_a_set_or_in_steps(text, expected):
+    assert simp(text) == expected
+
+
+def test_a_product_with_a_step_of_one_computes_each_term():
+    context = Context(
+        functions={"prim": Definition(("n",), parse("IF(NEXT_PRIME(n - 1) = n, n, 1)"))}
+    )
+    state = declaring("prim")
+    assert simp("PRODUCT(prim(k), k, 2, 100, 1)", context, state) == (
+        "2305567963945518424753102147331756070"
+    )
+
+
+@pytest.mark.parametrize(
+    ("text", "context", "expected"),
+    [
+        # The series is `EI(x) - LN(x) - euler_gamma` for positive `x` only; for
+        # negative `x` its logarithm is of `-x`, and at 0, or for a complex `x`, it
+        # stands.
+        ("SUM(x^k/(k*k!), k, 1, inf)", None, "SUM(x^k/(k*k!), k, 1, inf)"),
+        ("SUM((-1)^k/(k*k!), k, 1, inf)", None, "EI(-1) - euler_gamma"),
+        (
+            "SUM(x^k/(k*k!), k, 1, inf)",
+            "x :epsilon Real (0, inf)",
+            "-LN(x) + EI(x) - euler_gamma",
+        ),
+        (
+            "SUM(x^k/(k*k!), k, 1, inf)",
+            "x :epsilon Real (-inf, 0)",
+            "-LN(-x) + EI(x) - euler_gamma",
+        ),
+        ("EI(x, inf)", None, "LN(x) + SUM(x^n/(n*n!), n, 1, inf) + euler_gamma"),
+        ("EI(x, inf)", "x :epsilon Real (-inf, 0)", "EI(x) + #i*pi"),
+    ],
+)
+def test_the_exponential_integrals_series_is_summed_for_every_value(
+    text, context, expected
+):
+    assert simp(text, declared(context) if context else None) == expected
+
+
+def test_a_binomial_with_a_top_one_below_the_bottom_is_not_zero():
+    """`COMB(n - 1, n)` is 0 for most `n` but 1 at `n = 0`, so it stays."""
+    assert simp("COMB(n - 1, n)") == "COMB(n - 1, n)"
+
+
+def test_a_power_of_a_wave_touching_zero_has_no_limit():
+    """The power is 0 at each zero of the wave, and close to 1 elsewhere."""
+    assert simp("LIM((SIN(x)^2)^(1/x), x, inf)") == "INTERVAL(0, 1)"
+    assert simp("LIM(ABS(COS(2*x))^(1/x), x, inf)") == "INTERVAL(0, 1)"
 
 
 def test_a_function_without_a_body_is_differentiated_symbolically():
@@ -207,6 +394,16 @@ def test_a_sum_over_the_elements_of_a_sequence_is_split_by_term():
     assert simp("SUM(x SUB i, i, 1, n)") == "SUM(x SUB i, i, 1, n)"
     answer = simp("SUM((y SUB i - b)^2, i, 1, n)")
     assert answer.count("SUM(") == 2 and "b^2*n" in answer
+
+
+def test_a_sum_summed_in_reverse_where_that_has_a_closed_form():
+    # Only the last term, COMB(-1, 0), is not zero. Over `k = n - i` sympy sums it; the
+    # range must be known not to be empty for the closed form to hold.
+    context = declared("n :epsilon Integer [0, inf)")
+    assert simp("SUM(COMB(n - i - 1, n - i), i, 0, n)", context) == "1"
+    assert simp("SUM(COMB(n - i - 1, n - i), i, 0, n)") == (
+        "SUM(COMB(-i + n - 1, n - i), i, 0, n)"
+    )
 
 
 def test_a_range_that_stops_between_two_terms_is_written_out():
@@ -362,7 +559,7 @@ DERIVATIVES_OF_STEPS = [
     # The antiderivatives of steps differentiate back to them.
     ("DIF(INT(FLOOR(x), x), x)", "FLOOR(x)"),
     ("DIF(INT(SIGN(SIN(x)), x), x)", "SIGN(SIN(x))"),
-    ("DIF(INT(MOD(x, 1), x), x)", "x - FLOOR(x)"),
+    ("DIF(INT(MOD(x, 1), x), x)", "MOD(x)"),
 ]
 
 
@@ -376,14 +573,16 @@ def test_a_step_function_has_derivative_zero_between_its_jumps(text, expected):
 def test_a_derivative_of_a_derivative_differentiates_it_over_one_denominator():
     """FUN.MTH's `F21` at half-integer parameters nests derivatives like these. Each is
     put over one denominator before it is differentiated again, or the sums of
-    fractions multiply out with every order and this takes minutes."""
+    fractions multiply out with every order and this takes minutes. For a negative `z`
+    the value is imaginary: at -2 it is about `-3.9869*#i`."""
     text = (
         "DIF(z^(5/2)*DIF(z^2*(1 - z)^5*DIF(ATAN(SQRT(-z))/SQRT(-z), z, 5), z, 2), z, 3)"
     )
     assert simp(text) == (
-        "-945*(225*(-z)^(5/2)*ATAN(SQRT(-z)) + 1050*(-z)^(3/2)*ATAN(SQRT(-z))"
-        " + 945*SQRT(-z)*ATAN(SQRT(-z)) + 64*z^3 - 735*z^2 + 945*z)*SQRT(z^11)/(32*z^12)"
+        "945*(225*z^2*ATAN(SQRT(-z)) - 1050*z*ATAN(SQRT(-z)) + 945*ATAN(SQRT(-z))"
+        " - 64*(-z)^(5/2) - 735*(-z)^(3/2) - 945*SQRT(-z))/(32*z^(11/2)*SQRT(-z))"
     )
+    assert simp(f"APPROX(SUBST({text}, z, -2), 5)") == "-3.9868*#i"
 
 
 def test_a_derivative_a_substitution_binds_is_not_evaluated():
@@ -499,7 +698,7 @@ def test_a_prime_differentiates_a_function_that_has_a_body():
     The function is differentiated first and then evaluated at the point, so
     `F'(r^2)` is `2*r^2`. Substituting first would wrongly give `2*r`.
     """
-    context = Context(functions={"F": (("r",), parse("r^2"))})
+    context = Context(functions={"F": Definition(("r",), parse("r^2"))})
     assert simp("F'(r)", context) == "2*r"
     assert simp("F'(r^2)", context) == "2*r^2"
     assert simp("F''(r)", context) == "2"
@@ -799,6 +998,38 @@ def test_a_limit_that_turns_on_a_parameter_s_sign_is_written_with_it(text, expec
     assert simp(text) == expected
 
 
+@pytest.mark.parametrize(
+    ("text", "context", "expected"),
+    [
+        # A base declared inside (-1, 1) vanishes, whatever its sign, as `(-1/2)^n`
+        # does, and a power of `n` beside it doesn't change that.
+        ("LIM((-q)^n, n, inf)", "q :epsilon Real (0, 1/2)", "0"),
+        ("LIM(q^n, n, inf)", "q :epsilon Real (-1, 0)", "0"),
+        ("LIM((-q)^n*n^3, n, inf)", "q :epsilon Real (0, 1/2)", "0"),
+        ("LIM(3 - q^n, n, inf)", "q :epsilon Real (0, 1)", "3"),
+        ("LIM((-q)^(2*n), n, inf)", "q :epsilon Real (0, 1/2)", "0"),
+        # A base declared below -1 swings ever wider, as `(-2)^n` does.
+        ("LIM((-q)^n, n, inf)", "q :epsilon Real (1, 2)", "±inf"),
+        ("LIM((-q)^n*n^3, n, inf)", "q :epsilon Real (1, 2)", "±inf"),
+        ("LIM((-q)^(2*n), n, inf)", "q :epsilon Real (1, 2)", "inf"),
+        # At -inf the base is inverted.
+        ("LIM((-q)^n, n, -inf)", "q :epsilon Real (1, 2)", "0"),
+        ("LIM((-q)^n, n, -inf)", "q :epsilon Real (0, 1/2)", "±inf"),
+        ("LIM(q^n, n, -inf)", "q :epsilon Real (-1, 0)", "±inf"),
+        # Where the declaration doesn't settle the size of a base that may be
+        # negative, the limit stays.
+        ("LIM((-q)^n, n, inf)", "q :epsilon Real (0, inf)", "LIM((-q)^n, n, inf)"),
+        ("LIM((-q)^n, n, -inf)", "q :epsilon Real (0, inf)", "LIM((-q)^n, n, -inf)"),
+        ("LIM(a*b^n, n, inf)", None, "LIM(a*b^n, n, inf)"),
+    ],
+)
+def test_a_limit_of_a_power_is_decided_by_the_declared_base(text, context, expected):
+    """The limit of `r^n` turns on how `ABS(r)` compares with 1 and on the sign of `r`,
+    which the declared interval of a parameter may settle; sympy's
+    `#e^(inf*SIGN(LN(r)))` means something only for a positive `r`."""
+    assert simp(text, declared(context) if context else None) == expected
+
+
 LIMITS_OF_SUMS_AND_PRODUCTS = [
     # The closed forms are generalized harmonic numbers, which can't be expressed, but
     # their limits can.
@@ -850,6 +1081,23 @@ def test_a_quotient_defined_nowhere_has_no_limit():
     assert simp(f"LIM({text}, x, 0)") == "?"
 
 
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("LIM(false, y, inf)", "false"),
+        ("LIM(true, y, inf)", "true"),
+        ("LIM(true, y, -inf)", "true"),
+        ("LIM(true, y, +-inf)", "true"),
+        ("LIM(false, y, inf, 1)", "false"),
+        ("LIM(a AND b, y, inf)", "a AND b"),
+        ("LIM(\"abc\", y, inf)", '"abc"'),
+    ],
+    ids=str,
+)
+def test_a_limit_of_a_value_free_of_the_variable_is_the_value(text, expected):
+    assert simp(text) == expected
+
+
 def test_a_limit_infinite_on_a_real_side_and_an_imaginary_one_is_unknown():
     """At a branch point one side of the limit is imaginary, which `±inf` doesn't say.
 
@@ -863,7 +1111,7 @@ def test_a_limit_infinite_on_a_real_side_and_an_imaginary_one_is_unknown():
         " SUB 1*LIM(v_ SUB 2,[x,y],[a,b])/v_ SUB 1!],v_,[1,r,b],n),3)"
     )
     context = Context(
-        functions={"T": (("r", "x", "y", "a", "b", "n", "v_"), body)}
+        functions={"T": Definition(("r", "x", "y", "a", "b", "n", "v_"), body)}
     )
     assert simp("T(y^2 + SQRT(x), x, y, 0, 1, 1)", context) == "x + 1"
     assert simp("T(y^2 + SQRT(x), x, y, 0, 1, 2)", context) == "?"
@@ -940,6 +1188,13 @@ def test_a_limit_where_the_expression_is_continuous_is_its_value_there(text, exp
 
 def test_a_limit_of_an_undefined_function_is_its_value_at_the_point():
     assert simp("LIM(F(t), t, c)", state=declaring("F")) == "F(c)"
+    # Its derivative is a value at a point too, the chain rule's argument included.
+    assert simp("LIM(DIF(F(a*t), t), t, c)", state=declaring("F")) == "a*F'(a*c)"
+
+
+def test_the_derivative_of_an_expanded_or_assigned_value_is_that_of_the_value():
+    assert simp("DIF(EXPAND((x + 1)^2)/2, x)") == "x + 1"
+    assert simp("DIF([v := x^2, w := x^3]/2, x)") == "[x, 3*x^2/2]"
 
 
 def test_a_limit_substitutes_into_the_value_where_a_call_binds_its_variable():
@@ -947,7 +1202,7 @@ def test_a_limit_substitutes_into_the_value_where_a_call_binds_its_variable():
     # the limit's variable is supplied for. Written as a number, that parameter is no
     # variable, so the point goes into the derivative's value.
     body = parse("DIF((z^2-1)^2*LN((z+1)/(1-z)),z,2)")
-    context = Context(functions={"G": (("z",), body)})
+    context = Context(functions={"G": Definition(("z",), body)})
     assert simp("LIM(G(k), k, COS(1/5))", context) == (
         "12*LN(-(COS(1/5) + 1)/(COS(1/5) - 1))*COS(1/5)^2 - 12*COS(1/5)"
         " - 4*LN(-(COS(1/5) + 1)/(COS(1/5) - 1))"
@@ -957,7 +1212,7 @@ def test_a_limit_substitutes_into_the_value_where_a_call_binds_its_variable():
 def test_the_utility_files_limit_of_a_generated_tensor():
     # TENSOR.MTH's EPS is a LIM of vectors generated over a symbolic dimension.
     body = parse("LIM(VECTOR(VECTOR(j-i,j,1,m),i,1,m),m,n)")
-    context = Context(functions={"S": (("n",), body)})
+    context = Context(functions={"S": Definition(("n",), body)})
     assert simp("S(3)", context) == "[[0, 1, 2], [-1, 0, 1], [-2, -1, 0]]"
 
 
@@ -976,7 +1231,7 @@ def test_a_calculus_head_waits_for_the_body_of_the_call_under_it():
     would wrongly give zero for what is a derivative of `x^2`.
     """
     body = parse("IF(n = 0, x^2, DIF(F(n - 1), x))", declaring("F"))
-    context = Context(functions={"F": (("n",), body)})
+    context = Context(functions={"F": Definition(("n",), body)})
     assert simp("F(0)", context) == "x^2"
     assert simp("F(1)", context) == "2*x"
     assert simp("F(2)", context) == "2"
@@ -995,8 +1250,8 @@ def test_a_limit_infinite_with_a_parameters_sign_is_plus_or_minus_infinity():
     )
     context = Context(
         functions={
-            "L": (("u", "x", "y", "p", "q"), lim2),
-            "S": (("r", "x", "y", "e", "d"), seg),
+            "L": Definition(("u", "x", "y", "p", "q"), lim2),
+            "S": Definition(("r", "x", "y", "e", "d"), seg),
         }
     )
     assert simp("S(L(x/y, x, y, 1, 0), 1, 0, 1/4, 1/4)", context) == (
@@ -1067,3 +1322,36 @@ def test_a_limit_toward_a_multiple_of_its_variable_changes_an_integrals_variable
     assert simp("LIM(INT(1/(SIN(1/y)+y^3),y),y,y^2)") == (
         "LIM(INT(1/(SIN(1/y) + y^3), y), y, y^2)"
     )
+
+
+# -- limits, sums and integrals at the edge of their definitions -------------------
+
+
+EDGES = [
+    # The quotient is 0/0 at the root, so its limit is taken, not its value.
+    (
+        "LIM((s + 1/20 - SQRT(3599)*#i/20)/(10*s^2 + s + 90), s, "
+        "-1/20 + SQRT(3599)*#i/20)",
+        "-SQRT(3599)*#i/3599",
+    ),
+    # Infinity of either sign: the limit both ways, where they agree.
+    ("LIM(-c*(y - b)/b, b, ±inf)", "c"),
+    ("LIM(1/x, x, ±inf)", "0"),
+    ("LIM(ATAN(x), x, ±inf)", "LIM(ATAN(x), x, ±inf)"),
+    # A chain is the conjunction of its links, each taken to the limit.
+    ("LIM(c = c = SIN(x)/x, x, 0)", "c = 1"),
+    # A geometric series whose powers have different bases.
+    (
+        "SUM((3/4)^x*#e^(x*t)/4, x, 0, inf)",
+        "IF(#e^t < 4/3, 1/(4 - 3*#e^t), SUM((3/4)^x*#e^(t*x)/4, x, 0, inf))",
+    ),
+    ("SUM(2^k*3^(-k), k, 1, inf)", "2"),
+    # Over an interval of no width an integral is 0, whatever the integrand there is.
+    ("INT(x/0*0, x, 4, 4)", "0"),
+    ("INT(1/(x - 4), x, 4, 4)", "0"),
+]
+
+
+@pytest.mark.parametrize(("text", "expected"), EDGES, ids=str)
+def test_a_calculus_head_at_the_edge_of_its_definition(text, expected):
+    assert simp(text) == expected

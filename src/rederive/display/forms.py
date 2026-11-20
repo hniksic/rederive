@@ -27,22 +27,25 @@ from rederive.model.expr import Kind, Node
 # delimits itself, so a subscript binds tighter than anything beside it: `v₁!` is the
 # factorial of the element without fences.
 ASSIGNMENT = 0
-IMP = 1
-XOR = 2
-OR = 3
-AND = 4
-NOT = 5
-RELATION = 6
-UNION = 7
-INTERSECTION = 8
-DIFFERENCE = 9
-ADD = 10
-MUL = 11
-NEG = 12
-POW = 13
-POSTFIX = 14
-SCRIPT = 15
-ATOM = 16
+IFF = 1
+IMP = 2
+XOR = 3
+OR = 4
+AND = 5
+NOT = 6
+RELATION = 7
+UNION = 8
+INTERSECTION = 9
+DIFFERENCE = 10
+ADD = 11
+DOT = 12
+CROSS = 13
+MUL = 14
+NEG = 15
+POW = 16
+POSTFIX = 17
+SCRIPT = 18
+ATOM = 19
 
 _BINOPS: dict[str, int] = {
     "/": MUL,
@@ -73,6 +76,14 @@ _BODY_PRECEDENCE: dict[str, int] = {
 }
 
 APPLICATIONS = (Kind.CALL, Kind.APPLY, Kind.FUNCPOW)
+
+#: Precedence of the word operators of `INFIX` other than the subscript links, which
+#: bind like postfix operators.
+INFIX_OPERATIONS: dict[str, int] = {
+    "SUBSET": RELATION,
+    "DOTPRODUCT": DOT,
+    "CROSSPRODUCT": CROSS,
+}
 
 
 def application(node: Node) -> tuple[Node, tuple[Node, ...]]:
@@ -176,12 +187,19 @@ def precedence(node: Node) -> int:
             return XOR
         case Kind.IMP:
             return IMP
+        case Kind.IFF:
+            return IFF
+        case Kind.INFIX:
+            return INFIX_OPERATIONS.get(str(node.value), POSTFIX)
         case Kind.ASSIGN | Kind.FUNDEF | Kind.SHOWVALUE:
             return ASSIGNMENT
         case Kind.FUNCPOW:
             return POW
         case Kind.CALL | Kind.APPLY:
-            name, _ = application(node)
+            name, arguments = application(node)
+            if str(name.value) == "RETURN" and len(arguments) == 1:
+                # `RETURN u` extends as far right as an assignment's value.
+                return ASSIGNMENT
             if special(node) is None:
                 return ATOM
             return _FORM_PRECEDENCE.get(str(name.value), ATOM)

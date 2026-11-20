@@ -44,11 +44,13 @@ import sympy as sp
 from sympy.core.mul import _keep_coeff
 from sympy.core.intfunc import integer_log
 
+from rederive.engine import budget
+from rederive.engine.budget import within
 from rederive.engine.expanding import _BOUND
 from rederive.engine.ordering import ORDER_LIST
 from rederive.engine.vectors import Vector, mapped
 
-__all__ = ["normal_form", "over_one_denominator"]
+__all__ = ["expands_within_reach", "normal_form", "over_one_denominator"]
 
 
 def normal_form(
@@ -65,9 +67,16 @@ def normal_form(
     pipeline passes `False` and solving uses the default. Denominators containing a
     variable are combined either way.
 
-    Never raises; a failed rewrite is skipped.
+    Never raises; a failed rewrite is skipped. One that does more work than
+    `budget.NORMALIZING` is skipped too, and the whole is left as it was if it does
+    more than `budget.NORMAL_FORM`: on a large expression, a cancellation over many
+    variables or an expansion may not end.
     """
-    return _Writer(tuple(order), over_numbers).written(expression)
+    found = within(
+        budget.NORMAL_FORM,
+        lambda: _Writer(tuple(order), over_numbers).written(expression),
+    )
+    return expression if found is None else found
 
 
 def over_one_denominator(expression: sp.Basic) -> sp.Basic:
@@ -1243,6 +1252,12 @@ def _roots_of_quotients_hidden(
 _EXPANSION = 20_000
 
 
+def expands_within_reach(expression: sp.Basic) -> bool:
+    """Whether `expression` multiplied out has few enough terms to build, by the bound
+    the normal form keeps to (see `_EXPANSION`)."""
+    return _expanded_terms(expression) <= _EXPANSION
+
+
 def _expanded_terms(expression: sp.Basic) -> int:
     """An upper bound on the number of terms in `expression` multiplied out.
 
@@ -1396,8 +1411,10 @@ def _rebuilt(expression: sp.Basic) -> sp.Basic:
 
 
 def _attempt(expression, rewrite):
+    """`rewrite(expression)`, or None if it fails or runs out of work (see
+    `budget.NORMALIZING`)."""
     try:
-        candidate = rewrite(expression)
+        candidate = within(budget.NORMALIZING, lambda: rewrite(expression))
     except Exception:
         return None
     return candidate if isinstance(candidate, sp.Basic) else None

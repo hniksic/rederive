@@ -431,15 +431,15 @@ def test_the_output_radix_reaches_the_renderer():
 
 def test_the_notation_digits_reach_the_renderer():
     session = Session()
-    assert session.author("0.123456789").layout.lines == ("0.123456",)
+    assert session.author("0.123456789123").layout.lines == ("0.1234567891",)
     session.author("NotationDigits := 9")
-    assert session.author("0.123456789").layout.lines == ("0.123456789",)
+    assert session.author("0.123456789123").layout.lines == ("0.123456789",)
 
 
 async def test_showing_fewer_digits_is_not_keeping_fewer():
     """Truncated display doesn't truncate the stored value."""
     session = Session()
-    assert session.author("0.10000000000000001").layout.lines == ("0.100000",)
+    assert session.author("0.10000000000000001").layout.lines == ("0.1000000000",)
     session.author("0.10000000000000001 - 1/10")
     assert (await session.simplify("#2")).text == "1/100000000000000000"
 
@@ -485,7 +485,8 @@ def test_a_setting_takes_effect_before_its_own_line_is_drawn():
 def test_a_value_no_field_takes_changes_nothing():
     """A refused value must not reach the parse state either."""
     session = Session()
-    session.author("InputBase := 1")
+    with pytest.raises(DeriveSyntaxError, match="Invalid value for InputBase"):
+        session.author("InputBase := 1")
     assert session.settings["InputBase"] == "Decimal"
     assert session.state.input_base == 10
     assert session.author("19").layout.lines == ("19",)

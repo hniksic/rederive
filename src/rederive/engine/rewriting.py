@@ -11,10 +11,29 @@ from collections.abc import Callable
 
 import sympy as sp
 
-__all__ = ["Rewrite", "attempt", "forced", "pays"]
+__all__ = ["Rewrite", "attempt", "forced", "larger_than", "pays"]
 
 
 Rewrite = Callable[[sp.Basic], sp.Basic]
+
+
+def larger_than(expression: sp.Basic, limit: int) -> bool:
+    """Whether `expression` has more than `limit` nodes, counting each occurrence of a
+    subexpression.
+
+    The size gates of optional work use it: it stops counting past `limit`, so it costs
+    at most that many steps however large the expression, and depends only on the
+    expression, so a gate decides alike on every machine."""
+    count = 0
+    pending = [expression]
+    while pending:
+        count += 1
+        if count > limit:
+            return True
+        node = pending.pop()
+        if isinstance(node, sp.Basic):
+            pending.extend(node.args)
+    return False
 
 
 def forced(expression: sp.Basic, rewrite: Rewrite) -> sp.Basic:

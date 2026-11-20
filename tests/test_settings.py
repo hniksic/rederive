@@ -37,8 +37,9 @@ def editor(dialog, settings):
 
 def test_defaults_are_the_originals(settings):
     assert settings["Precision"] == "Exact"
-    assert settings["PrecisionDigits"] == 6
+    assert settings["PrecisionDigits"] == 10
     assert settings["Notation"] == "Rational"
+    assert settings["NotationDigits"] == 10
     assert settings["InputMode"] == "Character"
     assert settings["CaseMode"] == "Insensitive"
     assert settings["ArrowKeyMode"] == "LineEdit"
@@ -53,7 +54,7 @@ def test_watchers_hear_which_settings_changed(settings):
     heard = []
     settings.watch(heard.append)
     # Notation is included because changing the precision changes it too.
-    changed = settings.apply({"Precision": "Mixed", "PrecisionDigits": 6})
+    changed = settings.apply({"Precision": "Mixed", "PrecisionDigits": 10})
     assert changed == ("Precision", "Notation")
     assert heard == [frozenset({"Precision", "Notation"})]
     # Reapplying the same values changes nothing and notifies nobody.
@@ -130,23 +131,24 @@ def test_tab_wraps_through_every_field(settings):
 def test_typing_overwrites_the_number_under_the_cursor(settings):
     dialog = editor(NOTATION, settings)
     dialog.next_field()
-    assert dialog.text == "6"
-    dialog.type_character("1")
+    assert dialog.text == "10"
+    dialog.type_character("3")
     dialog.type_character("2")
-    assert dialog.text == "12"
+    assert dialog.text == "32"
     dialog.erase()
-    assert dialog.text == "1"
-    assert dialog.commit()["NotationDigits"] == 1
+    assert dialog.text == "3"
+    assert dialog.commit()["NotationDigits"] == 3
 
 
 def test_a_digit_count_below_one_is_refused(settings):
     dialog = editor(PRECISION, settings)
     dialog.next_field()
     dialog.type_character("0")
+    dialog.delete()
     assert dialog.commit() is None
     # The dialog stays open, with the offending digit left to correct.
     assert dialog.text == "0"
-    assert settings["PrecisionDigits"] == 6
+    assert settings["PrecisionDigits"] == 10
 
 
 def test_other_asks_for_a_base_between_2_and_36(settings):

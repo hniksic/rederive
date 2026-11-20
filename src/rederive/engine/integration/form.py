@@ -583,7 +583,8 @@ def on_the_principal_sheet(
 
     Sympy's Meijer G route answers `INT(LN(1 - x)/x, x)` with `-POLYLOG(2,
     x*EXP_POLAR(2*pi*#i))`. A full turn is the number 1, and `-POLYLOG(2, x)` is also
-    an antiderivative. Other angles actually move the argument and are kept.
+    an antiderivative. Other angles actually move the argument, and are replaced by
+    their numbers only where the derivative proves the result.
     """
     if not value.has(sp.exp_polar):
         return value
@@ -594,6 +595,16 @@ def on_the_principal_sheet(
             lambda e: sp.S.One,
         ),
     )
+    if stripped is not None and stripped.has(*POLAR):
+        # Other angles as the numbers they stand for, for the derivative to decide:
+        # `INT(LN(x)/(x - 1), x)` comes as `-POLYLOG(2, (x - 1)*EXP_POLAR(pi*#i))`,
+        # which is `-POLYLOG(2, 1 - x)`.
+        stripped = attempt(
+            stripped,
+            lambda v: v.replace(
+                lambda e: isinstance(e, sp.exp_polar), lambda e: sp.exp(e.exp)
+            ),
+        )
     if stripped is None or stripped.has(*POLAR):
         return value
     difference = attempt(

@@ -38,6 +38,7 @@ from pathlib import Path
 import expr_cases
 import pytest
 
+from rederive import library
 from rederive.engine.computing import (
     Context,
     authored_conditionals,
@@ -46,20 +47,37 @@ from rederive.engine.computing import (
     to_sympy,
 )
 from rederive.model.expr import Kind, Node
-from rederive.syntax import DeriveSyntaxError, ParseState, parse_expression
+from rederive.syntax import DeriveSyntaxError, InputMode, ParseState, parse_expression
 
 CORPUS = Path(__file__).parent / "corpus"
 
 #: Names of expressions that settle only on a second Simplify. The list must be exact:
 #: one that starts settling fails just like one that stops, so the list stays accurate.
-#: Currently empty.
-UNSETTLED: tuple[str, ...] = ()
+#:
+#: - The approximated arguments of a function the line does not define (its file comes
+#:   with the demonstration) are exact again when simplified once more.
+#: - A definition calling functions the line does not define is printed with `2^(n+1)`
+#:   as `2*2^n`.
+#: - A quote's held value is an ordinary expression once it is the answer.
+#: - The equations of a solution, written in their order, are reordered and turned
+#:   around when simplified once more, where they hold a limit of a parameter.
+UNSETTLED: tuple[str, ...] = (
+    "APPROX(CALL_PRICE(",
+    "APPROX(STD_DEV(",
+    "EULER_POLY(",
+    "'(2+3)",
+    "IMPOSE_BV2(",
+    "IMPOSE_IC2(",
+)
 
 
 def _library() -> dict[str, list[tuple[str, ParseState]]]:
     """The shipped utility file lines, grouped by their `##` header.
 
-    Nothing in these files sets a mode, so every line is parsed with a fresh state.
+    Every line is parsed with a fresh state, as a line of a file: in Word mode, where an
+    unknown name directly before `(` is a call. The files define their own names, so
+    the pre-defined library is withdrawn: a line of `BESSEL.MTH` calls the file's
+    `BESSEL_J`, which the replay does not define, not the library's.
     """
     groups: dict[str, list[tuple[str, ParseState]]] = {}
     current: list[tuple[str, ParseState]] = []
@@ -67,7 +85,16 @@ def _library() -> dict[str, list[tuple[str, ParseState]]]:
         if line.startswith("##"):
             current = groups.setdefault(line[2:].strip(), [])
         elif line.strip() and not line.startswith("#"):
-            current.append((line, ParseState()))
+            current.append(
+                (
+                    line,
+                    ParseState(
+                        input_mode=InputMode.WORD,
+                        reading_file=True,
+                        withdrawn=library.NAMES,
+                    ),
+                )
+            )
     return groups
 
 
@@ -123,7 +150,7 @@ def _settles(text: str, state: ParseState) -> bool:
     for declaration in parsed.declarations:
         state.declare(declaration)
     node = parsed.node
-    context = Context()
+    context = Context(withdrawn=state.withdrawn)
     once = simplify(node, context, state)
     authored = authored_conditionals(once.node, context)
     printed = from_sympy(to_sympy(once.node, context), context, state, authored).text

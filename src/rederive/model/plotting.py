@@ -44,7 +44,7 @@ NOT_A_PLOT = "{text} is not an expression this can plot"
 INEQUALITIES = frozenset({"<", "<=", ">", ">=", "/=", "≤", "≥", "≠"})
 
 #: Node kinds that combine relations into a region, as in `x > 0 AND y > 0`.
-COMBINATIONS = frozenset({Kind.NOT, Kind.AND, Kind.OR, Kind.XOR, Kind.IMP})
+COMBINATIONS = frozenset({Kind.NOT, Kind.AND, Kind.OR, Kind.XOR, Kind.IMP, Kind.IFF})
 
 #: The kinds a member of a vector can have in a 2D window.
 FLAT = frozenset({PlotKind.CURVE, PlotKind.IMPLICIT, PlotKind.REGION})

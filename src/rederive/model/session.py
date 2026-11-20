@@ -63,8 +63,8 @@ from rederive.display import DisplayOptions, Layout, Region, render
 from rederive.engine import client as engine
 from rederive.engine.replacing import same_expression
 from rederive.model import data, dfw, state, worksheet
-from rederive.model.expr import Kind, Node
-from rederive.model.settings import FIELDS, Settings
+from rederive.model.expr import VARIADIC, Kind, Node, parameter_names, variable_key
+from rederive.model.settings import DEFAULTS, FIELDS, Settings
 from rederive.syntax import (
     PARSING_SETTINGS,
     ClearWhat,
@@ -81,10 +81,12 @@ from rederive.syntax import (
     VariableDeclaration,
     is_name,
     parse_expression,
+    reserved,
     source_lines,
     write_expression,
     write_source,
 )
+from rederive.syntax.names import SETTINGS, YIELDING_FUNCTIONS
 from rederive.syntax.state import NameBinding
 
 #: A route into an entry's selection tree: indices into `Region.children`,
@@ -109,6 +111,9 @@ VALUE = "Value"
 ALL = "All"
 INTERVAL = "Interval"
 
+#: What the first save of a worksheet read with plots or embedded objects says.
+UNSAVED_OBJECTS = "plots and embedded objects are not saved"
+
 #: A reference to a numbered entry, in an expression or an annotation like `Simp(#3)`.
 LABEL = re.compile(r"#(\d+)")
 
@@ -130,7 +135,7 @@ Command = Callable[[Node, "engine.Context", ParseState], Awaitable["engine.Resul
 
 
 class Runner(Protocol):
-    """The five engine calls that can be expensive.
+    """The engine calls that can be expensive.
 
     Everything else the session asks the engine (is a tree a quotient, what is its main
     variable, how is it written) is a cheap tree walk and stays a direct call. These
@@ -142,7 +147,13 @@ class Runner(Protocol):
     which is what makes Esc work in the app; `_Here` computes in-process, for tests and
     direct callers; and an implementation without threads or processes can resolve
     them from an event.
+
+    `progress`, if set, is called with each text a running command's `DISPLAY` or
+    `WRITE` shows, as it shows it, and whether it is a `DISPLAY`'s. A runner that
+    computes on a thread calls it from that thread.
     """
+
+    progress: Callable[[str, bool], None] | None
 
     async def simplify(
         self, node: Node, context: engine.Context, state: ParseState | None = ...
@@ -183,6 +194,14 @@ class Runner(Protocol):
         self, node: Node, context: engine.Context | None = ...
     ) -> str | None: ...
 
+    async def plot_form(
+        self,
+        node: Node,
+        context: engine.Context,
+        state: ParseState | None = ...,
+        running: bool = ...,
+    ) -> engine.PlotForm: ...
+
 
 class _Here:
     """The engine computing in this process, behind the five awaitable calls.
@@ -193,11 +212,13 @@ class _Here:
 
     def __init__(self, computing: Any) -> None:
         self._engine = computing
+        self.progress: Callable[[str, bool], None] | None = None
 
     async def simplify(
         self, node: Node, context: engine.Context, state: ParseState | None = None
     ) -> engine.Result:
-        return self._engine.simplify(node, context, state)
+        with _counted_steps(), engine.reporting(self.progress):
+            return self._engine.simplify(node, context, state)
 
     async def factor(
         self,
@@ -207,7 +228,8 @@ class _Here:
         variables: Sequence[str] = (),
         state: ParseState | None = None,
     ) -> engine.Result:
-        return self._engine.factor(node, context, amount, variables, state)
+        with _counted_steps():
+            return self._engine.factor(node, context, amount, variables, state)
 
     async def expand(
         self,
@@ -217,7 +239,8 @@ class _Here:
         variables: Sequence[str] = (),
         state: ParseState | None = None,
     ) -> engine.Result:
-        return self._engine.expand(node, context, amount, variables, state)
+        with _counted_steps():
+            return self._engine.expand(node, context, amount, variables, state)
 
     async def solve(
         self,
@@ -227,7 +250,8 @@ class _Here:
         bounds: tuple[Node, Node] | None = None,
         state: ParseState | None = None,
     ) -> tuple[engine.Result, ...]:
-        return self._engine.solve(node, context, variables, bounds, state)
+        with _counted_steps():
+            return self._engine.solve(node, context, variables, bounds, state)
 
     async def expression_variables(
         self, node: Node, context: engine.Context | None = None, written: bool = False
@@ -238,6 +262,44 @@ class _Here:
         self, node: Node, context: engine.Context | None = None
     ) -> str | None:
         return self._engine.relation_of(node, context)
+
+    async def plot_form(
+        self,
+        node: Node,
+        context: engine.Context,
+        state: ParseState | None = None,
+        running: bool = True,
+    ) -> engine.PlotForm:
+        # The engine ends the simplification itself at a program step past its time;
+        # one that takes no steps can't be stopped here.
+        return self._engine.plot_form(node, context, state, running)
+
+
+def _is_setting(node: Node) -> bool:
+    """Whether `node` assigns a setting a value, or its default (`Name :=`)."""
+    target = node.children[0]
+    return (
+        len(node.children) <= 2
+        and target.kind is Kind.NAME
+        and str(target.value) in SETTINGS
+    )
+
+
+#: The step limit of a session that computes in its own process (see
+#: `Session.step_limit`). It is far above what any finishing program takes, since
+#: generating and selecting over lists of ten thousand points or running a loop a
+#: hundred thousand times are ordinary: it only ends a program that never would.
+STEP_LIMIT = 10_000_000
+
+
+@contextmanager
+def _counted_steps() -> Iterator[None]:
+    """Report a command that ran out of program steps as an engine failure, which the
+    session and its callers handle like any other."""
+    try:
+        yield
+    except engine.StepLimitExceeded as exceeded:
+        raise engine.EngineStepLimit(str(exceeded)) from None
 
 
 def _computing_here() -> Runner:
@@ -344,13 +406,22 @@ class Session:
     """
 
     def __init__(
-        self, settings: Settings | None = None, runner: Runner | None = None
+        self,
+        settings: Settings | None = None,
+        runner: Runner | None = None,
+        step_limit: int | None = -1,
     ) -> None:
         self.settings = settings if settings is not None else Settings()
         #: Runs the five expensive engine calls. Defaults to in-process computation,
         #: which can't be interrupted; the app passes a proxy to a child process so
         #: computations can be aborted and their resource use capped.
         self.runner: Runner = runner if runner is not None else _computing_here()
+        #: How many program steps a command may take, or None for no limit (see
+        #: `engine.Context.step_limit`). By default a session computing in-process,
+        #: which nothing can interrupt, has `STEP_LIMIT`, and one given a runner none.
+        self.step_limit = (
+            (STEP_LIMIT if runner is None else None) if step_limit == -1 else step_limit
+        )
         self.state = ParseState()
         self.entries: list[Entry] = []
         self.selected: int | None = None
@@ -362,6 +433,10 @@ class Session:
         self._preferred_owner: Entry | None = None
         #: The file this session was last saved to or read from, if any.
         self.file: Path | None = None
+        #: The file the history was last loaded or merged from, if any. A worksheet
+        #: read from a binary file has no `file`, as it is saved elsewhere, but a `LOAD`
+        #: in it still looks beside it.
+        self.source: Path | None = None
         #: What the last Remove took out, for an Unremove to put back.
         self.removed: list[Entry] = []
         #: What the lines so far have defined, for the engine to substitute.
@@ -373,7 +448,23 @@ class Session:
         #: The next free `@n` for soLve's arbitrary values. It only increases: solving
         #: `x = x` three times gives `@1`, `@2` and `@3`.
         self.arbitrary = 1
+        #: The state of `RANDOM`'s generator, which each draw steps; a session starts
+        #: at 0, so it draws reproducibly until seeded.
+        self.random = 0
         self._next_number = 1
+        #: Whether a file is being read, which is lexed in Word mode whatever it assigns
+        #: to `InputMode`.
+        self._reading_file = False
+        #: The files being read, innermost last, as one loads another: a `LOAD` looks
+        #: beside the innermost first, and loads none of them again.
+        self._loading: list[Path] = []
+        #: Whether the worksheet read last had plots or embedded objects, which a save
+        #: says once that it leaves out.
+        self._unsaved_objects = False
+        #: What the last command has to say on the message line beyond its answer: the
+        #: last text a program's `WRITE` wrote, or what a `LOAD` could not find or
+        #: take. The app takes it with `take_notice`.
+        self.notice: str | None = None
         self.settings.watch(self._settings_changed)
         self._settings_changed(PARSING_SETTINGS)
 
@@ -387,7 +478,7 @@ class Session:
         Entries themselves are shared, which is safe because they are never mutated
         (annotating replaces the entry in the list).
         """
-        other = Session(self.settings, self.runner)
+        other = Session(self.settings, self.runner, self.step_limit)
         other.state = replace(
             self.state,
             functions=dict(self.state.functions),
@@ -399,12 +490,14 @@ class Session:
         other.selected = self.selected
         other.route = self.route
         other.file = self.file
+        other.source = self.source
         other.removed = list(self.removed)
         other.assignments = dict(self.assignments)
         other.functions = dict(self.functions)
         other.domains = dict(self.domains)
         other.order = self.order
         other.arbitrary = self.arbitrary
+        other.random = self.random
         other._next_number = self._next_number
         return other
 
@@ -444,10 +537,50 @@ class Session:
         `=` declares and defines exactly what it would without it.
         """
         result = self._redrawn(parse_expression(text, self.state))
-        for declaration in result.declarations:
+        performed = _on_input(result.node, result.declarations)
+        self._refuse_invalid_settings(result.node)
+        for declaration in performed:
             self.declare(declaration)
         self._define(result.node, result.declarations)
+        report = self._perform_loads(result.node)
+        if report:
+            self.notice = str(report)
         return result
+
+    def _refuse_invalid_settings(self, node: Node) -> None:
+        """Refuse a typed line that assigns a setting a value it doesn't take.
+
+        A mistyped value must not pass silently: `Angle := 30` is refused with
+        `Invalid value for Angle`. Only a value written out is checked here, a word, a
+        number, a vector or a name without a value; the value of an expression is checked
+        when the line is simplified.
+        """
+        for found in _defining(node):
+            if found.kind is not Kind.ASSIGN or not _is_setting(found):
+                continue
+            if len(found.children) == 1 or found.value != ":=":
+                continue
+            setting = str(found.children[0].value)
+            value = found.children[1]
+            if value.kind not in (Kind.NAME, Kind.NUMBER, Kind.VECTOR):
+                continue
+            if value.kind is Kind.NAME and str(value.value) in self.assignments:
+                # A variable holding a value, as `Trigonometry := trig_` restores one.
+                continue
+            if setting == state.ORDER:
+                written = write_expression(value)
+                valid = (
+                    value.kind is Kind.VECTOR
+                    and self._assigned_order(written) is not None
+                )
+            elif setting in FIELDS:
+                valid = Settings().assign(setting, str(value.value))
+            else:
+                continue
+            if not valid:
+                raise DeriveSyntaxError(
+                    value.start, "value", message=f"Invalid value for {setting}"
+                )
 
     def shows_value(self, text: str) -> bool:
         """Whether `text` is an author line typed with a trailing `=`.
@@ -478,8 +611,9 @@ class Session:
         if result.node.kind is not Kind.SHOWVALUE:
             return self._append(result.source.text, result.node)
         shown = result.node.children[0]
-        answer = await self.runner.simplify(shown, self.context, self.state)
-        self._perform(answer)
+        answer = await self._ran(
+            lambda context: self.runner.simplify(shown, context, self.state)
+        )
         line, node = self._equated(shown, answer.node)
         exact = None if answer.value is None else self._equated(shown, answer.value)[1]
         return self._append(line, node, AUTHORED, exact)
@@ -526,6 +660,34 @@ class Session:
             self.settings.assignment(setting), self.settings.assignment_node(setting)
         )
 
+    def restore_defaults(self) -> list[Entry]:
+        """Put every state variable back to its factory default, as `Options Defaults`
+        does, appending the `Name := default` each change records.
+
+        These are the settings Derive saves with a worksheet, the variable order list
+        among them, and the ones Rederive recognizes without acting on; not the
+        colors, nor the options of the screens. An entry is appended only for a setting
+        that was not at its default.
+        """
+        entries = []
+        for setting in _STATE_VARIABLES:
+            if setting == state.ORDER:
+                if self.order != engine.ORDER_LIST:
+                    self.order = engine.ORDER_LIST
+                    space = "" if self.settings["DisplayFormat"] == "Compressed" else " "
+                    listed = f",{space}".join(engine.ORDER_LIST)
+                    text = f"{setting}{space}:={space}[{listed}]"
+                    node = parse_expression(text, self.state).node
+                    entries.append(self._append(text, node))
+                continue
+            default = DEFAULTS[setting]
+            if self.settings[setting] == default:
+                # Already there, perhaps because restoring the precision brought it.
+                continue
+            self.settings.apply({setting: default})
+            entries.append(self.record(setting))
+        return entries
+
     def _append(
         self,
         text: str,
@@ -566,9 +728,10 @@ class Session:
         variables: `Notation := Mixed` defines nothing, and `declarations` identifies
         them.
 
-        Assignments inside a function body are not definitions. `DSOLVE1(p, q, x, y, x0,
-        y0, a_) := IF("inapplicable" = a_ := ..., ...)` assigns `a_` when called, not when
-        defined, so the walk stops at function bodies.
+        Entering a line performs only what the line is, or what an element of a vector
+        it is says, as in Derive: `[a := 1, b := 5]` assigns both, but programs never
+        start on input, so neither `PROG(x := 3)` nor `2*(c := 3)` assigns anything until
+        it is simplified (see `_defining`).
         """
         settings = {
             declaration.setting
@@ -587,35 +750,55 @@ class Session:
                         self.domains[declared[0]] = declared[1]
 
     def _perform(self, result: engine.Result) -> None:
-        """Perform what a command performed while computing: the assignments and
-        definitions in the bodies of the functions it called.
+        """Perform what a command did while computing: the assignments, definitions and
+        declarations its programs made, each with its final value.
 
-        `A1(u, x) := (A2(x) := u)` simplifies `A1(y^2, y)` to `y^2` and defines `A2(y)
-        := y^2`, so `A2(3)` is 9 afterwards, as in Derive.
+        `A1(u, x) := (A2(x) := u)` simplifies `A1(y^2, y)` to `A2(y) := y^2` and defines
+        `A2`, so `A2(3)` is 9 afterwards, as in Derive.
         """
         for node in result.performed:
             if node.kind is Kind.FUNDEF:
                 self._defined(node)
-                parameters = tuple(str(child.value) for child in node.children[0].children)
+                head = node.children[0]
                 has_body = len(node.children) > 1
                 self.state.declare(
-                    FunctionDeclaration(str(node.value), parameters, has_body)
+                    FunctionDeclaration(
+                        str(node.value),
+                        parameter_names(head),
+                        has_body,
+                        head.value == VARIADIC,
+                    )
                 )
+            elif node.kind is Kind.DOMAIN:
+                declared = engine.domain_of_node(node)
+                if declared is not None:
+                    self.domains[declared[0]] = declared[1]
+                    domain = str(node.value)
+                    self.state.declare(DomainDeclaration(declared[0], domain))
+            elif _is_setting(node):
+                cleared = len(node.children) == 1
+                value = "" if cleared else write_expression(node.children[1])
+                self.declare(SettingDeclaration(str(node.children[0].value), value))
             else:
                 self._assigned(node, set())
-                name = str(node.children[0].value)
-                self.state.declare(VariableDeclaration(name, len(node.children) > 1))
+                target = node.children[0]
+                if target.kind is Kind.NAME:
+                    has_value = len(node.children) > 1
+                    self.state.declare(VariableDeclaration(str(target.value), has_value))
 
     def _assigned(self, node: Node, settings: set[str]) -> None:
         """`x := 5` gives x a value; `x :=` with nothing after it takes it away.
 
         Either way an earlier domain declaration is overridden, so after `z :epsilon
-        Complex` and `z :=`, `z` is an undeclared, real variable again.
+        Complex` and `z :=`, `z` is an undeclared, real variable again. A string is a
+        variable too, `"a1" := 25`, apart from the name `a1`. Taking the value of a
+        library variable away takes the library's too.
         """
         target = node.children[0]
-        if target.kind is not Kind.NAME:
+        if node.value != ":=" or target.kind not in (Kind.NAME, Kind.STRING):
+            # An update or an element assignment changes a value when a program runs.
             return
-        name = str(target.value)
+        name = variable_key(target)
         if name in settings:
             return
         self.domains.pop(name, None)
@@ -623,30 +806,52 @@ class Session:
             self.assignments[name] = node.children[1]
         else:
             self.assignments.pop(name, None)
+            self.state.withdraw([name])
 
     def _defined(self, node: Node) -> None:
-        """`F(x) := x^2` gives F a body; `F(x) :=` leaves F an arbitrary function."""
-        name = str(node.value)
-        parameters = tuple(str(child.value) for child in node.children[0].children)
-        if len(node.children) > 1:
-            self.functions[name] = (parameters, node.children[1])
-        else:
-            self.functions.pop(name, None)
+        """`F(x) := x^2` gives F a body; `F(x) :=` leaves F a function without one.
 
-    def declare(self, declaration: Declaration) -> None:
+        A call of a function without a body stands, with its omitted arguments filled in
+        from the parameters. An empty definition of a built-in that yields to
+        definitions gives the name back to the built-in instead.
+        """
+        name = str(node.value)
+        definition = engine.Definition.of(node)
+        if definition.body is None and name in YIELDING_FUNCTIONS:
+            self.functions.pop(name, None)
+        else:
+            self.functions[name] = definition
+
+    def declare(self, declaration: Declaration) -> bool:
         """Apply one declaration: a setting to the settings, the rest to the state.
 
         A setting goes to the settings, which mirror it back to the parse state, so an
         invalid value can't leave the two disagreeing about, say, the input base. The
-        mirroring is repeated here because the settings report only changes: a file read
-        in Word mode that assigns `InputMode := Character` must switch the parse state
-        even though the setting already says Character.
+        mirroring is repeated here because the settings report only changes.
+
+        Returns False for a setting that changed nothing because Rederive doesn't have
+        it or the value is not one of its choices, which a file's load report counts.
+        `DisplaySteps` and `SimplifyRelations` are recognized but have no effect, as
+        Rederive shows no steps and Simplify never solves a relation.
         """
         if isinstance(declaration, SettingDeclaration):
-            self.settings.assign(declaration.setting, declaration.value)
+            taken = self._set(declaration.setting, declaration.value)
             self._settings_changed(frozenset({declaration.setting}))
-            return
+            return taken
         self.state.declare(declaration)
+        return True
+
+    def _set(self, setting: str, value: str) -> bool:
+        """Assign a setting, and say whether it took."""
+        if setting == state.ORDER:
+            if not value.strip():
+                self.order = engine.ORDER_LIST
+                return True
+            order = self._assigned_order(value)
+            if order is not None:
+                self.order = order
+            return order is not None
+        return self.settings.assign(setting, value)
 
     @property
     def options(self) -> DisplayOptions:
@@ -659,8 +864,14 @@ class Session:
         )
 
     def _settings_changed(self, changed: frozenset[str]) -> None:
-        """Mirror the three settings that affect lexing into the parse state."""
+        """Mirror the three settings that affect lexing into the parse state.
+
+        While a file is read, it is lexed in Word mode whatever its lines assign to
+        `InputMode`; see `reading_file`.
+        """
         for setting in changed & PARSING_SETTINGS:
+            if setting == "InputMode" and self._reading_file:
+                continue
             value = str(self.settings[setting])
             self.state.declare(SettingDeclaration(setting, value))
 
@@ -676,10 +887,13 @@ class Session:
             self.settings,
             order=self.order,
             arbitrary_index=self.arbitrary,
+            random_state=self.random,
             domains=self.domains,
             assignments=self.assignments,
             functions=self.functions,
             labels={entry.number: entry.value for entry in self.entries},
+            step_limit=self.step_limit,
+            withdrawn=self.state.withdrawn,
         )
 
     async def simplify(self, request: str) -> Entry:
@@ -689,16 +903,17 @@ class Session:
     async def approx(self, request: str) -> Entry:
         """Append the approximated form of the expression `request` names.
 
-        This simplifies `APPROX` applied to it, at `PrecisionDigits` precision; otherwise
-        it behaves exactly like Simplify.
+        This simplifies it in Approximate precision, at `PrecisionDigits` digits, as
+        `APPROX` applied to it would; otherwise it behaves exactly like Simplify. Unlike
+        the argument of an `APPROX` call, the expression is the whole one, so an
+        equation keeps its form: `2 = 2` stays `2 = 2`.
         """
 
         def run(
             node: Node, context: engine.Context, state: ParseState
         ) -> Awaitable[engine.Result]:
-            name = Node(Kind.NAME, node.start, node.start, (), "APPROX")
-            call = Node(Kind.CALL, node.start, node.end, (name, node))
-            return self.runner.simplify(call, context, state)
+            approximate = context.with_precision(engine.Precision.APPROXIMATE)
+            return self.runner.simplify(node, approximate, state)
 
         return await self._command(request, "Approx", run)
 
@@ -984,12 +1199,50 @@ class Session:
         """
         return await self.runner.relation_of(self.target(request), self.context)
 
+    async def plot_form(self, request: str) -> engine.PlotForm:
+        """What plotting what `request` names draws, and how (see `PlotForm`).
+
+        The expression is simplified first, as Derive plots it, and what its programs
+        assign or define is done for the session, as by Simplify; nothing is appended.
+        A simplification that takes too long (see `PATIENCE`) is given up, and the
+        expression is plotted as evaluated where nothing runs, if that is a closed
+        form, or else point by point.
+
+        Raises `DeriveSyntaxError` when `request` does not parse.
+        """
+        target = self.target(request)
+        try:
+            return await self._ran(
+                lambda context: self.runner.plot_form(target, context, self.state)
+            )
+        except engine.EngineTimedOut:
+            pass
+        try:
+            return await self.runner.plot_form(target, self.context, self.state, False)
+        except engine.EngineTimedOut:
+            pass
+        return engine.PlotForm(
+            target,
+            write_expression(target, spaced=True),
+            variables=await self.runner.expression_variables(target, self.context),
+            relation=await self.runner.relation_of(target, self.context),
+            pointwise=True,
+        )
+
     def decomposes(self, request: str) -> bool:
         """Whether what `request` names is a number, which Factor just decomposes.
 
         Raises `DeriveSyntaxError` when `request` does not parse.
         """
         return engine.decomposes(self.target(request))
+
+    def written_as_matrix(self, request: str) -> bool:
+        """Whether what `request` names is written as a matrix, which Factor can also
+        factor into a product of matrices.
+
+        Raises `DeriveSyntaxError` when `request` does not parse.
+        """
+        return engine.written_as_matrix(self.target(request))
 
     def written_as_ratio(self, request: str) -> bool:
         """Whether what `request` names is a quotient, which Expand asks about.
@@ -1065,8 +1318,16 @@ class Session:
         return self._append(result.text, result.node, f"Sub({source})")
 
     async def _answered(self, node: Node, run: Command, annotation: str) -> Entry:
-        result = await run(node, self.context, self.state)
-        self._perform(result)
+        result = await self._ran(lambda context: run(node, context, self.state))
+        answer = result.exact
+        if (
+            node.kind is Kind.FUNDEF
+            and answer.kind is Kind.FUNDEF
+            and answer.value == node.value
+        ):
+            # A definition simplified is made with the simplified body, as an
+            # assignment simplified stores the simplified value.
+            self._defined(answer)
         return self._append(result.text, result.node, annotation, result.value)
 
     async def _answered_part(self, entry: Entry, run: Command, prefix: str) -> Entry:
@@ -1077,10 +1338,73 @@ class Session:
         """
         part = self.selected_node
         assert part is not None
-        result = await run(part, self.context, self.state)
-        self._perform(result)
+        result = await self._ran(lambda context: run(part, context, self.state))
         text, node = self._spliced(entry, part, result.text)
         return self._append(text, node, f"{prefix}(#{entry.number}')")
+
+    async def _ran(
+        self, run: Callable[[engine.Context], Awaitable[engine.Result]]
+    ) -> engine.Result:
+        """Run one engine command in the session's context, and perform what its
+        programs did.
+
+        A `LOAD` the command evaluates ends it, naming the file it needs (see
+        `Result.needs`): the file is looked for and loaded as `LOAD` loads (see
+        `_loaded`), and the command runs again knowing the outcome, so that the
+        definitions loaded are in force for the rest of the program. Each text a
+        `DISPLAY` showed becomes a string entry, before the answer; a command that fails
+        or is aborted keeps those it showed before, as the output the user watched. The
+        notice is what a `LOAD` could not find or take, else the last text a `WRITE`
+        wrote.
+        """
+        self.notice = None
+        loads: dict[str, bool] = {}
+        shown: list[str] = []
+        listening = getattr(self.runner, "progress", None)
+
+        def heard(text: str, displayed: bool) -> None:
+            if displayed:
+                shown.append(text)
+            if listening is not None:
+                listening(text, displayed)
+
+        self._listen(heard)
+        try:
+            while True:
+                shown.clear()
+                result = await run(replace(self.context, loads=dict(loads)))
+                if result.needs is None:
+                    break
+                found, report = self._loaded(result.needs)
+                loads[result.needs] = found
+                if report:
+                    self.notice = str(report)
+        except engine.EngineError:
+            for text in shown:
+                self._kept(text, AUTHORED)
+            raise
+        finally:
+            self._listen(listening)
+        self._perform(result)
+        if result.random is not None:
+            self.random = result.random
+        for text in result.displayed:
+            self._kept(text, AUTHORED)
+        if result.written is not None and self.notice is None:
+            self.notice = result.written
+        return result
+
+    def _listen(self, listener: Callable[[str, bool], None] | None) -> None:
+        """Have the runner pass a running command's texts to `listener`, where it
+        can."""
+        if hasattr(self.runner, "progress"):
+            self.runner.progress = listener
+
+    def take_notice(self) -> str | None:
+        """What the last command has to say beyond its answer, if anything (see
+        `notice`); it is said once."""
+        notice, self.notice = self.notice, None
+        return notice
 
     def _spliced(self, entry: Entry, part: Node, fragment: str) -> tuple[str, Node]:
         """`entry`'s text with `fragment` written where `part` stands, and read back.
@@ -1109,7 +1433,8 @@ class Session:
     def declare_domain(self, name: str, kind: str, bounds: Bounds | None = None) -> Entry:
         """Author `x :ε Real (0, ∞)`: the domain of one variable.
 
-        `kind` is Integer, Real, Complex or Nonscalar, and `bounds` the interval, allowed
+        `kind` is Integer, Real, Complex, Vector, Set or Logical (or the older
+        Nonscalar), and `bounds` the interval, allowed
         only for the first two. The name `default` sets the fallback domain for
         undeclared variables.
         """
@@ -1203,15 +1528,14 @@ class Session:
         a lexical check, not a parse), and not a pre-defined function or constant, which
         can't be redeclared (manual sections 4.10 and 4.12).
 
-        Names the session itself defined may be redeclared, which is how `Declare
-        Variable` turns a user function back into a variable and vice versa.
+        Names are case-distinct, so another spelling of a built-in's name (`perm`
+        beside `PERM`) may be declared. Names the session itself defined may be
+        redeclared, which is how `Declare Variable` turns a user function back into a
+        variable and vice versa.
         """
         if not is_name(name):
             return False
-        known = self.state.resolve(name)
-        if known is None or self._is_the_users(known.canonical):
-            return True
-        return not (known.is_function or known.is_constant or known.is_keyword_operator)
+        return not reserved(name, function=True)
 
     def _is_the_users(self, name: str) -> bool:
         """Whether `name` is one the session's own lines declared."""
@@ -1446,6 +1770,14 @@ class Session:
             self.entries[index], annotation=annotation.strip()
         )
 
+    def _assigned_order(self, value: str) -> tuple[str, ...] | None:
+        """The order list `VariableOrder := value` assigns, or None if `value` is not
+        one. Quoted names are names, `"dx"`, and a repeated name counts once, at its
+        first place."""
+        written = value.strip().removeprefix("[").removesuffix("]")
+        words = written.replace(worksheet.QUOTE, " ").replace(",", " ").split()
+        return self.order_list(" ".join(dict.fromkeys(words)))
+
     def order_list(self, text: str) -> tuple[str, ...] | None:
         """The variable order list `text` spells, or None when it is not one.
 
@@ -1482,6 +1814,9 @@ class Session:
         records = self._records(first, last)
         platform.current().storage().write(path, self._file_text(records))
         self.file = path
+        if self._unsaved_objects:
+            self._unsaved_objects = False
+            self.notice = UNSAVED_OBJECTS
         return len(records)
 
     def written(self, first: int | None = None, last: int | None = None) -> str:
@@ -1500,12 +1835,32 @@ class Session:
         ]
 
     def _file_text(self, records: Iterable[worksheet.Record]) -> str:
-        """Records as a math file, laid out the way the save settings ask for."""
+        """Records as a math file, laid out the way the save settings ask for.
+
+        With the State option, the file starts with the settings, one `Name:=Value`
+        record each, in the order Derive 6 writes them, so that reading the file back
+        restores them before reading the entries, as in Derive.
+        """
+        if self.settings["SaveState"] == "Save":
+            records = [*self._setting_records(), *records]
         return worksheet.write(
             records,
             length=int(self.settings["SaveLength"]),
             annotations=self.settings["SaveAnnotation"] == "Save",
         )
+
+    def _setting_records(self) -> list[worksheet.Record]:
+        """The settings as the records of a file, a radix by its name where it has
+        one."""
+        records = []
+        for setting in _SAVED_SETTINGS:
+            if setting == state.ORDER:
+                value = "[" + ",".join(self.order) + "]"
+            else:
+                held = self.settings[setting]
+                value = _RADIX_NAMES.get(held, str(held)) if setting in _RADICES else held
+            records.append(worksheet.Record(f"{setting}:={value}"))
+        return records
 
     def _block(self, first: int | None, last: int | None) -> Iterator[Entry]:
         """The entries a save writes: the label numbers `first` to `last`."""
@@ -1517,9 +1872,9 @@ class Session:
         )
 
     @staticmethod
-    def _noted(entry: Entry) -> str:
+    def _noted(entry: Entry) -> str | None:
         """What to write above `entry`; a line the user wrote needs nothing."""
-        return "" if entry.annotation == AUTHORED else entry.annotation
+        return None if entry.annotation == AUTHORED else entry.annotation
 
     def save_source(
         self,
@@ -1582,14 +1937,14 @@ class Session:
         self.order = names
         return refused
 
-    def load(self, path: Path) -> int:
+    def load(self, path: Path) -> LoadReport:
         """Replace the history with the expressions in `path`.
 
         Numbering restarts at one, as in the original. Existing definitions remain
         (clearing them is a separate command), and the file's definitions are applied as
         it is read.
 
-        Returns how many of the file's expressions failed to parse and were skipped.
+        Returns what could not be taken as it was, for the message line.
 
         The file is read before the history is cleared, so a bad path loses nothing.
 
@@ -1602,7 +1957,7 @@ class Session:
         self._next_number = 1
         return self._read(path, contents)
 
-    def merge(self, path: Path) -> int:
+    def merge(self, path: Path) -> LoadReport:
         """Append the expressions in `path` to the history.
 
         Numbering continues, and label references are shifted to match: a file whose
@@ -1612,21 +1967,22 @@ class Session:
         """
         return self._read(path, worksheet.read(path))
 
-    def load_utility(self, path: Path) -> int:
+    def load_utility(self, path: Path) -> LoadReport:
         """Take the definitions in `path` without showing them.
 
         A utility file is a library whose definitions should become available, not
         appear on screen. Nothing is appended, numbering is unchanged, and `file` keeps
-        naming the current worksheet.
+        naming the current worksheet. A line that doesn't parse is reported by the name
+        it would have defined. Its settings apply, and a `LOAD` line in it loads its file
+        in turn; other expressions, such as a string serving as a caption, are left out.
 
         The file is read in Word input mode; see `reading_file`.
 
         Of a Derive for Windows worksheet, the definitions taken are those its session
         had when it was saved, and its settings are left alone.
-
-        Returns how many of the file's expressions did not parse.
         """
         contents = worksheet.read(path)
+        report = LoadReport()
         if isinstance(contents, dfw.Worksheet):
             lines = [
                 line
@@ -1635,40 +1991,108 @@ class Session:
             ]
             with self.reading_file():
                 restored = self._restore(lines)
-            return restored.undecodable + restored.refused
+            report.unreadable = restored.not_restored
+            report.refused = restored.refused
+            report.ignored = restored.ignored
+            return report
         source = Source.from_file(contents, str(path))
-        skipped = 0
-        with self.reading_file():
+        with self.reading_file(path):
             for start, stop in source_lines(source):
+                line = source.text[start:stop].strip()
                 try:
-                    line = source.text[start:stop].strip()
                     result = parse_expression(line, self.state)
                 except UNREADABLE:
-                    skipped += 1
+                    refused = self._refused_in(line)
+                    if refused is not None:
+                        report.refused += refused
+                    else:
+                        report.unreadable.append(_defined_name(line))
                     continue
-                for declaration in result.declarations:
-                    self.declare(declaration)
+                declarations = _on_input(result.node, result.declarations)
+                report.ignored += self._declared(declarations)
                 self._define(result.node, result.declarations)
-        return skipped
+                report.extend(self._perform_loads(result.node))
+        return report
+
+    def _perform_loads(self, node: Node) -> LoadReport:
+        """Load the files an entered line names, if it is a `LOAD` of a string, or a
+        vector of nothing else, and say what could not be found or taken.
+
+        A `LOAD` anywhere else, or of anything but a string, loads when the line is
+        simplified.
+        """
+        if _is_load(node):
+            calls = [node]
+        elif node.kind is Kind.VECTOR and node.children and all(
+            _is_load(child) for child in node.children
+        ):
+            calls = list(node.children)
+        else:
+            return LoadReport()
+        report = LoadReport()
+        for call in calls:
+            report.extend(self._loaded(str(call.children[1].value))[1])
+        return report
+
+    def _loaded(self, written: str) -> tuple[bool, LoadReport]:
+        """Do what `LOAD(written)` does: load the file the string names, as a utility
+        file, and say whether one was found, and what of it could not be taken.
+
+        Where the file is looked for is up to `worksheet.located`: beside the file
+        being read, if any, and the current worksheet's, among other places. A file
+        already being read, as by a file that loads itself, is not read again; that is
+        no failure. Nothing is ever fetched from elsewhere.
+        """
+        near = [self._loading[-1].parent] if self._loading else []
+        for known in (self.file, self.source):
+            if known is not None:
+                near.append(known.parent)
+        path = worksheet.located(written, near)
+        report = LoadReport()
+        if path is None:
+            report.missing.append(worksheet.file_name(written))
+            return False, report
+        if any(worksheet.same_file(path, other) for other in self._loading):
+            return True, report
+        try:
+            report.extend(self.load_utility(path))
+        except OSError:
+            report.missing.append(worksheet.file_name(written))
+            return False, report
+        return True, report
 
     @contextmanager
-    def reading_file(self) -> Iterator[None]:
+    def reading_file(self, path: Path | None = None) -> Iterator[None]:
         """Read what happens inside in Word input mode, as the original reads files.
 
-        Every file the original reads (a utility file, a worksheet, a demo's steps) is
-        read in Word mode whatever the session's mode: SOLVE.MTH uses `xk` as one
-        variable, not `x*k`. Character mode applies only to the Author line. Afterwards
-        the mode is restored from the settings, so a file that assigns `InputMode`
-        changes it for the rest of the file and keeps it changed, like any setting
-        assignment.
+        `path` is the file read, if any, beside which a `LOAD` in it looks first.
+
+        Every file (a utility file, a worksheet, a demo's steps) is read in Word mode
+        whatever the session's mode: SOLVE.MTH uses `xk` as one variable, not `x*k`.
+        Derive writes every product with `*` and every name in full, so Word mode reads
+        whatever it wrote, and it never splits an unknown name into letters. A file that
+        assigns `InputMode` sets the session's mode, which governs the Author line
+        afterwards, but the rest of the file is still read in Word mode. Character mode
+        applies only to the Author line. An unknown name directly before `(` is a call
+        in a file, whatever the number of arguments; see `ParseState.reading_file`.
         """
+        reading = self._reading_file
+        self._reading_file = True
+        self.state.reading_file = True
         self.state.declare(SettingDeclaration("InputMode", str(InputMode.WORD)))
+        if path is not None:
+            self._loading.append(path)
         try:
             yield
         finally:
-            self.state.declare(
-                SettingDeclaration("InputMode", str(self.settings["InputMode"]))
-            )
+            if path is not None:
+                self._loading.pop()
+            self._reading_file = reading
+            self.state.reading_file = reading
+            if not reading:
+                self.state.declare(
+                    SettingDeclaration("InputMode", str(self.settings["InputMode"]))
+                )
 
     def load_data(self, path: Path) -> int:
         """Append the matrices in `path`, and say how many blocks would not read.
@@ -1677,60 +2101,74 @@ class Session:
         containing a non-number is skipped and counted.
         """
         skipped = 0
-        for block in data.blocks(worksheet.text_of(path)):
+        for block, annotation in data.blocks(worksheet.text_of(path)):
             try:
-                self.author(data.matrix(block))
+                result = self._authored(data.matrix(block))
             except (ValueError, DeriveSyntaxError):
                 skipped += 1
+                continue
+            self._append(result.source.text, result.node, annotation or AUTHORED)
         self.file = path
         return skipped
 
-    def _read(self, path: Path, contents: str | dfw.Worksheet) -> int:
-        """Append what `path` holds, and say how many lines would not parse.
+    def _read(self, path: Path, contents: str | dfw.Worksheet) -> LoadReport:
+        """Append what `path` holds, and report what could not be taken as it was.
 
-        As in the original, a line that doesn't parse is skipped and the rest is read, so
-        one bad line doesn't lose the whole file. The file is read in Word input mode;
-        see `reading_file`.
+        As in Derive, a line that doesn't parse is kept as a string, so that it can be
+        corrected and entered again, and the rest of the file is read. It keeps its
+        number, so the labels and annotations that refer to the lines after it still
+        mean what they meant. The file is read in Word input mode; see `reading_file`.
         """
+        self.source = path
         if isinstance(contents, dfw.Worksheet):
-            skipped = self._read_worksheet(contents)
-            # The worksheet is saved as a math file, never over the binary original.
-            self.file = path.with_suffix(worksheet.SUFFIX)
-            return skipped
+            report = self._read_worksheet(contents)
+            # The worksheet is saved as a math file, never over the binary original: one
+            # named as a math file leaves the name to be given at the next save.
+            binary_math = path.suffix.lower() == worksheet.SUFFIX
+            self.file = None if binary_math else path.with_suffix(worksheet.SUFFIX)
+            return report
         source = Source.from_file(contents, str(path))
-        annotations = worksheet.annotations_of(contents)
         offset = self._next_number - 1
         rename = (lambda number: number + offset) if offset else None
-        skipped = 0
-        with self.reading_file():
+        report = LoadReport()
+        with self.reading_file(path):
             for start, stop in source_lines(source):
-                annotation = annotations.get(source.locate(start)[0], AUTHORED)
+                annotation = _annotation(source.annotations.get(start, AUTHORED))
+                line = source.text[start:stop].strip()
                 try:
-                    self._entered(source.text[start:stop].strip(), annotation, rename)
+                    result = self._entered(line, annotation, rename, loads=True)
                 except UNREADABLE:
-                    skipped += 1
+                    kept = self._kept(line, annotation, rename)
+                    refused = self._refused_in(line)
+                    if refused is not None:
+                        report.refused += refused
+                    else:
+                        report.strings.append(kept.number)
+                    continue
+                report.ignored += result.ignored
+                report.extend(result.loaded)
         self.file = path
-        return skipped
+        return report
 
-    def _read_worksheet(self, sheet: dfw.Worksheet) -> int:
+    def _read_worksheet(self, sheet: dfw.Worksheet) -> LoadReport:
         """Append a Derive for Windows worksheet, and restore the state it saved.
 
-        Its expressions are read like a math file's, and each text object becomes a
-        string per paragraph, as a math file writes prose. Label references follow the
-        expressions to their new numbers, which differ once the text takes numbers too.
+        The state block is read first (`_restore`), so that the expressions parse knowing
+        the names and settings in effect when they were written. Its expressions are then
+        read like a math file's, and each text object becomes a string per paragraph, as
+        a math file writes prose. Label references follow the expressions to their new
+        numbers, which differ once the text takes numbers too.
 
         The state block is the session as it was saved, after everything shown was
         entered, so it has the last word, as when the original opens a worksheet: it is
-        applied after the expressions, overriding what they define. A name they define
-        that the saved session no longer had is forgotten, unless a line of the state
-        block could not be read, as it might have defined that name. The state block is
-        also applied before the expressions, so that they parse knowing the names and
-        settings in effect when they were written.
+        applied again after the expressions, overriding what they define. A name they
+        define that the saved session no longer had is forgotten, unless a line of the
+        state block could not be read, as it might have defined that name.
 
-        Returns how many expressions would not parse; the state block is not counted,
-        since none of it is shown.
+        The report counts the lines of the state block not restored and the settings it
+        assigns that changed nothing; none of it is shown.
         """
-        skipped = 0
+        report = LoadReport()
         renamed: dict[int, int] = {}
         shown: set[str] = set()
         with self.reading_file():
@@ -1738,71 +2176,165 @@ class Session:
             for found in sheet.objects:
                 if isinstance(found, dfw.Text):
                     for paragraph in found.paragraphs:
-                        quoted = paragraph.replace(worksheet.QUOTE, "'")
-                        try:
-                            self._entered(f"{worksheet.QUOTE}{quoted}{worksheet.QUOTE}")
-                        except UNREADABLE:
-                            skipped += 1
+                        self._kept(paragraph, AUTHORED)
                     continue
                 annotation = AUTHORED if found.typed else found.annotation
                 renamed[found.number] = self._next_number
                 try:
                     result = self._entered(found.text, annotation, renamed.get)
                 except UNREADABLE:
-                    del renamed[found.number]
-                    skipped += 1
+                    kept = self._kept(found.text, annotation, renamed.get)
+                    refused = self._refused_in(found.text)
+                    if refused is not None:
+                        report.refused += refused
+                    else:
+                        report.strings.append(kept.number)
                     continue
                 shown |= _declared_names(result.declarations)
             self._reapply(restored)
-        if not restored.undecodable and not restored.refused:
+        if not restored.not_restored:
             for name in shown - restored.names:
                 self._forget(name)
-        return skipped
+        report.not_restored = restored.not_restored
+        report.refused += restored.refused
+        report.ignored = restored.ignored
+        report.plots = sheet.plots
+        report.embedded = sheet.embedded
+        self._unsaved_objects = bool(sheet.plots or sheet.embedded)
+        return report
 
     def _restore(self, lines: Iterable[str | None]) -> _Restored:
         """Apply the lines of a worksheet's state block, and say how that went.
 
-        A line is skipped if it couldn't be decoded or doesn't parse, and so is a
-        setting that Rederive doesn't have. The variable order goes to `order`.
+        The setting lines are applied first, though they come last, so that `CaseMode`
+        and `InputBase` govern how the other lines read, as they did when the worksheet
+        was saved. Then every name the other lines define is declared, so that a line
+        may use a function defined further down: the lines are sorted by name, so the
+        order of the definitions is lost. Then the lines are applied in order, and those
+        that failed are tried again while a pass makes progress. A name whose line is
+        still refused at the end is declared no longer.
+
+        A line that couldn't be decoded is not restored, and is reported without a name.
+        The position of a plot's cross, `hCross := ...` and the like, is plot state, not
+        a variable: it is passed over. The lines read as Derive displayed them, with a
+        product of a function's name and an operand, `k x`, a product whatever `k` is
+        (see `ParseState.restoring`).
         """
         restored = _Restored()
+        definitions: list[str] = []
         for line in lines:
             if line is None:
-                restored.undecodable += 1
+                restored.not_restored.append(None)
+            elif _PLOT_STATE.match(line):
                 continue
-            setting = dfw.setting_of(line)
-            if setting is not None and setting[0] == state.ORDER:
-                self._apply(setting[1])
-                restored.applied.append(setting[1])
-                continue
-            if setting is not None and setting[0] not in FIELDS:
-                restored.ignored += 1
-                continue
-            try:
-                parsed = parse_expression(line, self.state)
-                self._apply(parsed)
-            except UNREADABLE:
-                restored.refused += 1
-                continue
-            restored.applied.append(parsed)
-            restored.names |= _declared_names(parsed.declarations)
+            elif dfw.setting_of(line) is not None:
+                if not self._restored(line, restored):
+                    restored.ignored += 1
+            else:
+                definitions.append(line)
+        bindings = self._predeclared(definitions)
+        pending = definitions
+        restoring, self.state.restoring = self.state.restoring, True
+        try:
+            while True:
+                failed = [line for line in pending if not self._restored(line, restored)]
+                if not failed or len(failed) == len(pending):
+                    break
+                pending = failed
+        finally:
+            self.state.restoring = restoring
+        for line in failed:
+            built_in = _built_in_defined(line)
+            if built_in is not None:
+                restored.refused.append(built_in)
+            else:
+                restored.not_restored.append(_defined_name(line))
+        for name, binding in bindings.items():
+            if name not in restored.names:
+                self.state.rebind(binding)
         return restored
+
+    def _refused_in(self, line: str) -> list[str] | None:
+        """The built-ins whose definitions keep a file's `line` from being read, or None
+        if it fails for another reason.
+
+        A file may not redefine a built-in, so such a definition is refused. In a vector
+        of definitions only the refused ones are: the others are made, as their own
+        lines would be, and the built-ins are those the vector tried to define.
+        """
+        built_in = _built_in_defined(line)
+        if built_in is not None:
+            return [built_in]
+        elements = _vector_elements(line)
+        if elements is None:
+            return None
+        refused = []
+        readable = []
+        for element in elements:
+            try:
+                readable.append(parse_expression(element, self.state))
+            except UNREADABLE:
+                built_in = _built_in_defined(element)
+                if built_in is None:
+                    return None
+                refused.append(built_in)
+        for result in readable:
+            self._declared(_on_input(result.node, result.declarations))
+            self._define(result.node, result.declarations)
+        return refused
+
+    def _restored(self, line: str, restored: _Restored) -> bool:
+        """Apply one line of a state block, and say whether it parsed."""
+        try:
+            parsed = parse_expression(line, self.state)
+        except UNREADABLE:
+            return False
+        restored.ignored += self._apply(parsed)
+        restored.applied.append(parsed)
+        restored.names |= _declared_names(parsed.declarations)
+        return True
+
+    def _predeclared(self, lines: Iterable[str]) -> dict[str, NameBinding]:
+        """Declare the names `lines` define, and return their bindings from before.
+
+        Only the head of each line is looked at: `NAME(p1, p2) :=` declares a function,
+        `name :=` a variable. A name that may not be declared, such as a built-in
+        function's, is left alone.
+        """
+        bindings: dict[str, NameBinding] = {}
+        for line in lines:
+            head = _head(line)
+            if head is None or not self.declarable(head[0]):
+                continue
+            spelling, parameters = head
+            name = self.state.bound_name(spelling)
+            if parameters is None:
+                declaration: Declaration = VariableDeclaration(name, has_value=True)
+            else:
+                declaration = FunctionDeclaration(
+                    name,
+                    tuple(self.state.bound_name(each) for each in parameters),
+                    has_body=True,
+                )
+            bindings.setdefault(name, self.state.binding(name))
+            self.state.declare(declaration)
+        return bindings
 
     def _reapply(self, restored: _Restored) -> None:
         """Apply again what `_restore` applied, without parsing it again."""
         for applied in restored.applied:
             self._apply(applied)
 
-    def _apply(self, applied: ParseResult | str) -> None:
-        """Apply a line of a state block: its parse, or the variable order's text."""
-        if isinstance(applied, str):
-            order = self.order_list(applied.removeprefix("[").removesuffix("]"))
-            if order is not None:
-                self.order = order
-            return
-        for declaration in applied.declarations:
-            self.declare(declaration)
+    def _apply(self, applied: ParseResult) -> int:
+        """Apply a line of a state block, and return how many settings it assigned that
+        changed nothing."""
+        ignored = self._declared(_on_input(applied.node, applied.declarations))
         self._define(applied.node, applied.declarations)
+        return ignored
+
+    def _declared(self, declarations: Iterable[Declaration]) -> int:
+        """Apply `declarations`, and say how many were settings that changed nothing."""
+        return sum(not self.declare(declaration) for declaration in declarations)
 
     def _forget(self, name: str) -> None:
         """Undo every definition and declaration of `name`."""
@@ -1811,13 +2343,31 @@ class Session:
         self.domains.pop(name, None)
         self.state.rebind(NameBinding(name, None, None))
 
+    def _kept(self, text: str, annotation: str, rename: Rename | None = None) -> Entry:
+        """Append a line of a file that can't be read as a string holding its text.
+
+        This is what Derive does, so that the line can be corrected and entered again.
+        A double quote in it becomes a single one, as a string can't hold it.
+        """
+        if rename is not None:
+            annotation = _rewrite_annotation(annotation, rename)
+        value = text.replace(worksheet.QUOTE, "'")
+        written = f"{worksheet.QUOTE}{value}{worksheet.QUOTE}"
+        node = Node(Kind.STRING, 0, len(written), (), value)
+        return self._append(written, node, annotation)
+
     def _entered(
-        self, text: str, annotation: str = AUTHORED, rename: Rename | None = None
-    ) -> ParseResult:
+        self,
+        text: str,
+        annotation: str = AUTHORED,
+        rename: Rename | None = None,
+        loads: bool = False,
+    ) -> _Entered:
         """Append one line of a file as an entry, with its label references renamed.
 
         The line is redrawn like an authored line, normalizing hand-written files; files
-        this program wrote come back unchanged.
+        this program wrote come back unchanged. With `loads`, a `LOAD` line loads its
+        file as it does when typed, so that the lines after it know what it defines.
         """
         result = parse_expression(text, self.state)
         if rename is not None:
@@ -1825,11 +2375,11 @@ class Session:
             result = parse_expression(text, self.state)
             annotation = _rewrite_annotation(annotation, rename)
         result = self._redrawn(result)
-        for declaration in result.declarations:
-            self.declare(declaration)
+        ignored = self._declared(_on_input(result.node, result.declarations))
         self._define(result.node, result.declarations)
+        loaded = self._perform_loads(result.node) if loads else LoadReport()
         self._append(result.source.text, result.node, annotation)
-        return result
+        return _Entered(result.declarations, ignored, loaded)
 
     # -- clearing ----------------------------------------------------------
 
@@ -1846,7 +2396,8 @@ class Session:
         self._next_number = 1
 
     def clear_variables(self) -> None:
-        """Forget every value and domain a line has assigned.
+        """Forget every value and domain a line has assigned, and the variables of the
+        pre-defined library.
 
         The assigning expressions stay on screen, but a `v` that stood for 7 becomes a
         free variable again.
@@ -1856,7 +2407,8 @@ class Session:
         self.state.clear(ClearWhat.VARIABLES)
 
     def clear_functions(self) -> None:
-        """Forget every function a line has defined.
+        """Forget every function a line has defined, and the functions of the
+        pre-defined library, which do not come back until a new session.
 
         Names are removed from the symbol table too, so a later `F(3)` reads as `f*3`, as
         in the original.
@@ -2245,15 +2797,233 @@ def _rewrite_annotation(annotation: str, rename: Rename) -> str:
 class _Restored:
     """What `Session._restore` did with a worksheet's state block.
 
-    `applied` holds each line applied, as its parse or, for the variable order, as the
-    order's text. `names` are the names those lines define or declare.
+    `applied` holds the parse of each line applied, and `names` are the names those
+    lines define or declare. `not_restored` has the name each line that couldn't be
+    decoded or parsed would have defined, or None where that is not known, except for
+    the definitions of built-ins, whose names are in `refused`. `ignored` counts the
+    settings assigned that changed nothing.
     """
 
-    applied: list[ParseResult | str] = field(default_factory=list)
+    applied: list[ParseResult] = field(default_factory=list)
     names: set[str] = field(default_factory=set)
-    undecodable: int = 0
-    refused: int = 0
+    not_restored: list[str | None] = field(default_factory=list)
+    refused: list[str] = field(default_factory=list)
     ignored: int = 0
+
+
+@dataclass(frozen=True)
+class _Entered:
+    """What `Session._entered` did with a line: its declarations, how many of them were
+    settings that changed nothing, and what the files it loaded could not give."""
+
+    declarations: tuple[Declaration, ...]
+    ignored: int
+    loaded: LoadReport
+
+
+@dataclass
+class LoadReport:
+    """What reading a file could not take as it was, for the message line.
+
+    `strings` are the numbers of the entries that hold a line that couldn't be read,
+    kept as a string. `not_restored` and `unreadable` hold, for each line of a
+    worksheet's state block that couldn't be restored and each line of a utility file
+    that couldn't be read, the name it would have defined, or None if that is not
+    known. `refused` names the built-ins the file defined, whose definitions were
+    refused, since no file may redefine one; on Load and Merge such a line is kept as a
+    string all the same. `ignored` counts the settings assigned that changed nothing,
+    `missing` names the files a `LOAD` could not find, and `plots` and `embedded` count
+    the plots and embedded objects of a worksheet, which are left out.
+    """
+
+    strings: list[int] = field(default_factory=list)
+    not_restored: list[str | None] = field(default_factory=list)
+    unreadable: list[str | None] = field(default_factory=list)
+    refused: list[str] = field(default_factory=list)
+    ignored: int = 0
+    missing: list[str] = field(default_factory=list)
+    plots: int = 0
+    embedded: int = 0
+
+    def __bool__(self) -> bool:
+        return bool(
+            self.strings
+            or self.not_restored
+            or self.unreadable
+            or self.refused
+            or self.ignored
+            or self.missing
+            or self.plots
+            or self.embedded
+        )
+
+    def extend(self, other: LoadReport) -> None:
+        """Add what `other` reports, as when several files are read in turn."""
+        self.strings += other.strings
+        self.not_restored += other.not_restored
+        self.unreadable += other.unreadable
+        self.refused += other.refused
+        self.ignored += other.ignored
+        self.missing += other.missing
+        self.plots += other.plots
+        self.embedded += other.embedded
+
+    def __str__(self) -> str:
+        """The report as one sentence, of the parts that have something to say."""
+        parts = []
+        if self.strings:
+            counted = _counted(len(self.strings), "line")
+            numbers = _at_most_five([f"#{number}" for number in self.strings])
+            parts.append(f"{counted} kept as strings ({numbers})")
+        if self.not_restored:
+            counted = _counted(len(self.not_restored), "definition")
+            parts.append(_named(f"{counted} not restored", self.not_restored))
+        if self.unreadable:
+            counted = _counted(len(self.unreadable), "line")
+            parts.append(_named(f"{counted} not readable", self.unreadable))
+        if self.refused:
+            refused = f"{len(self.refused)} refused as built-in"
+            parts.append(_named(refused, self.refused))
+        if self.ignored:
+            parts.append(f"{_counted(self.ignored, 'setting')} ignored")
+        if len(self.missing) == 1:
+            parts.append(f"{self.missing[0]} could not be found")
+        elif self.missing:
+            counted = _counted(len(self.missing), "file")
+            parts.append(_named(f"{counted} could not be found", self.missing))
+        if self.plots or self.embedded:
+            counts = ((self.plots, "plot"), (self.embedded, "embedded object"))
+            left = [_counted(count, noun) for count, noun in counts if count]
+            parts.append(f"{' and '.join(left)} not loaded")
+        return "; ".join(parts)
+
+
+def _is_load(node: Node) -> bool:
+    """Whether `node` is `LOAD` of a string."""
+    return (
+        node.kind is Kind.CALL
+        and str(node.children[0].value) == "LOAD"
+        and len(node.children) == 2
+        and node.children[1].kind is Kind.STRING
+    )
+
+
+def _annotation(written: str) -> str:
+    """The annotation of an entry read from a file: the user's, `User`, where it says
+    the user typed the line in any of Derive's languages, else as written."""
+    return AUTHORED if dfw.typed(written) else written
+
+
+def _counted(count: int, noun: str) -> str:
+    """`count` with `noun`: `1 line`, `2 lines`."""
+    return f"{count} {noun}{'' if count == 1 else 's'}"
+
+
+def _at_most_five(items: Sequence[str]) -> str:
+    """The first five of `items` in a list, and `...` if there are more."""
+    return ", ".join([*items[:5], "..."] if len(items) > 5 else items)
+
+
+def _named(text: str, names: Sequence[str | None]) -> str:
+    """`text`, followed by the known `names` in parentheses."""
+    known = [name for name in names if name is not None]
+    return f"{text} ({_at_most_five(known)})" if known else text
+
+
+#: The head of a definition line: `NAME(p1, p2) :=` or `name :=`. A parameter may have a
+#: default, `j_ := 0`, of which only the name matters here.
+_FUNCTION_HEAD = re.compile(r"\s*([^\W\d]\w*\??)\s*\(([^()]*)\)\s*:=")
+_VARIABLE_HEAD = re.compile(r"\s*([^\W\d]\w*\??)\s*:=")
+_PARAMETER = re.compile(r"\s*([^\W\d]\w*\??)\s*(?:(?::=|\u2254).*)?")
+
+
+def _head(line: str) -> tuple[str, tuple[str, ...] | None] | None:
+    """The name a definition line defines, and its parameters if it is a function's.
+
+    None if the line has no head of either kind.
+    """
+    found = _FUNCTION_HEAD.match(line)
+    if found is not None:
+        parameters = []
+        for written in found.group(2).split(",") if found.group(2).strip() else ():
+            parameter = _PARAMETER.fullmatch(written)
+            if parameter is None:
+                return None
+            parameters.append(parameter.group(1))
+        return found.group(1), tuple(parameters)
+    found = _VARIABLE_HEAD.match(line)
+    return None if found is None else (found.group(1), None)
+
+
+def _defined_name(line: str) -> str | None:
+    """The name a line would define, for reporting a line that couldn't be read."""
+    head = _head(line)
+    return None if head is None else head[0]
+
+
+def _vector_elements(line: str) -> list[str] | None:
+    """The texts of the elements of a line that is a vector, `[u, v, ...]`, split at
+    its top-level commas, or None if the line is no vector."""
+    if not (line.startswith("[") and line.endswith("]")):
+        return None
+    elements = []
+    depth = 0
+    quoted = False
+    start = 1
+    for at, character in enumerate(line[1:-1], 1):
+        if character == '"':
+            quoted = not quoted
+        elif quoted:
+            continue
+        elif character in "([{":
+            depth += 1
+        elif character in ")]}":
+            depth -= 1
+            if depth < 0:
+                return None
+        elif character == "," and depth == 0:
+            elements.append(line[start:at].strip())
+            start = at + 1
+    if depth or quoted:
+        return None
+    elements.append(line[start:-1].strip())
+    return elements
+
+
+def _built_in_defined(line: str) -> str | None:
+    """The built-in a line that couldn't be read defines, if it defines one.
+
+    A file may not redefine a built-in (`reserved`), so such a line is refused.
+    """
+    head = _head(line)
+    if head is None:
+        return None
+    name, parameters = head
+    return name if reserved(name, function=parameters is not None) else None
+
+
+#: The settings a file saved with the State option starts with, in Derive 6's order.
+_SAVED_SETTINGS = (
+    "Precision PrecisionDigits Notation NotationDigits Branch Exponential Logarithm"
+    " Trigonometry Trigpower Angle CaseMode VariableOrder OutputBase InputBase InputMode"
+    " DisplayFormat TimesOperator"
+).split()
+
+#: The state variables `Options Defaults` restores, in the order a saved state lists
+#: them: precision before notation, since restoring one restores the other.
+_STATE_VARIABLES = (
+    *_SAVED_SETTINGS,
+    "DisplaySteps",
+    "SimplifyRelations",
+    "ArrowKeyMode",
+)
+
+#: The radix settings, and the names of the radices that have one.
+_RADICES = frozenset({"OutputBase", "InputBase"})
+_RADIX_NAMES = {2: "Binary", 8: "Octal", 10: "Decimal", 16: "Hexadecimal"}
+
+#: A line of a state block that saves where a plot's cross was.
+_PLOT_STATE = re.compile(r"\s*[hvxyz]Cross\s*:=")
 
 
 def _declared_names(declarations: Iterable[Declaration]) -> set[str]:
@@ -2304,14 +3074,36 @@ def _subtrees(node: Node) -> Iterator[Node]:
         yield from _subtrees(child)
 
 
-def _defining(node: Node) -> Iterator[Node]:
-    """The subtrees of `node` that can define something.
+def _on_input(node: Node, declarations: Iterable[Declaration]) -> list[Declaration]:
+    """The `declarations` of an entered line that entering it performs: a setting is
+    assigned only where `_defining` finds its assignment, and not by one inside a
+    function body or a program, which happens when that runs."""
+    settings = {
+        str(found.children[0].value)
+        for found in _defining(node)
+        if found.kind is Kind.ASSIGN and found.children[0].kind is Kind.NAME
+    }
+    return [
+        declaration
+        for declaration in declarations
+        if not isinstance(declaration, SettingDeclaration)
+        or declaration.setting in settings
+    ]
 
-    Like `_subtrees`, but not inside function bodies, whose assignments happen only
-    when the function is called.
+
+def _defining(node: Node) -> Iterator[Node]:
+    """The subtrees of `node` that entering it performs: `node` itself, or each element
+    of a vector it is, at any depth of vectors. A trailing `=` asks for the value of what
+    it follows, which is entered all the same.
+
+    Nothing else is performed on input: not an assignment inside a function body, which
+    happens when the function is called, nor one inside a `PROG`, an `IF`, a call or an
+    operand, which happens when the expression is simplified.
     """
-    yield node
-    if node.kind is Kind.FUNDEF:
+    if node.kind is Kind.SHOWVALUE:
+        yield from _defining(node.children[0])
         return
-    for child in node.children:
-        yield from _defining(child)
+    yield node
+    if node.kind is Kind.VECTOR:
+        for child in node.children:
+            yield from _defining(child)

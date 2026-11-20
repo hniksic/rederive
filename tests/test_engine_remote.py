@@ -27,6 +27,7 @@ from rederive.engine.remote import (
     EngineAborted,
     EngineDied,
     EngineMemoryExceeded,
+    EngineStepLimit,
     RemoteEngine,
 )
 from rederive.model.session import Session
@@ -81,9 +82,9 @@ def after_the_request(engine):
     sent = threading.Event()
     reading = engine._receive
 
-    def watched(deadline=None):
+    def watched(deadline=None, overdue=None):
         sent.set()
-        return reading(deadline)
+        return reading(deadline, overdue)
 
     engine._receive = watched
     return sent
@@ -125,12 +126,12 @@ def a_worker_that_is_still_starting(engine):
     waiting = threading.Event()
     reading = engine._receive
 
-    def watched(deadline=None):
+    def watched(deadline=None, overdue=None):
         if not waiting.is_set():
             arrived.set()
             queueing.wait(PATIENCE)
             waiting.set()
-        return reading(deadline)
+        return reading(deadline, overdue)
 
     engine._receive = watched
     engine.start()
@@ -201,13 +202,91 @@ async def test_the_relation_comes_back_from_the_child(remote):
     assert await remote.relation_of(tree("x^2"), Context()) is None
 
 
+async def test_the_form_of_a_plot_comes_back_from_the_child(mortal):
+    # A worker of its own, since finding a closed form converts it for numpy, which
+    # takes more memory than the shared worker's cap allows.
+    engine = mortal()
+    form = await engine.plot_form(tree("x^2 + 2*x - x"), Context())
+    assert (form.text, form.variables, form.pointwise) == ("x^2 + x", ("x",), False)
+
+
+async def test_a_plot_whose_simplification_takes_too_long_is_drawn_regardless(
+    mortal, monkeypatch
+):
+    """The Plot command gives the simplification a plot starts from a few seconds and
+    stops the worker past them; the expression is then plotted as it stands, which for
+    a program is point by point. Newton's method over a symbolic `x` builds a rational
+    function whose degree triples at every step."""
+    from rederive.engine import remote as remote_module
+
+    engine = mortal()
+    engine.start()
+    session = Session(runner=engine)
+    session.author(
+        "nwt(x, t_, k_) := PROG(t_ := 1, k_ := 0, LOOP(IF(k_ = 8, RETURN t_), "
+        "t_ := t_ - (t_^3 - x)/(3*t_^2), k_ :+ 1))"
+    )
+    session.author("nwt(x)")
+    monkeypatch.setattr(remote_module, "PATIENCE", 0.0)
+    started = time.monotonic()
+    form = await session.plot_form("#2")
+    assert form.pointwise
+    assert form.variables == ("x",)
+    assert engine.starts >= 2
+    assert time.monotonic() - started < 30.0
+    assert (await engine.simplify(tree("2 + 3"), Context())).text == "5"
+
+
 async def test_a_session_given_one_computes_through_it(remote):
     session = Session(runner=remote)
     session.author("(x + 1)*(x - 1)")
     assert (await session.expand("#1")).text == "x^2 - 1"
 
 
+async def test_a_program_past_the_step_limit_its_context_sets_is_reported(remote):
+    session = Session(runner=remote, step_limit=1000)
+    session.author("gl := 1")
+    session.author("spin(n) := LOOP(gl := gl + 1)")
+    with pytest.raises(EngineStepLimit):
+        await session.simplify("spin(0)")
+    assert (await session.simplify("gl")).text == "1"
+
+
 # -- the deaths --------------------------------------------------------------
+
+
+async def test_a_computation_runs_until_aborted(mortal):
+    # Solving has no time limit of its own: this one runs for minutes, in a program the
+    # session defines, until the user aborts it. The next command computes as usual.
+    session = Session(runner=mortal())
+    session.author("roots(c) := SOLVE(SIN(x) + COS(2*x) = c, x)")
+    assert (await session.simplify("1 + 1")).text == "2"
+
+    def later() -> None:
+        time.sleep(2)
+        session.runner.abort()
+
+    fire(after_the_request(session.runner), later)
+    with pytest.raises(EngineAborted):
+        await session.simplify("roots(a)")
+    assert (await session.simplify("roots(0)")).text != "roots(0)"
+
+
+async def test_an_aborted_program_leaves_the_session_as_it_was(mortal):
+    # A session given a worker has no step limit: a runaway program runs until the
+    # user aborts it, and nothing it did reaches the session.
+    session = Session(runner=mortal())
+    assert session.step_limit is None
+    session.author("gl := 1")
+    session.author("spin(n) := LOOP(gl := gl + 1)")
+    assert (await session.simplify("gl + 1")).text == "2"
+    count = len(session.entries)
+    fire(after_the_request(session.runner), session.runner.abort)
+    with pytest.raises(EngineAborted):
+        await session.simplify("spin(0)")
+    assert len(session.entries) == count
+    assert (await session.simplify("gl")).text == "1"
+
 
 
 async def test_an_abort_kills_the_worker_and_the_next_one_is_already_coming(mortal):

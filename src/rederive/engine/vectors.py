@@ -68,8 +68,149 @@ class Vector(sp.Function):
 
     is_number = False
 
+    def _get_args(self) -> tuple[sp.Basic, ...]:
+        state = self.__dict__
+        made = state.get("_made")
+        if made is None:
+            made = _laid_out(state["_run"], state["_low"], state["_high"])
+            state["_made"] = made
+        return made
+
+    def _set_args(self, args: tuple[sp.Basic, ...]) -> None:
+        self.__dict__["_made"] = args
+
+    #: The elements, which a vector made by `adjoined`, `extended`, `prefixed` or
+    #: `sliced` lays out from the run it shares only when they are asked for.
+    _args = property(_get_args, _set_args)
+
+    def __new__(cls, *args: sp.Basic, **options: object) -> Vector:
+        """The vector of `args`, built directly when they are all expressions already:
+        a vector has nothing to evaluate, and a program that builds a list element by
+        element would otherwise spend most of its time in sympy's generic construction,
+        which converts, caches and inspects every element anew at each step."""
+        if options or not all(isinstance(arg, sp.Basic) for arg in args):
+            return super().__new__(cls, *args, **options)
+        return cls.of(args)
+
+    @classmethod
+    def of(cls, args: tuple[sp.Basic, ...]) -> Vector:
+        """The vector of `args`, which must all be sympy objects, built without looking
+        at them: list functions make long vectors from the elements of others."""
+        vector = sp.Basic.__new__(cls, *args)
+        vector.nargs = sp.S.Naturals0
+        return vector
+
     def _eval_derivative(self, symbol: sp.Symbol) -> sp.Basic:
         return Vector(*(sp.diff(element, symbol) for element in self.args))
+
+    # -- the list functions' vectors, which share their elements ---------------
+    #
+    # A program builds a list an element at a time, `v := ADJOIN(u, v)` or `v :=
+    # APPEND(v, [u])`, and consumes one so, `v := REST(v)`; each step making a new
+    # vector of all the elements would make the program quadratic in the length of the
+    # list. So these vectors are views: positions `low` to `high` of a `_Run`, which
+    # vectors made from one another share. A run only grows outward, at the ends no
+    # view has claimed yet, so a view's elements never change; a vector whose end has
+    # been claimed by another is copied into a run of its own. A view's elements are
+    # laid out as a tuple the first time anything else asks for its `args`.
+
+    def _placed(self) -> tuple[_Run, int, int]:
+        """The run this vector's elements are in, and their positions there; a vector
+        made otherwise gets a run of its own."""
+        state = self.__dict__
+        run = state.get("_run")
+        if run is None:
+            items = state["_made"]
+            run = _Run([], items)
+            state["_run"], state["_low"], state["_high"] = run, 0, len(items)
+            return run, 0, len(items)
+        return run, state["_low"], state["_high"]
+
+    def size(self) -> int:
+        """The number of elements, `len(self.args)`, without laying them out."""
+        state = self.__dict__
+        made = state.get("_made")
+        if made is not None:
+            return len(made)
+        return state["_high"] - state["_low"]
+
+    def item(self, place: int) -> sp.Basic:
+        """The element at the zero-based `place`, which must be one of the vector's,
+        `self.args[place]` without laying them out."""
+        state = self.__dict__
+        made = state.get("_made")
+        if made is not None:
+            return made[place]
+        position = state["_low"] + place
+        run = state["_run"]
+        return run.front[-1 - position] if position < 0 else run.back[position]
+
+    def adjoined(self, value: sp.Basic) -> Vector:
+        """The vector of `value` followed by this vector's elements."""
+        return self.prefixed((value,))
+
+    def prefixed(self, values: tuple[sp.Basic, ...]) -> Vector:
+        """The vector of `values` followed by this vector's elements."""
+        run, low, high = self._placed()
+        if low == -len(run.front):
+            run.front.extend(reversed(values))
+            return _view(type(self), run, low - len(values), high)
+        items = self.args
+        run = _Run(list(reversed(values)), list(items))
+        return _view(type(self), run, -len(values), len(items))
+
+    def extended(self, values: tuple[sp.Basic, ...]) -> Vector:
+        """The vector of this vector's elements followed by `values`."""
+        run, low, high = self._placed()
+        back = run.back
+        if high == len(back):
+            if type(back) is not list:
+                back = run.back = list(back)
+            back.extend(values)
+            return _view(type(self), run, low, high + len(values))
+        items = [*self.args, *values]
+        return _view(type(self), _Run([], items), 0, len(items))
+
+    def sliced(self, start: int, stop: int) -> Vector:
+        """The vector of the elements at zero-based places `start` to `stop`, which
+        must be within the vector's, `self.args[start:stop]` without copying them."""
+        run, low, _ = self._placed()
+        return _view(type(self), run, low + start, low + max(stop, start))
+
+
+class _Run:
+    """The elements of vectors made from one another by the list functions (see
+    `Vector.sliced`), at positions extending both ways from zero: `back[p]` is at
+    position `p` and `front[-1 - p]` at a negative `p`. `back` may be a tuple, the
+    elements of a vector made otherwise, until something extends it."""
+
+    __slots__ = ("back", "front")
+
+    def __init__(self, front: list, back: list | tuple):
+        self.front = front
+        self.back = back
+
+
+def _view(cls: type[Vector], run: _Run, low: int, high: int) -> Vector:
+    """The vector of the elements at positions `low` to `high` of `run`."""
+    vector = object.__new__(cls)
+    vector._assumptions = cls.default_assumptions
+    vector._mhash = None
+    vector.nargs = sp.S.Naturals0
+    state = vector.__dict__
+    state["_run"], state["_low"], state["_high"] = run, low, high
+    return vector
+
+
+def _laid_out(run: _Run, low: int, high: int) -> tuple[sp.Basic, ...]:
+    """The elements at positions `low` to `high` of `run`, in order."""
+    back = run.back
+    if low >= 0:
+        return tuple(back[low:high])
+    front = run.front
+    before = front[-min(high, 0) : -low]
+    before.reverse()
+    return (*before, *back[0 : max(high, 0)])
 
 
 def is_vector(value: object) -> bool:
@@ -120,12 +261,21 @@ def transposed(value: Vector) -> Vector | None:
     A matrix's rows become its columns, whatever its elements are. A flat vector, whose
     elements are not vectors, is its own transpose, as in Derive: `[a, b]`` is
     `[a, b]`, while the one-row matrix `[[a, b]]` transposes to the column
-    `[[a], [b]]`. A vector mixing vectors and other elements, or ragged rows, has no
-    transpose.
+    `[[a], [b]]`. Ragged rows transpose as Derive does it: the j-th row of the result
+    holds the j-th elements of the rows that have one, so `[[a, b], [c]]`` is
+    `[[a, c], [b]]`. A vector mixing vectors and other elements has no transpose.
     """
     if is_matrix(value):
         columns = zip(*(row.args for row in value.args), strict=True)
         return Vector(*(Vector(*column) for column in columns))
+    if value.args and all(isinstance(element, Vector) for element in value.args):
+        rows = [row.args for row in value.args]
+        return Vector(
+            *(
+                Vector(*(row[j] for row in rows if j < len(row)))
+                for j in range(max(len(row) for row in rows))
+            )
+        )
     if any(isinstance(element, Vector) for element in value.args):
         return None
     return value

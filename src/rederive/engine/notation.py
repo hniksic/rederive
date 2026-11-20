@@ -78,6 +78,16 @@ def scientific(value: Fraction, digits: int) -> str:
     return f"{mantissa}*10^{power}"
 
 
+def value_of(text: str) -> Fraction:
+    """The exact value of a numeral that `decimal` or `scientific` wrote."""
+    head, times, power = text.rpartition("10^")
+    if not times:
+        return Fraction(text)
+    head = head.removesuffix("*")
+    mantissa = Fraction(head) if head not in ("", "-") else Fraction(f"{head}1")
+    return mantissa * _TEN ** int(power)
+
+
 def exponent(value: Fraction) -> int:
     """The exponent of the leading power of ten of `value`, which must be positive."""
     # The digit counts are within one of the answer; the loops correct it.

@@ -48,14 +48,16 @@ from typing import Any
 
 from rederive import memory
 from rederive.engine import worker
-from rederive.engine.boundary import Amount, Result
+from rederive.engine.boundary import Amount, PlotForm, Result
 from rederive.engine.client import (
+    PATIENCE,
     EngineAborted,
     EngineBug,
     EngineDied,
     EngineDown,
     EngineError,
     EngineMemoryExceeded,
+    EngineTimedOut,
 )
 from rederive.engine.context import Context
 from rederive.engine.policy import Deaths
@@ -111,6 +113,8 @@ class WebEngine:
         self.lost: Callable[[str], None] | None = None
         #: Number of workers created, used by tests to check respawn policy.
         self.starts = 0
+        #: Called with each text a running program shows (see `Runner.progress`).
+        self.progress: Callable[[str, bool], None] | None = None
 
     # -- the engine interface ----------------------------------------------
 
@@ -162,6 +166,18 @@ class WebEngine:
     ) -> str | None:
         return await self._await("relation_of", (node, context))
 
+    async def plot_form(
+        self,
+        node: Node,
+        context: Context,
+        state: ParseState | None = None,
+        running: bool = True,
+    ) -> PlotForm:
+        """The form a plot draws, given `PATIENCE` seconds, after which the worker is
+        terminated and `EngineTimedOut` raised."""
+        arguments = (node, context, state, running)
+        return await self._await("plot_form", arguments, PATIENCE)
+
     # -- lifecycle ---------------------------------------------------------
 
     def start(self) -> None:
@@ -199,11 +215,15 @@ class WebEngine:
 
     # -- one request -------------------------------------------------------
 
-    async def _await(self, method: str, args: tuple[Any, ...]) -> Any:
+    async def _await(
+        self, method: str, args: tuple[Any, ...], patience: float | None = None
+    ) -> Any:
         """Send one request and await its answer.
 
         The abort count is read before waiting for the lock, so Esc pressed while this
-        call waits for the lock or for the worker to boot also aborts it.
+        call waits for the lock or for the worker to boot also aborts it. A request
+        given `patience` that has no answer that many seconds after it was sent is
+        ended like an abort, with `EngineTimedOut`.
         """
         aborts = self._aborts
         async with self._call:
@@ -218,7 +238,17 @@ class WebEngine:
                 _post(self._worker, pickle.dumps((number, method, args)))
             except Exception as error:
                 raise self._collapse(EngineDied(f"The engine stopped: {error}")) from None
-            return await answer
+            if patience is None:
+                return await answer
+            try:
+                return await asyncio.wait_for(asyncio.shield(answer), patience)
+            except asyncio.TimeoutError:
+                overdue = EngineTimedOut(f"The engine took over {patience:g} s")
+                error = self._collapse(overdue)
+                if answer.done() and not answer.cancelled():
+                    # Failed with the same error by the collapse; nothing else awaits.
+                    answer.exception()
+                raise error from None
 
     # -- plot requests -----------------------------------------------------
 
@@ -342,6 +372,10 @@ class WebEngine:
         if pending is None or pending[0] != message[0]:
             return
         _, answer = pending
+        if message[1] == worker.PROGRESS:
+            if self.progress is not None:
+                self.progress(message[2], message[3])
+            return
         if message[1] == "ok":
             self._pending = None
             answer.set_result(message[2])

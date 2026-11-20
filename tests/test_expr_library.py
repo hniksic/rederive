@@ -7,6 +7,7 @@ expressions.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -16,6 +17,7 @@ from rederive.syntax import (
     FunctionDeclaration,
     ParseState,
     parse_expression,
+    reserved,
 )
 
 LIBRARY = Path(__file__).parent / "corpus" / "library-expressions.txt"
@@ -46,22 +48,29 @@ LOADS: dict[str, tuple[str, ...]] = {
     f"{_USERS}TENSOR2.DMO": (f"{_USERS}TENSOR.MTH",),
 }
 
-#: Functions that files written for a later Derive call as built-ins. The original
-#: lacks them, so they're declared up front.
+#: Functions that files written for a later Derive call as built-ins, which are not
+#: built in here either, so they're declared up front.
 LATER_BUILTINS: dict[str, tuple[str, ...]] = {
-    "hawaii-coursework/add-head.mth": ("LOAD",),
-    "hawaii-coursework/add-util.mth": (
-        "DIM",
-        "DSOLVE2_IV",
-        "PROG",
-        "SOLUTIONS",
-        "SUBST",
-    ),
+    "hawaii-coursework/add-util.mth": ("DSOLVE2_IV",),
 }
+
+#: The name of each definition in a line, as in `F(x) :=` or `a :=`.
+_DEFINED = re.compile(r"([^\W\d]\w*\??)\s*(\([^()]*\))?\s*:=")
+
+
+def refused(expression: str) -> bool:
+    """Whether `expression` defines a built-in's name, which no file may do: older
+    files define functions that Derive later built in, and such a line is refused."""
+    return any(
+        reserved(name, function=bool(parameters))
+        for name, parameters in _DEFINED.findall(expression)
+    )
 
 
 def _replay(state: ParseState, expressions: list[str]) -> None:
     for expression in expressions:
+        if refused(expression):
+            continue
         for declaration in parse_expression(expression, state).declarations:
             state.declare(declaration)
 
@@ -87,6 +96,8 @@ def test_a_shipped_file_parses(group: str) -> None:
         try:
             result = parse_expression(expression, state)
         except DeriveSyntaxError as error:
+            if refused(expression):
+                continue
             raise AssertionError(
                 f"{group}: rejected at offset {error.offset}\n"
                 f"  {expression}\n"

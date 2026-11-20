@@ -19,6 +19,10 @@ _ABSOLUTE, _SIGNUM, _BARE = 0, 1, 2
 
 def folded_signs(expression: sp.Basic) -> sp.Basic:
     """`expression` with every product of a real `u`, `ABS(u)` and `SIGN(u)` folded."""
+    if not expression.has(sp.Abs, sp.sign):
+        # Nothing to fold, and asking each product whether its factors are real is
+        # costly.
+        return expression
     return expression.replace(
         lambda e: _folded_product(e) is not None,
         lambda e: _folded_product(e),
@@ -125,7 +129,8 @@ def polar_logarithms(expression: sp.Basic) -> sp.Basic:
     """Join the parts of a logarithm: `LN(ABS(z)) + #i*PHASE(z)` is `LN(z)`.
 
     This is the principal logarithm's definition, so it holds for every nonzero `z`, and
-    with any common factor: `c*LN(ABS(z)) + c*#i*PHASE(z)` is `c*LN(z)`. Sympy's
+    with any common factor: `c*LN(ABS(z)) + c*#i*PHASE(z)` is `c*LN(z)`, and
+    `c*LN(ABS(z)) + c*#i*PHASE(-z)` is `c*LN(-z)`. Sympy's
     `solveset` writes the logarithm in the split form, as in the solution of `#e^y = x`.
     """
 
@@ -142,11 +147,17 @@ def polar_logarithms(expression: sp.Basic) -> sp.Basic:
                     continue
                 argument = factor.args[0].args[0]
                 coefficient = term / factor
-                partner = sp.I * coefficient * sp.arg(argument)
-                if partner in terms:
+                # `ABS(z)` is `ABS(-z)`, so the phase may be of either.
+                partners = [
+                    (phased, sp.I * coefficient * sp.arg(phased))
+                    for phased in (argument, -argument)
+                ]
+                found = next((pair for pair in partners if pair[1] in terms), None)
+                if found is not None:
+                    phased, partner = found
                     terms.remove(term)
                     terms.remove(partner)
-                    terms.append(coefficient * sp.log(argument))
+                    terms.append(coefficient * sp.log(phased))
                     changed = True
                     break
         return sp.Add(*terms) if changed else total

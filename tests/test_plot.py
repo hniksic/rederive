@@ -17,7 +17,9 @@ which also shows that the backend seam is real.
 
 import asyncio
 import dataclasses
+import re
 import threading
+import time
 
 import numpy as np
 import pytest
@@ -27,7 +29,7 @@ from screen import band, content, highlighted, message, prompt
 from rederive.engine.context import Context
 from rederive.model.plotting import Unplottable, classify
 from rederive.model.session import Session
-from rederive.plot import actions, controls, evaluate
+from rederive.plot import actions, controls, evaluate, resample
 from rederive.plot import protocol as plots
 from rederive.plot.model import Plot, Surface
 from rederive.plot.protocol import PlotKind
@@ -499,6 +501,327 @@ def _spans(xs, ys, place):
         (float(left[index]), float(right[index]))
         for index in np.nonzero(straddles & finite)[0]
     ]
+
+
+# -- plotting what needs the evaluator -----------------------------------------
+#
+# A plot starts from the expression simplified, as in Derive; an answer that is no
+# closed form is evaluated point by point, programs running. Each case is checked
+# against what Simplify gives at the point under Approximate precision.
+
+#: Functions defined by programs, as worksheets define them.
+PROGRAMS = [
+    "f1(x) := PROG(y_ := x^2, y_ + 1)",
+    "f2(x) := IF(x < 0, PROG(a_ := -x, a_), x^2)",
+    "fact(n) := IF(n <= 1, 1, n*fact(n - 1))",
+    "escape(x) := ITERATE(IF(ABS(t) > 2, t, t^2 + x), t, 0, 10)",
+    "fib(n, a_, b_, k_, t_) := PROG(a_ := 0, b_ := 1, k_ := 0, LOOP(IF(k_ >= n, "
+    "RETURN a_), t_ := a_ + b_, a_ := b_, b_ := t_, k_ :+ 1))",
+    "stp(x) := PROG(IF(x < 0, RETURN 0), IF(x < 1, RETURN x), 1)",
+    "ring(x, y) := PROG(IF(x^2 + y^2 < 1, RETURN 1), x*y)",
+]
+
+#: Points sampled where every case has a value, and that are exact binary fractions,
+#: so a point is the same number to the sampler and to Simplify.
+POINTS = [-1.5, 0.25, 2.5, 4.0, 6.0, 7.0, 10.5]
+
+
+def session_parsed(session, text):
+    return parse_expression(text, session.state).node
+
+
+def programmed_session(*lines):
+    session = Session()
+    for line in (*PROGRAMS, *lines):
+        session.author(line)
+    return session
+
+
+async def at_points(session, text, points=POINTS):
+    """`text` as Simplify gives it under Approximate at each point, as floats (NaN
+    where it is no number). The number is written in place of `x`, since substituting
+    into the simplified expression is not what is plotted."""
+    found = []
+    for point in points:
+        entry = await session.approx(re.sub(r"\bx\b", f"({point})", text))
+        try:
+            found.append(float(entry.text.replace("*10^", "e")))
+        except ValueError:
+            found.append(float("nan"))
+    return found
+
+
+async def plotted_values(session, text, variables=("x",), points=POINTS):
+    """The values the plot of `text` draws at `points`, through the form the Plot
+    command finds and the closure the host builds from it."""
+    entry = session.author(text)
+    form = await session.plot_form(f"#{entry.number}")
+    f = evaluate.closure(form.exact, session.context, variables, form.pointwise)
+    return form, list(f(np.array(points)))
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "f1(x)",
+        "f2(x)",
+        "stp(x)",
+        "fact(FLOOR(x))",
+        "escape(x)",
+        "fib(FLOOR(x))",
+        "PRIMEPI(x)",
+        "EULER_PHI(FLOOR(x))",
+        "IF(PRIME?(FLOOR(x)), 1, 0)",
+    ],
+)
+async def test_a_plot_draws_at_each_point_what_simplify_gives_there(text):
+    session = programmed_session()
+    _, values = await plotted_values(session, text)
+    expected = await at_points(session, text)
+    assert np.allclose(values, expected, equal_nan=True), (values, expected)
+
+
+async def test_a_program_that_closes_over_its_variable_plots_its_answer():
+    # Derive simplifies before it plots, with the program's assignments made: the
+    # answer `x^2 + 1` is drawn like any closed form, and `y_` is assigned.
+    session = programmed_session()
+    form, values = await plotted_values(session, "f1(x)", points=[3.0])
+    assert not form.pointwise
+    assert form.text == "x^2 + 1"
+    assert values == [10.0]
+    assert "y_" in session.assignments
+
+
+async def test_what_no_simplification_closes_is_evaluated_at_each_point():
+    session = programmed_session()
+    for text in [
+        "f2(x)",
+        "stp(x)",
+        "fact(FLOOR(x))",
+        "escape(x)",
+        "PRIMEPI(x)",
+        "EULER_PHI(FLOOR(x))",
+        "x + RANDOM(1)",
+    ]:
+        entry = session.author(text)
+        form = await session.plot_form(f"#{entry.number}")
+        assert form.pointwise, text
+        # It is drawn as written, not as a simplification that answers wrongly:
+        # `stp(x)` with `x` unknown would run past both tests and answer 1.
+        assert form.exact == entry.node, text
+        assert form.variables == ("x",), text
+
+
+async def test_a_function_with_early_returns_plots_each_of_its_pieces():
+    session = programmed_session()
+    _, values = await plotted_values(session, "stp(x)", points=[-2.0, 0.5, 3.0])
+    assert values == [0.0, 0.5, 1.0]
+
+
+async def test_the_locals_of_a_program_are_not_variables_of_its_plot():
+    # `a_` is assigned by the program standing in the conditional, not plotted over:
+    # this is a curve, not a surface.
+    session = programmed_session()
+    entry = session.author("f2(x)")
+    assert await session.variables(f"#{entry.number}") == ("x",)
+    form = await session.plot_form(f"#{entry.number}")
+    assert classify(form.exact, form.variables, "f2(x)").kind is PlotKind.CURVE
+
+
+async def test_an_iteration_over_a_conditional_is_listed_and_plotted_at_once():
+    # Written out, the conditional of each pass nests the last one's, doubling with
+    # every pass; listing the variables and finding the plot's form take no time.
+    session = programmed_session()
+    entry = session.author("escape(x)")
+    started = time.monotonic()
+    assert await session.variables(f"#{entry.number}") == ("x",)
+    assert (await session.plot_form(f"#{entry.number}")).pointwise
+    assert time.monotonic() - started < 2.0
+
+
+async def test_a_random_draw_is_drawn_anew_at_every_point():
+    session = programmed_session()
+    form, values = await plotted_values(session, "x + RANDOM(1)", points=[0.0] * 6)
+    assert form.pointwise
+    assert all(0.0 <= value < 1.0 for value in values)
+    assert len(set(values)) > 1
+
+
+async def test_the_globals_a_plotted_program_assigns_stay_assigned():
+    # Worksheets rely on Derive making a plotted program's assignments, once, as
+    # Simplify makes them; the points evaluated for the picture assign nothing.
+    session = programmed_session(
+        "count := 0",
+        "tick(x) := PROG(count := count + 1, x^2)",
+        "tock(x) := PROG(count := count + 10, IF(x < 0, RETURN 0), x)",
+    )
+    form, _ = await plotted_values(session, "tick(x)")
+    assert not form.pointwise
+    assert (await session.simplify("count")).text == "1"
+    # A program that the simplification can't settle is given up whole, so it
+    # assigns nothing; nor does any point.
+    form, values = await plotted_values(session, "tock(x)", points=[-1.0, 2.0])
+    assert form.pointwise
+    assert values == [0.0, 2.0]
+    assert (await session.simplify("count")).text == "1"
+
+
+async def test_a_data_plot_of_program_calls_is_a_matrix_of_numbers():
+    session = programmed_session()
+    for text, rows in [
+        ("VECTOR([k, fib(k)], k, 0, 10)", 11),
+        ("TABLE(fib(x), x, 0, 5, 1)", 6),
+    ]:
+        entry = session.author(text)
+        form = await session.plot_form(f"#{entry.number}")
+        assert not form.pointwise
+        plotted = classify(form.exact, form.variables, text, form.relation)
+        assert plotted.kind is PlotKind.DATA, text
+        xs, ys = evaluate.points(form.exact, session.context)
+        assert list(xs) == list(range(rows))
+        assert list(ys[:7]) == [0.0, 1.0, 1.0, 2.0, 3.0, 5.0, 8.0][:rows]
+
+
+async def test_an_ordinary_expression_never_builds_a_point_evaluator():
+    session = programmed_session()
+    for text in ["SIN(x)", "x^3 - 2*x + 1", "IF(x < 0, -x, x^2)", "MOD(x, 3)", "x!"]:
+        entry = session.author(text)
+        form = await session.plot_form(f"#{entry.number}")
+        assert not form.pointwise, text
+        f = evaluate.closure(form.exact, session.context, ("x",), form.pointwise)
+        assert not isinstance(f, evaluate._Pointwise), text
+
+
+async def test_every_kind_of_plot_can_be_evaluated_point_by_point():
+    session = programmed_session()
+    context = session.context
+    # An implicit curve: the sides of the equation, each evaluated at the point.
+    difference = evaluate.difference(
+        session_parsed(session, "ring(x, y) = 1"), context, ("x", "y"), pointwise=True
+    )
+    assert list(difference(np.array([0.0, 2.0]), np.array([0.0, 3.0]))) == [0.0, 5.0]
+    # A region: the truth of the inequality at the point.
+    node = session_parsed(session, "ring(x, y) > 2")
+    mask = evaluate.mask(node, context, ("x", "y"), pointwise=True)
+    assert list(mask(np.array([0.0, 2.0]), np.array([0.0, 3.0]))) == [False, True]
+    # A parametric pair: both coordinates from one evaluation per point.
+    node = session_parsed(session, "[stp(t), t]")
+    fx, fy = evaluate.pair(node, context, ("t",), pointwise=True)
+    ts = np.array([-1.0, 0.5, 2.0])
+    assert (list(fx(ts)), list(fy(ts))) == ([0.0, 0.5, 1.0], [-1.0, 0.5, 2.0])
+    # A surface over a grid.
+    xs, ys, values = evaluate.grid_eval(
+        evaluate.closure(
+            session_parsed(session, "ring(x, y)"), context, ("x", "y"), True
+        ),
+        (0.0, 2.0),
+        (0.0, 2.0),
+        3,
+        3,
+    )
+    assert values.tolist() == [[1.0, 0.0, 0.0], [0.0, 1.0, 2.0], [0.0, 2.0, 4.0]]
+
+
+def test_a_surface_evaluated_point_by_point_is_sampled_on_a_coarser_grid():
+    session = programmed_session()
+    surface = Surface(
+        worksheet=1,
+        label="#1",
+        text="ring(x, y)",
+        kind=PlotKind.SURFACE,
+        node=session_parsed(session, "ring(x, y)"),
+        context=session.context,
+        options=plots.Options(variables=("x", "y")),
+        pointwise=True,
+    )
+    surface.closure = None
+    _, xs, ys, values, _ = resample.grid_job(surface, VIEW, VIEW, (64, 64))(None)
+    assert values.shape == (32, 32)
+    assert np.isfinite(values).all()
+
+
+def test_a_point_past_its_step_limit_is_left_out_rather_than_waited_for(monkeypatch):
+    from rederive.engine import plot_form
+
+    monkeypatch.setattr(plot_form, "POINT_STEPS", 500)
+    session = programmed_session("spin(x, k_) := PROG(k_ := 0, LOOP(k_ :+ 1))")
+    node = session_parsed(session, "spin(x)")
+    f = evaluate.closure(node, session.context, ("x",), pointwise=True)
+    started = time.monotonic()
+    assert np.isnan(f(np.array([1.0, 2.0, 3.0]))).all()
+    # A program that ends at no point is said to, after a few points.
+    with pytest.raises(evaluate.Unplottable, match="past 500 steps at every point"):
+        evaluate.sample_adaptive(f, VIEW, VIEW, CANVAS)
+    assert time.monotonic() - started < 5.0
+
+
+async def test_a_simplification_that_runs_on_is_given_up_for_the_points(monkeypatch):
+    # A program whose loop ends on numbers but takes long over symbols is given up
+    # at its next step once the plot's simplification is out of time.
+    from rederive.engine import plot_form
+
+    monkeypatch.setattr(plot_form, "SETTLING", 0.05)
+    session = programmed_session(
+        "slow(x, k_) := PROG(k_ := 0, LOOP(IF(k_ > 10^6, RETURN x), k_ :+ 1))"
+    )
+    entry = session.author("slow(x)")
+    started = time.monotonic()
+    form = await session.plot_form(f"#{entry.number}")
+    assert form.pointwise
+    assert form.variables == ("x",)
+    assert time.monotonic() - started < 5.0
+
+
+def test_a_sampling_that_takes_too_long_says_so(monkeypatch):
+    monkeypatch.setattr(evaluate, "POINTWISE_SECONDS", 0.0)
+    session = programmed_session()
+    node = session_parsed(session, "stp(x)")
+    f = evaluate.closure(node, session.context, ("x",), pointwise=True)
+    with pytest.raises(evaluate.Unplottable, match="point by point"):
+        evaluate.sample_adaptive(f, VIEW, VIEW, CANVAS)
+    # One point, as a trace reads, is never stopped.
+    assert list(f(np.array([0.5]))) == [0.5]
+
+
+def test_a_sampling_no_longer_wanted_stops_between_points():
+    # A newer sampling of the same plot, as a zoom sends, ends the one running: it
+    # stops at its next point rather than finishing a curve nobody will see.
+    from rederive.plot.session import Sampler
+
+    class Threaded:
+        def serving(self, sampler):
+            self.sampler = sampler
+
+        def wake(self):
+            job = self.sampler.take()
+            if job is not None:
+                work, done = job
+                threading.Thread(target=lambda: done(work()), daemon=True).start()
+
+        def deliver(self, done, answer):
+            done(answer)
+
+    session = programmed_session(
+        "slow(x, k_) := PROG(k_ := 0, LOOP(IF(k_ > 400, RETURN x), k_ :+ 1))"
+    )
+    node = session_parsed(session, "slow(x)")
+    f = evaluate.closure(node, session.context, ("x",), pointwise=True)
+    started = threading.Event()
+    answers = []
+
+    def work(_report):
+        started.set()
+        return f(np.linspace(0.0, 1.0, 2000))
+
+    sampler = Sampler(Threaded())
+    sampler.submit("curve", work, answers.append)
+    assert started.wait(10.0)
+    sampler.submit("curve", lambda _report: "newer", answers.append)
+    deadline = time.monotonic() + 10.0
+    while len(answers) < 2 and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert "newer" in answers
+    assert any(isinstance(answer, evaluate.Cancelled) for answer in answers)
 
 
 # -- the solid: the mesh, the box, the ticks -----------------------------------
@@ -3190,6 +3513,32 @@ async def test_a_highlighted_subexpression_is_what_gets_plotted(app):
         assert request.text == "SIN(x)"
 
 
+async def test_a_program_the_simplification_cannot_settle_is_sent_as_written(app):
+    async with app.run_test() as pilot:
+        await authored(pilot, app, "f2(x) := IF(x < 0, PROG(a_ := -x, a_), x^2)")
+        await authored(pilot, app, "f2(x)")
+        await pilot.press("p", "p")
+        assert message(app) == "Plotting #2"
+        request = app.plots.sent[0]
+        # A curve in x, evaluated point by point: `a_` is the program's own.
+        assert request.kind is PlotKind.CURVE
+        assert request.options.variables == ("x",)
+        assert request.pointwise
+        assert request.node == app.session.entries[1].node
+
+
+async def test_what_simplifies_to_a_closed_form_is_sent_simplified(app):
+    async with app.run_test() as pilot:
+        await authored(pilot, app, "g(n) := PROG(k_ := n^2, k_ + 1)")
+        await authored(pilot, app, "VECTOR([k, g(k)], k, 1, 3)")
+        await pilot.press("p", "p")
+        request = app.plots.sent[0]
+        # A data plot of the program's values, which as written is a call.
+        assert request.kind is PlotKind.DATA
+        assert not request.pointwise
+        assert request.text == "VECTOR([k, g(k)], k, 1, 3)"
+
+
 async def test_a_plot_that_replaces_a_curve_says_replotting(app):
     async with app.run_test() as pilot:
         await authored(pilot, app, "SIN(x)")
@@ -3378,11 +3727,11 @@ async def test_the_options_plot_screen_is_gone(app):
         # controls, so the menu doesn't offer it and `l` does nothing.
         await pilot.press("o")
         assert band(app) == [
-            " OPTIONS: Color Input Mute Notation Output Precision Radix"
+            " OPTIONS: Color Defaults Input Mute Notation Output Precision Radix"
         ]
         await pilot.press("l")
         assert band(app) == [
-            " OPTIONS: Color Input Mute Notation Output Precision Radix"
+            " OPTIONS: Color Defaults Input Mute Notation Output Precision Radix"
         ]
 
 

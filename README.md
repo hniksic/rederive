@@ -170,6 +170,25 @@ Within its chosen scope, however, Rederive strives to be small and dependable. T
 trade-off defined the original: a system simple but powerful enough to be useful,
 especially in the classroom.
 
+## Differences from Derive
+
+Rederive follows Derive 6. In a few places it deliberately gives a different answer:
+
+**Approximation.** Derive approximates in fixed precision: every intermediate value is
+rounded to the digits asked for, and the rounding errors add up, most visibly where nearly
+equal values cancel. Rederive computes from the exact value with as many working digits as
+the answer needs and only then cuts the result to the digits asked for, so the digits
+shown are the value's own. At six digits:
+
+```
+SQRT(10001) - 100              0.00499987          Derive: 0.00499722
+SQRT(10^200 + 1) - 10^100      5.00000*10^-101     Derive: 0
+```
+
+**Integrals through a pole.** A definite integral across a pole inside the interval is
+`inf` or `?`, not the difference of the antiderivative's values at the ends:
+`INT(1/x^2, x, -1, 1)` is `inf`, where Derive gives `-2`.
+
 ## How Rederive was built
 
 Rederive is mostly AI-coded. I directed the implementation, following the UI and

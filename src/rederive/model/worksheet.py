@@ -12,8 +12,9 @@ Blank lines are ignored; one is written between records for readability. There i
 no header or version, so files can be edited and diffed as text, and the original's
 `.MTH` utility files are already in this format.
 
-`Source.from_file` in the syntax package strips comments and joins continuations
-when reading. This module interprets the comments and writes files.
+`Source.from_file` in the syntax package reads the text: it joins continuations,
+expands escapes, and pairs each expression with its annotation. This module decodes
+files and writes them.
 
 Wherever a math file is read, a Derive for Windows worksheet is read too: `read` tells
 them apart by content, since the extension is not reliable, and `dfw` reads the binary
@@ -25,13 +26,16 @@ desktop, a page-local store in a browser); path interpretation stays here.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+import os
+import re
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
 from rederive import platform
 from rederive.model import dfw
-from rederive.syntax.source import END_MARKER, unescaped
+from rederive.syntax import Source, source_lines
+from rederive.syntax.source import COMMENT
 
 #: The extension added to a name typed without one.
 SUFFIX = ".mth"
@@ -46,7 +50,6 @@ DFW_SUFFIX = ".dfw"
 #: The extensions offered when choosing a worksheet to read.
 READABLE = (SUFFIX, DFW_SUFFIX)
 
-COMMENT = ";"
 CONTINUATION = "~"
 
 #: A line consisting only of a quoted string is also prose. The original's plot
@@ -62,11 +65,12 @@ MINIMUM_LENGTH = 2
 class Record:
     """One expression of a file, with its annotation.
 
-    An empty annotation (the usual case for authored lines) isn't written.
+    No annotation (None, the usual case for authored lines) isn't written; an empty one
+    is a bare `;`.
     """
 
     text: str
-    annotation: str = ""
+    annotation: str | None = None
 
 
 def write(
@@ -83,8 +87,8 @@ def write(
     """
     lines: list[str] = []
     for record in records:
-        if annotations and record.annotation:
-            lines.append(comment + record.annotation)
+        if annotations and record.annotation is not None:
+            lines.append((comment + record.annotation).rstrip())
         lines.extend([record.text] if length is None else _continued(record.text, length))
         lines.append("")
     return "\n".join(lines)
@@ -103,49 +107,20 @@ def _continued(text: str, length: int) -> list[str]:
     return [chunk + CONTINUATION for chunk in chunks[:-1]] + chunks[-1:]
 
 
-def annotations_of(text: str) -> dict[int, str]:
-    """The annotation of each expression of `text`, keyed by its starting line.
-
-    Lines are numbered from one, as `Source.locate` reports them. An annotation
-    applies to the next expression; a later `;` line before it replaces the
-    earlier one.
-    """
-    found: dict[int, str] = {}
-    pending = ""
-    for number, line in enumerate(_lines(text), start=1):
-        stripped = line.strip()
-        if not stripped:
-            continue
-        if stripped.startswith(COMMENT):
-            pending = stripped[len(COMMENT) :].strip()
-        else:
-            if pending:
-                found[number] = pending
-            pending = ""
-    return found
-
-
-def _lines(text: str) -> list[str]:
-    """A file's lines, up to the DOS Ctrl-Z end marker the original always wrote."""
-    end = text.find(END_MARKER)
-    return (text if end < 0 else text[:end]).splitlines()
-
-
 def decoded(raw: bytes) -> str:
     """Decode a math file as UTF-8, falling back to code page 437.
 
-    Rederive writes UTF-8; the original wrote code page 437, which matters only for
-    non-ASCII glyphs such as Greek names. Code page 437 decodes any byte, so
-    decoding never fails.
+    Rederive writes UTF-8; Derive for DOS and Derive 5 wrote code page 437, which
+    matters only for non-ASCII glyphs such as Greek names. Code page 437 decodes any
+    byte, so decoding never fails. A byte order mark is dropped.
 
-    Derive 6 writes a character beyond ASCII as an escape, `\x7f2211` for `∑`, which
-    is decoded here too.
+    Derive 6 writes a character beyond ASCII as an escape, `\x7f2211` for `∑`. Escapes
+    are left for `Source.from_file`, since a line break may fall inside one.
     """
     try:
-        text = raw.decode("utf-8")
+        return raw.decode("utf-8-sig")
     except UnicodeDecodeError:
-        text = raw.decode("cp437")
-    return unescaped(text)
+        return raw.decode("cp437")
 
 
 def text_of(path: Path) -> str:
@@ -171,11 +146,8 @@ def steps_of(text: str) -> tuple[tuple[str, str], ...]:
     """The steps of a demonstration: each comment paired with the line below it.
 
     A demonstration is a math file whose comments are script text rather than
-    annotations. A step without a comment has a blank band.
-
-    A line ending in `~` continues on the next, which is joined as it stands, leading
-    blanks included, as when a utility file is read: the original breaks lines at a
-    fixed width, even inside a name or between the words of `m sub 2`.
+    annotations, and it is read as one (`Source.from_file`). A step without a comment
+    has a blank band.
 
     A line that is only a quoted string also counts as a comment, so the original's
     plot galleries (a caption, then the expression) work as demonstrations.
@@ -183,28 +155,15 @@ def steps_of(text: str) -> tuple[tuple[str, str], ...]:
     Takes text rather than a path so a downloaded demonstration can run without
     being saved first.
     """
-    comments = annotations_of(text)
+    source = Source.from_file(text)
     steps = []
-    pending: list[str] = []
     caption = ""
-    for number, line in enumerate(_lines(text), start=1):
-        if pending:
-            stripped = line.rstrip()
-        else:
-            stripped = line.strip()
-            if not stripped or stripped.startswith(COMMENT):
-                continue
-            if _captioning(stripped):
-                caption = stripped[1:-1].strip()
-                continue
-        pending.append(stripped)
-        if stripped.endswith(CONTINUATION):
-            pending[-1] = stripped[: -len(CONTINUATION)]
+    for start, stop in source_lines(source):
+        line = source.text[start:stop].strip()
+        if _captioning(line):
+            caption = line[1:-1].strip()
             continue
-        # The comment belongs to the line the expression started on.
-        start = number - len(pending) + 1
-        steps.append((comments.get(start, caption), unescaped("".join(pending))))
-        pending = []
+        steps.append((source.annotations.get(start) or caption, line))
         caption = ""
     return tuple(steps)
 
@@ -218,6 +177,83 @@ def _captioning(line: str) -> bool:
     if len(line) < 2 or not line.startswith(QUOTE) or not line.endswith(QUOTE):
         return False
     return QUOTE not in line[1:-1]
+
+
+#: The separators of the parts of a path as `LOAD` names it, and a drive letter.
+_SEPARATORS = re.compile(r"[\\/]")
+_DRIVE = re.compile(r"[A-Za-z]:")
+
+#: The subdirectory of the working directory where `LOAD` also looks, as Derive kept its
+#: utility files in its `Math` directory.
+MATH_DIRECTORY = "math"
+
+
+def file_name(written: str) -> str:
+    """The name of the file a path names, as `LOAD` writes it: its last part."""
+    return _SEPARATORS.split(written)[-1]
+
+
+def located(written: str, near: Sequence[Path] = ()) -> Path | None:
+    """The file `LOAD(written)` loads, or None if there is none.
+
+    Derive's worksheets name files by Windows paths of the machine they were made on
+    (`C:\\Derive6\\Math\\Number.mth`, `..\\math\\vector`), so the path is split at
+    either kind of slash and a drive letter is dropped. It is looked for as given, a
+    relative path against the first of `near` (the directory of the file being read),
+    or the working directory without one; then by its name alone in each of `near`, the
+    working directory and the latter's `Math` subdirectory. Names are compared
+    whatever their case, and a name without an extension is looked for with `.mth`,
+    then `.dfw`. Only math files and worksheets are loaded: a name with another
+    extension finds nothing.
+    """
+    parts = _SEPARATORS.split(written.strip())
+    if parts and _DRIVE.match(parts[0]):
+        parts[0] = parts[0][2:]
+    *directories, name = parts
+    if not name or name in (".", ".."):
+        return None
+    suffix = Path(name).suffix.lower()
+    if suffix and suffix not in READABLE:
+        return None
+    names = [name] if suffix else [name + extension for extension in READABLE]
+    if directories and not directories[0]:
+        given = Path(os.sep).joinpath(*directories[1:])
+    else:
+        given = (near[0] if near else Path()).joinpath(*directories)
+    places = [given, *near, Path(), *_math_directories()]
+    for place in dict.fromkeys(places):
+        found = _named_in(place, names)
+        if found is not None:
+            return found
+    return None
+
+
+def _math_directories() -> list[Path]:
+    """The working directory's `Math` subdirectory, in whatever case it is spelled."""
+    storage = platform.current().storage()
+    return [
+        Path(entry)
+        for entry in storage.names(Path())
+        if entry.lower() == MATH_DIRECTORY and storage.is_directory(Path(entry))
+    ]
+
+
+def _named_in(directory: Path, names: Sequence[str]) -> Path | None:
+    """The file in `directory` with the first of `names`, whatever the case; one with
+    the case as written comes first."""
+    storage = platform.current().storage()
+    entries = storage.names(directory)
+    for name in names:
+        matching = [entry for entry in entries if entry.lower() == name.lower()]
+        for entry in sorted(matching, key=lambda entry: entry != name):
+            if not storage.is_directory(directory / entry):
+                return directory / entry
+    return None
+
+
+def same_file(one: Path, other: Path) -> bool:
+    """Whether two paths name the same file."""
+    return os.path.abspath(one) == os.path.abspath(other)
 
 
 def path_of(name: str, suffix: str = SUFFIX) -> Path:

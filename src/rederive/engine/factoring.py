@@ -43,8 +43,10 @@ import sympy as sp
 from sympy.core.mul import _keep_coeff
 
 from rederive.engine.boundary import DEFAULT_AMOUNT, Amount
+from rederive.engine.matrix_factoring import MATRIX_AMOUNTS, matrix_product
 from rederive.engine.shape import attempt as _attempt
 from rederive.engine.shape import distributed
+from rederive.engine.vectors import Vector
 
 __all__ = ["amount_named", "factored_expression"]
 
@@ -71,17 +73,124 @@ def factored_expression(
     amount: Amount = DEFAULT_AMOUNT,
     variables: Sequence[str] = (),
     finish: Finish | None = None,
+    content: bool = False,
 ) -> sp.Basic:
     """`expression` written as a product, as far as `amount` allows.
 
     `variables` names the factorization variables in the order chosen, empty meaning
     all. Each scalar in the expression is factored and then passed through `finish`, so
-    rounding applies to the factors rather than to the original.
+    rounding applies to the factors rather than to the original. A logical formula is
+    put in conjunctive normal form.
+
+    `content` asks for a vector's content to be pulled out instead: `[10, 100, 1000]`
+    is `10*[1, 10, 100]` (see `vector_content`); Trivial pulls out no sum. A vector
+    without content is factored element by element.
+
+    The matrix amounts write a matrix as a product of matrices (see
+    `matrix_factoring`); anything else they factor as Rational does.
 
     Never raises on output of the conversion layer; a failed rewrite is skipped.
     """
+    if amount in MATRIX_AMOUNTS:
+        try:
+            product = matrix_product(expression, amount, finish)
+        except Exception:
+            product = None
+        if product is not None:
+            return product
+        amount = DEFAULT_AMOUNT
+    if content and isinstance(expression, Vector):
+        whole = amount is not Amount.TRIVIAL
+        pulled = _attempt(expression, lambda vector: vector_content(vector, whole))
+        if pulled is not expression:
+            return pulled
     request = _Request(amount, tuple(variables), finish)
-    return distributed(expression, lambda scalar: _leaf(scalar, request))
+    return distributed(
+        expression, lambda scalar: _leaf(scalar, request), _conjunctive
+    )
+
+
+def _conjunctive(formula: sp.Basic) -> sp.Basic:
+    """A logical formula in conjunctive normal form: `p OR (q AND r)` is `(p OR q) AND
+    (p OR r)`."""
+    try:
+        return sp.to_cnf(formula)
+    except Exception:
+        return formula
+
+
+def vector_content(vector: Vector, whole: bool = True) -> sp.Basic:
+    """`vector` as its content times the vector of cofactors, or `vector` if the
+    content is 1. Without `whole`, as for Trivial, the content has no sum in it.
+
+    The content is the gcd of the elements, at every depth of a matrix: the gcd of
+    their numeric coefficients times the common factors of the rest. Multiple angles
+    are written out where that finds more in common, so `[2*r*COS(t)/3 -
+    2*r*COS(t)^2/3, 2*r*SIN(t)/3 - r*SIN(2*t)/3]` is `2*r*(COS(t) - 1)/3*[-COS(t),
+    -SIN(t)]`. The product is held unevaluated, so that it is the answer as written;
+    used in arithmetic it is the vector again.
+    """
+    elements = list(_elements(vector))
+    if len(elements) < 2 or not all(isinstance(e, sp.Expr) for e in elements):
+        return vector
+    if all(element == 0 for element in elements):
+        return vector
+    common = _common_factor(elements, whole)
+    if whole and any(element.has(sp.sin, sp.cos) for element in elements):
+        expanded = [sp.expand_trig(element) for element in elements]
+        wider = _common_factor(expanded, whole)
+        if sp.count_ops(wider) > sp.count_ops(common):
+            common, elements = wider, expanded
+            vector = _scaled(vector, sp.expand_trig)
+    if common == 1:
+        return vector
+    cofactors = _scaled(vector, lambda element: sp.cancel(element / common))
+    return sp.Mul(*sp.Mul.make_args(common), cofactors, evaluate=False)
+
+
+def _common_factor(elements: list[sp.Expr], whole: bool) -> sp.Expr:
+    """The gcd of `elements`, not all zero: of their numeric coefficients, times the
+    gcd of the rest as polynomials, or without `whole` only the factors of that which
+    are no sums."""
+    nonzero = [element for element in elements if element != 0]
+    numbers, primitives = zip(
+        *(element.as_content_primitive() for element in nonzero), strict=True
+    )
+    numeric = sp.Rational(
+        sp.igcd(*(number.p for number in numbers)),
+        sp.ilcm(*(number.q for number in numbers)),
+    )
+    symbolic = primitives[0]
+    for primitive in primitives[1:]:
+        symbolic = sp.gcd(symbolic, primitive)
+    symbolic = sp.factor_terms(symbolic.as_content_primitive()[1])
+    if not whole:
+        symbolic = sp.Mul(
+            *(
+                factor
+                for factor in sp.Mul.make_args(symbolic)
+                if not factor.as_base_exp()[0].is_Add
+            )
+        )
+    return numeric * symbolic
+
+
+def _elements(vector: sp.Basic):
+    """The scalars of a vector or matrix."""
+    for element in vector.args:
+        if isinstance(element, Vector):
+            yield from _elements(element)
+        else:
+            yield element
+
+
+def _scaled(vector: Vector, rewrite: Callable[[sp.Expr], sp.Expr]) -> Vector:
+    return Vector(
+        *(
+            _scaled(element, rewrite) if isinstance(element, Vector) else rewrite(element)
+            for element in vector.args
+        )
+    )
 
 
 @dataclass(frozen=True)
@@ -360,6 +469,25 @@ def _decomposed(expression: sp.Expr) -> sp.Expr:
     return _attempt(expression, _primes)
 
 
+def integer_powers(number: int) -> dict[int, int]:
+    """The prime factorization of a positive integer, as primes and their powers.
+
+    The primes below a million are divided out first, and only what remains goes to
+    sympy's full search: on a number whose factors are all small (`p - 1` for a prime
+    built as a product of small primes plus one) the full search can run for minutes
+    before trying division. Every factor the bounded pass leaves that is not prime is
+    factored completely, so the result is complete either way.
+    """
+    powers: dict[int, int] = {}
+    for factor, power in sp.factorint(number, limit=10**6).items():
+        if factor < 10**12 or sp.isprime(factor):
+            powers[factor] = powers.get(factor, 0) + power
+            continue
+        for prime, inner in sp.factorint(factor).items():
+            powers[prime] = powers.get(prime, 0) + inner * power
+    return powers
+
+
 def _primes(number: sp.Rational) -> sp.Expr:
     """`number` as a product of prime powers, built rather than evaluated.
 
@@ -376,9 +504,13 @@ def _primes(number: sp.Rational) -> sp.Expr:
     indefinitely. Bounding it with `limit=` is worse: sympy then disables
     elliptic-curve factoring and may return an untested composite among the primes,
     so it is slower *and* wrong. Unbounded, every factorization is complete, and a
-    hopeless number can be aborted with Esc.
+    number that takes long to factor takes as long as the user lets it. The small
+    primes are divided out first, though (see `integer_powers`).
     """
-    powers = sp.factorrat(abs(number))
+    number = sp.Rational(number)
+    powers = integer_powers(abs(number.p))
+    for prime, power in integer_powers(number.q).items():
+        powers[prime] = powers.get(prime, 0) - power
     pieces = [
         sp.Integer(prime) if power == 1 else sp.Pow(prime, power, evaluate=False)
         for prime, power in sorted(powers.items())

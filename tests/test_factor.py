@@ -11,12 +11,15 @@ engine's form is recorded and the case says so; nothing is weakened to make a te
 from __future__ import annotations
 
 import math
+import time
 
 import pytest
+from simplifying import simp
 
-from rederive.engine.computing import Amount, Context, factor, simplify
+from rederive.engine.computing import Amount, Context, Definition, factor, simplify
 from rederive.engine.context import Precision
-from rederive.syntax import ParseState, parse_expression
+from rederive.model.session import Session
+from rederive.syntax import FunctionDeclaration, ParseState, parse_expression
 
 TRIVIAL = Amount.TRIVIAL
 SQUAREFREE = Amount.SQUAREFREE
@@ -285,10 +288,10 @@ def test_rounding_happens_after_factoring_not_before():
     not the input.
     """
     assert fact("x^2 - 2", RADICAL, context=APPROXIMATE) == (
-        "(x + 1.41421)*(x - 1.41421)"
+        "(x + 1.414213562)*(x - 1.414213562)"
     )
     assert fact("x^2 + 2", COMPLEX, context=APPROXIMATE) == (
-        "(x + 1.41421*#i)*(x - 1.41421*#i)"
+        "(x + 1.414213562*#i)*(x - 1.414213562*#i)"
     )
 
 
@@ -313,7 +316,7 @@ def test_rounding_reaches_the_factors_beside_a_decomposition():
     """Precision applies per scalar, so one entry can hold both an exact decomposition
     and a rounded factorization."""
     assert fact("[1234567890, x^2 - 2]", RADICAL, context=APPROXIMATE) == (
-        "[2*3^2*5*3607*3803, (x + 1.41421)*(x - 1.41421)]"
+        "[2*3^2*5*3607*3803, (x + 1.414213562)*(x - 1.414213562)]"
     )
 
 
@@ -380,6 +383,48 @@ def test_simplify_evaluates_a_factor_head(text, expected):
     assert simplify(parse(text), Context()).text == expected
 
 
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        # A vector's content is pulled out, with no amount or Trivial; Trivial pulls
+        # out no sum. Any other amount factors each element.
+        ("FACTOR([10, 100, 1000])", "10*[1, 10, 100]"),
+        ("FACTOR([10, 100, 1000], Trivial)", "10*[1, 10, 100]"),
+        ("FACTOR([x^2 - 1, 2*x + 2])", "(x + 1)*[x - 1, 2]"),
+        ("FACTOR([[2, 4], [6, 8]])", "2*[[1, 2], [3, 4]]"),
+        (
+            "FACTOR([2*r*COS(t)/3 - 2*r*COS(t)^2/3, 2*r*SIN(t)/3 - 2*r*SIN(t)*COS(t)/3])",
+            "2*r*(COS(t) - 1)*[-COS(t), -SIN(t)]/3",
+        ),
+        ("FACTOR([1, 2, 4, 8, 16], Number)", "[1, 2, 2^2, 2^3, 2^4]"),
+        ("VECTOR(FACTOR(k), k, 2005, 2006)", "[5*401, 2*17*59]"),
+        # A logical expression factors to its conjunctive normal form.
+        ("FACTOR(p OR q AND r)", "(p OR q) AND (p OR r)"),
+        ("FACTORS(p OR q AND r)", "[p OR q, p OR r]"),
+        # A relation has its sides factored, then is decided where its sides decide it.
+        ("FACTOR(a = a - x)", "a = a - x"),
+        ("FACTOR(x^2 + 5*x + 25/4 = 1/4)", "(2*x + 5)^2/4 = 1/4"),
+        ("FACTOR(x^2 - 1 = (x - 1)*(x + 1))", "true"),
+        ("FACTOR(-12)", "-2^2*3"),
+        ("FACTOR(x^2 - 3, Radical)", "(x + SQRT(3))*(x - SQRT(3))"),
+    ],
+    ids=str,
+)
+def test_factor_takes_vectors_formulas_and_relations(text, expected):
+    assert simplify(parse(text), Context()).text == expected
+
+
+def test_a_definition_factors_what_its_calls_give_it():
+    context = Context(functions={"F": Definition(("u",), parse("FACTOR(u)"))})
+    state = ParseState()
+    state.declare(FunctionDeclaration("F"))
+    shown = simplify(parse("F(u) := FACTOR(u)", state), context, state).text
+    assert shown == "F(u) := FACTOR(u)"
+    assert simplify(parse("F(x^2 - 1)", state), context, state).text == (
+        "(x + 1)*(x - 1)"
+    )
+
+
 def test_a_factor_head_splits_what_the_radicals_split():
     # Two rational quadratics, each split by its own square root.
     assert simplify(parse("FACTOR(x^4 - 5*x^2 + 6, raDical)"), Context()).text == (
@@ -434,21 +479,57 @@ def test_a_word_that_names_no_amount_is_not_an_amount():
     simplify(parse("FACTOR(w, Turing)"), Context())
 
 
-def test_only_factor_is_evaluated():
-    # FACTORS is a syntactic decomposition, not this command: a number is a single
-    # factor, however many primes divide it.
-    assert simplify(parse("FACTORS(10!)"), Context()).text == "[3628800]"
+def test_factors_of_a_number_are_its_primes_with_their_exponents():
+    # FACTORS factors a number itself, giving base and exponent pairs.
+    assert simplify(parse("FACTORS(10!)"), Context()).text == (
+        "[[2, 8], [3, 4], [5, 2], [7, 1]]"
+    )
+
+
+async def test_an_integer_that_is_no_number_has_no_known_factors():
+    """The factors of an integer are its primes, unknown until it is a number, so
+    `FACTORS(FLOOR(x))` stands rather than make `FLOOR(x)` a prime, and so does the
+    library's `EULER_PHI` over it, which would otherwise be `FLOOR(x) - 1`. A step is
+    an integer too, but a factor like any other."""
+    session = Session()
+    for text, answer in [
+        ("FACTORS(FLOOR(x))", "FACTORS(FLOOR(x))"),
+        ("FACTORS(FLOOR(x) + 1)", "FACTORS(FLOOR(x) + 1)"),
+        (
+            "EULER_PHI(FLOOR(x))",
+            "PRODUCT(1 - 1/v_ SUB 1, v_, FACTORS(FLOOR(x)))*FLOOR(x)",
+        ),
+        ("FACTORS(STEP(t - 2))", "[[SIGN(t - 2)/2 + 1/2, 1]]"),
+        ("FACTORS(x)", "[[x, 1]]"),
+    ]:
+        assert (await session.simplify(text)).text == answer, text
+    session.author("n :ε Integer")
+    assert (await session.simplify("FACTORS(n)")).text == "FACTORS(n)"
+
+
+async def test_a_factored_number_held_by_a_program_is_a_number_to_compute_with():
+    """`FACTOR(6)` shows `2*3`; as an operand or an argument it is 6 again."""
+    session = Session()
+    session.author("f(u) := PROG(u := FACTOR(u), [MOD(u, 4), GCD(u, 4), u + 1])")
+    assert (await session.simplify("f(6)")).text == "[2, 2, 7]"
+    assert simplify(parse("[FACTOR(6), MOD(FACTOR(6), 4)]"), Context()).text == (
+        "[2*3, 2]"
+    )
 
 
 def test_the_factors_of_a_factored_number_are_its_prime_powers():
-    """As in Derive, they are shown as Factor wrote them, so like Factor's own answer
-    they are a form a second Simplify multiplies out."""
-    assert simplify(parse("FACTORS(FACTOR(360))"), Context()).text == "[2^3, 3^2, 5]"
-    assert simplify(parse("FACTORS(FACTOR(12/35))"), Context()).text == (
-        "[2^2, 3, 1/5, 1/7]"
+    """Factor's answer is the number it factors, so FACTORS of it is the number's
+    pairs; the denominator's primes have negative exponents and a negative number's
+    sign comes first."""
+    assert simplify(parse("FACTORS(FACTOR(360))"), Context()).text == (
+        "[[2, 3], [3, 2], [5, 1]]"
     )
-    # A negative number's sign comes first (D).
-    assert simplify(parse("FACTORS(FACTOR(-12))"), Context()).text == "[-1, 2^2, 3]"
+    assert simplify(parse("FACTORS(FACTOR(12/35))"), Context()).text == (
+        "[[2, 2], [3, 1], [5, -1], [7, -1]]"
+    )
+    assert simplify(parse("FACTORS(FACTOR(-12))"), Context()).text == (
+        "[[-1, 1], [2, 2], [3, 1]]"
+    )
 
 
 def test_a_subtree_is_factored_on_its_own():
@@ -469,3 +550,107 @@ def test_simplify_reduces_a_pythagorean_difference():
     """Derive's Simplify turns `SIN(x)^2 - 1` into `-COS(x)^2`, a cancellation of one
     term, so Factor shows it too."""
     assert simplify(parse("SIN(x)^2 - 1"), Context()).text == "-COS(x)^2"
+
+
+# -- a matrix as a product of matrices ----------------------------------------
+
+MATRICES = [
+    (
+        "FACTOR([[5, 1], [12, 3]], Schmidt)",
+        "[[5/13, -12/13], [12/13, 5/13]] . [[13, 41/13], [0, 3/13]]",
+    ),
+    (
+        "FACTORS([[5, 1], [12, 3]], Schmidt)",
+        "[[[5/13, -12/13], [12/13, 5/13]], [[13, 41/13], [0, 3/13]]]",
+    ),
+    (
+        "FACTOR([[1, 0], [0, x - 2]], Turing)",
+        "[[1, 0], [0, 1]] . [[1, 0], [0, 1]] . [[1, 0], [0, x - 2]] . [[1, 0], [0, 1]]"
+        " . [[1, 0], [0, 1]]",
+    ),
+    # The pivot is the number of largest magnitude in its column, before any symbolic
+    # entry.
+    (
+        "FACTORS([[x, 3, 1], [2, 5, 3], [3, 3, 2]], Turing)",
+        "[[[0, 0, 1], [0, 1, 0], [1, 0, 0]], [[1, 0, 0], [2/3, 1, 0], [x/3, 1 - x/3, 1]],"
+        " [[3, 0, 0], [0, 3, 0], [0, 0, -x/9 - 2/3]], [[1, 1, 2/3], [0, 1, 5/9], [0, 0,"
+        " 1]], [[1, 0, 0], [0, 1, 0], [0, 0, 1]]]",
+    ),
+    # A row without a pivot has 1 in the diagonal factor, and the last factor is the
+    # reduced echelon form.
+    (
+        "FACTORS([[1, 2], [2, 4]], Turing)",
+        "[[[0, 1], [1, 0]], [[1, 0], [1/2, 1]], [[2, 0], [0, 1]], [[1, 0], [0, 1]], [[1,"
+        " 2], [0, 0]]]",
+    ),
+    (
+        "FACTOR([[1, 2, 3], [4, 5, 6]], Turing)",
+        "[[0, 1], [1, 0]] . [[1, 0], [1/4, 1]] . [[4, 0], [0, 3/4]] . [[1, 5/4], [0, 1]]"
+        " . [[1, 0, -1], [0, 1, 2]]",
+    ),
+    # Columns of full rank give orthonormal columns; dependent ones a permutation.
+    (
+        "FACTOR([[1, 1], [1, 0], [0, 1]], Schmidt)",
+        "[[SQRT(2)/2, SQRT(6)/6], [SQRT(2)/2, -SQRT(6)/6], [0, SQRT(6)/3]] . [[SQRT(2),"
+        " SQRT(2)/2], [0, SQRT(6)/2]]",
+    ),
+    (
+        "FACTOR([[0, 1, 0], [0, 2, 1]], Schmidt)",
+        "[[SQRT(5)/5, -2*SQRT(5)/5], [2*SQRT(5)/5, SQRT(5)/5]] . [[SQRT(5), 2*SQRT(5)/5,"
+        " 0], [0, SQRT(5)/5, 0]] . [[0, 1, 0], [0, 0, 1], [1, 0, 0]]",
+    ),
+    ("FACTOR(x^2 - 1, Turing)", "FACTOR(x^2 - 1, Turing)"),
+    ("FACTORS(x^2 - 1, Schmidt)", "FACTORS(x^2 - 1, Schmidt)"),
+    ("FACTOR([[0, 0], [0, 0]], Schmidt)", "FACTOR([[0, 0], [0, 0]], Schmidt)"),
+]
+
+
+@pytest.mark.parametrize(("text", "expected"), MATRICES, ids=str)
+def test_a_matrix_factors_into_matrices(text, expected):
+    assert simplify(parse(text), Context()).text == expected
+
+
+@pytest.mark.parametrize(
+    "matrix",
+    [
+        "[[5, 1], [12, 3]]",
+        "[[x, 3, 1], [2, 5, 3], [3, 3, 2]]",
+        "[[1, 2], [2, 4]]",
+        "[[0, 1, 0], [0, 2, 1]]",
+        "[[1, #i], [2, 1]]",
+        "[[a, b], [c, d]]",
+        "[[SQRT(2), 1], [1, SQRT(3)]]",
+    ],
+    ids=str,
+)
+@pytest.mark.parametrize("amount", ["Turing", "Schmidt"])
+def test_the_factors_multiply_to_the_matrix(matrix, amount):
+    product = simplify(parse(f"FACTOR({matrix}, {amount})"), Context())
+    assert product.text.count(" . ") >= 1
+    again = simplify(parse(f"{product.text} - {matrix}"), Context()).text
+    assert set(again.replace("[", " ").replace("]", " ").replace(",", " ").split()) == {
+        "0"
+    }
+
+
+def test_the_factor_command_factors_a_matrix():
+    assert fact("[[5, 1], [12, 3]]", Amount.SCHMIDT) == (
+        "[[5/13, -12/13], [12/13, 5/13]] . [[13, 41/13], [0, 3/13]]"
+    )
+    assert fact("[[1, 2], [2, 4]]", Amount.TURING).startswith("[[0, 1], [1, 0]] . ")
+    assert fact("x^2 - 1", Amount.TURING) == "(x + 1)*(x - 1)"
+
+
+def test_a_large_number_with_only_small_prime_factors_factors_at_once():
+    """The small primes are divided out before the full search, which on such a number
+    can run for minutes: this is `p - 1` for a prime built as one plus a product of
+    small primes."""
+    started = time.perf_counter()
+    assert simp(
+        "FACTOR(7212099401840532892586874237721019781165146032990399544640972757222354"
+        "783231230180411255103619694592)"
+    ) == (
+        "2^15*853*8263*11677*13693*17519*27431*31699*33287*38921*40123*40627*46723*"
+        "64871*75431*75479*76123*76717*81457*82003*94933*94993"
+    )
+    assert time.perf_counter() - started < 5

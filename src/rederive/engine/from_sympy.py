@@ -16,15 +16,23 @@ and saves, and as exact ratios, which the next command computes with. The latter
 from __future__ import annotations
 
 import sys
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import replace
 
 import sympy as sp
 from sympy.core.function import AppliedUndef
 
 from rederive.engine.boundary import Result
-from rederive.engine.context import Context, Notation
-from rederive.engine.printer import author_text, is_written, named
-from rederive.engine.to_sympy import FunDef, StringLiteral
+from rederive.engine.context import (
+    CLEARED,
+    CLEARED_SETTING,
+    Context,
+    Notation,
+    SettingValue,
+)
+from rederive.engine.printer import HeldBase, author_text, is_written, named
+from rederive.engine.to_sympy import Assign, FunDef, StringLiteral, Vector
 from rederive.model.expr import Kind, Node
 from rederive.syntax import (
     CaseMode,
@@ -32,7 +40,9 @@ from rederive.syntax import (
     FunctionDeclaration,
     ParseState,
     VariableDeclaration,
+    is_name,
     parse_expression,
+    reserved,
 )
 
 #: Separator between the parts of a subscripted symbol's name.
@@ -71,7 +81,34 @@ def from_sympy(
     `authored` is passed to the printer, which writes each expression it maps as the
     given text. The answer carries what the command performed in `context`.
     """
-    context = context or Context()
+    with deep_recursion(_ANSWER_DEPTH):
+        return _from_sympy(expression, context or Context(), state, authored)
+
+
+@contextmanager
+def deep_recursion(limit: int) -> Iterator[None]:
+    """Raise the Python recursion limit to `limit` while the block runs."""
+    previous = sys.getrecursionlimit()
+    if previous < limit:
+        sys.setrecursionlimit(limit)
+    try:
+        yield
+    finally:
+        sys.setrecursionlimit(previous)
+
+
+#: The recursion limit for writing an answer out and reading it back. A deep recursion
+#: of user functions builds an answer as deeply nested, a pending call inside thousands
+#: of operations, and the printer and parser recurse once per level.
+_ANSWER_DEPTH = 200_000
+
+
+def _from_sympy(
+    expression: sp.Basic,
+    context: Context,
+    state: ParseState | None,
+    authored: dict[sp.Basic, str] | None,
+) -> Result:
     # Name dummies first so the symbol table is built from the names in the text.
     expression = named(expression)
     text = author_text(expression, context, authored)
@@ -86,7 +123,14 @@ def from_sympy(
         # rather than failing the command.
         _unreadable(text)
         string = Node(Kind.STRING, 0, len(text), (), text)
-        return Result(string, text, performed=tuple(context.performed.nodes))
+        return Result(
+            string,
+            text,
+            performed=effects(context, state),
+            displayed=tuple(context.store.displayed),
+            written=context.store.written,
+            random=context.store.random,
+        )
     if node.kind is Kind.STRING and not isinstance(expression, StringLiteral):
         # The printer had no name for a head and quoted it as a string. It reparses
         # but is just as dead, so record it too. Authored strings are not failures.
@@ -95,7 +139,76 @@ def from_sympy(
         # Likewise for a function head quoted inside a larger answer.
         _unreadable(text)
     exact = _exact(expression, context, state, text, authored)
-    return Result(node, text, exact, tuple(context.performed.nodes))
+    store = context.store
+    return Result(
+        node,
+        text,
+        exact,
+        effects(context, state),
+        tuple(store.displayed),
+        store.written,
+        random=store.random,
+    )
+
+
+def effects(context: Context, state: ParseState | None = None) -> tuple[Node, ...]:
+    """What the command's programs did, as trees for the session to perform (see
+    `Store`): an `ASSIGN` of each global assigned or cleared, with its final value
+    written exactly, and each definition and declaration, in order.
+
+    A value that doesn't read back is left out and recorded as unreadable, like an
+    answer.
+    """
+    store = context.store
+    if not store.effects:
+        return ()
+    # The evaluator imports this module, so its helper is imported when needed.
+    from rederive.engine.evaluate import released
+
+    exact = replace(context, notation=Notation.RATIONAL)
+    found: list[Node] = []
+    for (kind, name), node in store.effects.items():
+        if node is not None:
+            found.append(node)
+            continue
+        if kind == "set":
+            setting = store.settings[name]
+            value = CLEARED if setting == CLEARED_SETTING else setting_value(setting)
+        else:
+            value = store.values[name]
+        if name.startswith('"'):
+            target: sp.Basic = StringLiteral(name[1:-1])
+        else:
+            target = sp.Symbol(name)
+        parts = [target, sp.Symbol(":=")]
+        if value is not CLEARED:
+            parts.append(released(value))
+        assignment = Assign(*parts)
+        text = author_text(assignment, exact)
+        known = parse_state_for(assignment, exact)
+        if state is not None:
+            known = _knowing(state, assignment, exact)
+        try:
+            tree = parse_expression(text, known).node
+        except DeriveSyntaxError:
+            tree = None
+        if tree is None or tree.kind is not Kind.ASSIGN:
+            _unreadable(text)
+            continue
+        found.append(tree)
+    return tuple(found)
+
+
+def setting_value(value: SettingValue) -> sp.Basic:
+    """A setting's value as an expression: a number, its keyword as a name, a truth
+    value, or the vector of the variables in order."""
+    if isinstance(value, int):
+        return sp.Integer(value)
+    if isinstance(value, tuple):
+        return Vector(*(sp.Symbol(name) for name in value))
+    if value in ("true", "false"):
+        return sp.true if value == "true" else sp.false
+    return sp.Symbol(value)
 
 
 def _exact(
@@ -145,11 +258,49 @@ def _knowing(
         for part in symbol.name.split(_SUBSCRIPT):
             if state.resolve(part) is None:
                 _declare_variable(known, part)
-    for call in expression.atoms(AppliedUndef):
+    for call in _called(expression):
         name = type(call).__name__
         if state.resolve(name) is None:
             _declare_function(known, name, len(call.args))
+    _know_held(known, expression)
     return known
+
+
+def _know_held(state: ParseState, expression: sp.Basic) -> None:
+    """Declare the names the held values in `expression` mention, which are in their
+    trees rather than among its atoms: variables, and the functions they call that
+    `state` doesn't know."""
+    try:
+        atoms = expression.atoms(HeldBase)
+    except Exception:
+        return
+    for atom in atoms:
+        _know_tree(state, type(atom).node)
+
+
+def _know_tree(state: ParseState, node: Node) -> None:
+    if node.kind is Kind.NAME:
+        name = str(node.value)
+        if state.resolve(name) is None:
+            _declare_variable(state, name)
+        return
+    children = node.children
+    if node.kind in (Kind.CALL, Kind.APPLY):
+        name = str(children[0].value)
+        if state.resolve(name) is None:
+            _declare_function(state, name, len(children) - 1)
+        children = children[1:]
+    for child in children:
+        _know_tree(state, child)
+
+
+def written_tree(value: sp.Basic, context: Context) -> Node:
+    """`value` as a tree: its text, exact, read back as an answer is (see
+    `from_sympy`), without the answer's other parts."""
+    exact = replace(context, notation=Notation.RATIONAL)
+    value = named(value)
+    text = author_text(value, exact)
+    return parse_expression(text, parse_state_for(value, exact)).node
 
 
 def parse_state_for(expression: sp.Basic, context: Context) -> ParseState:
@@ -174,18 +325,49 @@ def parse_state_for(expression: sp.Basic, context: Context) -> ParseState:
     for name in (*context.domains, *context.assignments):
         _declare_variable(state, name)
     # Functions last, so they override a variable of the same name.
-    for call in expression.atoms(AppliedUndef):
+    for call in _called(expression):
         _declare_function(state, type(call).__name__, len(call.args))
     for definition in expression.atoms(FunDef):
         name, parameters = definition.args[0], definition.args[1]
-        _declare_function(state, str(name), len(parameters))
-    for name, (parameters, _) in context.functions.items():
-        _declare_function(state, name, len(parameters))
+        # A variadic head has its one parameter alone, not in a tuple.
+        arity = len(parameters) if isinstance(parameters, sp.Tuple) else 1
+        _declare_function(state, str(name), arity)
+    for name, definition in context.functions.items():
+        _declare_function(state, name, len(definition.names))
+    _know_held(state, expression)
     return state
 
 
+def _called(expression: sp.Basic) -> list[AppliedUndef]:
+    """The calls of undefined functions in `expression` whose names must be declared
+    as functions to read back.
+
+    A name that is also a variable in it, as `l` in `l*o*e*l(v, w, n)`, stays one when
+    no call of it has a single argument: a name before `(` with no argument or several
+    is read as a call anyway, while one declared a function couldn't stand alone.
+    """
+    calls = [
+        call
+        for call in expression.atoms(AppliedUndef)
+        if not isinstance(call, HeldBase)
+    ]
+    symbols = {
+        symbol.name
+        for symbol in expression.atoms(sp.Symbol)
+        if not isinstance(symbol, StringLiteral)
+    }
+    single = {type(call).__name__ for call in calls if len(call.args) == 1}
+    return [
+        call
+        for call in calls
+        if type(call).__name__ not in symbols or type(call).__name__ in single
+    ]
+
+
 def _declare_variable(state: ParseState, name: str) -> None:
-    if _is_name(name):
+    """Declare `name` a variable, unless it is reserved, as the keyword a `Logical`
+    carries is, which must keep reading as the keyword."""
+    if _is_name(name) and not reserved(name):
         state.declare(VariableDeclaration(name))
 
 
@@ -201,6 +383,4 @@ def _is_name(text: str) -> bool:
     Labels, arbitrary constants and subscripted symbols contain punctuation the lexer
     handles itself, so declaring them is pointless.
     """
-    return bool(text) and text[0].isalpha() and all(
-        character.isalnum() or character == "_" for character in text
-    )
+    return is_name(text)

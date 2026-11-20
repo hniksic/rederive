@@ -10,12 +10,70 @@ MODERN = b"Derive version 6.10 DfW file saved on 03/04/2005 12:00:00\r\n\x1a"
 OLD = b"DERIVE for Windows version 5.06 DfW file saved on 03/04/2001 12:00:00\r\n\x1a"
 
 
+def escaped(text: str) -> bytes:
+    """Text as version 6 stores it: code page 1252, and an escape, DEL and four hex
+    digits, for a character beyond it."""
+    out = b""
+    for character in text:
+        try:
+            out += character.encode("cp1252")
+        except UnicodeEncodeError:
+            out += b"\x7f" + f"{ord(character):04x}".encode()
+    return out
+
+
+#: The codes of version 5's font for the characters the tests use.
+_DERIVE5 = {
+    "√": 0x8B,
+    "≥": 0x92,
+    "≤": 0x93,
+    "∞": 0x96,
+    "↓": 0x99,
+    "∏": 0xA3,
+    "∑": 0xA4,
+    "ε": 0xAD,
+    "·": 0xB7,
+    "π": 0xB9,
+    "τ": 0xBC,
+    "λ": 0xBF,
+    "σ": 0xDE,
+    "ê": 0xEA,
+    "ö": 0xF6,
+}
+
+
+def derive5(text: str) -> bytes:
+    """Text as version 5 stores it, in its own font's codes."""
+    return bytes(_DERIVE5.get(character, ord(character)) for character in text)
+
+
+def rtf(*paragraphs: str) -> str:
+    """An RTF document of `paragraphs`, as a text object holds it."""
+    return _RTF_HEAD + r"\par ".join(map(_rtf_text, paragraphs)) + "}"
+
+
+_RTF_HEAD = r"{\rtf1\ansi\ansicpg1252\deff0{\fonttbl{\f0\fswiss Arial;}}\pard "
+
+
+def _rtf_text(text: str) -> str:
+    """Text in RTF, a character beyond ASCII as `\\uN?`, N a signed 16-bit number."""
+    return "".join(
+        character if ord(character) < 0x80 else rf"\u{_signed(ord(character))}?"
+        for character in text
+    )
+
+
+def _signed(code: int) -> int:
+    return code - 0x10000 if code > 0x7FFF else code
+
+
 def string(text: str | bytes, wide: bool = False) -> bytes:
-    """An archived string, as bytes or, if `wide`, as UTF-16."""
+    """An archived string, as bytes or, if `wide`, as UTF-16. Text beyond code page
+    1252 is escaped, as version 6 escapes it."""
     if wide:
         data = text.encode("utf-16-le")
         return b"\xff\xfe\xff" + _length(len(data) // 2) + data
-    data = text if isinstance(text, bytes) else text.encode("cp1252")
+    data = text if isinstance(text, bytes) else escaped(text)
     return _length(len(data)) + data
 
 
@@ -117,8 +175,7 @@ class Sheet:
 
     def bytes(self) -> bytes:
         lines = [
-            line if isinstance(line, bytes) else line.encode("cp1252")
-            for line in self.state
+            line if isinstance(line, bytes) else escaped(line) for line in self.state
         ]
         return (
             self.banner

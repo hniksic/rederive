@@ -23,7 +23,7 @@ from rederive import __version__
 from rederive.model import worksheet
 
 if TYPE_CHECKING:
-    from rederive.model.session import Session
+    from rederive.model.session import LoadReport, Session
 
 USAGE = "usage: rederive [--version] [-m|-u|-t|-d] FILE ..."
 
@@ -115,13 +115,15 @@ def read(session: Session, files: Sequence[tuple[str, Path]]) -> tuple[Path | No
     same, and merging lets each subsequent file add to the worksheet instead of
     replacing it.
     """
-    readers: dict[str, Callable[[Path], int]] = {
+    from rederive.model.session import LoadReport
+
+    readers: dict[str, Callable[[Path], LoadReport]] = {
         "math": session.merge,
         "utility": session.load_utility,
-        "data": session.load_data,
     }
     demo: Path | None = None
-    skipped = 0
+    report = LoadReport()
+    blocks = 0
     for kind, path in files:
         if kind == "demo":
             if demo is not None:
@@ -129,20 +131,23 @@ def read(session: Session, files: Sequence[tuple[str, Path]]) -> tuple[Path | No
             demo = path
             continue
         try:
-            skipped += readers[kind](path)
+            if kind == "data":
+                blocks += session.load_data(path)
+            else:
+                report.extend(readers[kind](path))
         except FileNotFoundError:
             raise Usage(f"{path}: no such file") from None
         except OSError as error:
             raise Usage(f"{path}: {error.strerror or 'cannot be read'}") from None
-    return demo, _reported(skipped)
+    return demo, _reported(report, blocks)
 
 
-def _reported(skipped: int) -> str:
-    """Return the message about lines that failed to parse, if any."""
-    if not skipped:
-        return ""
-    lines = "line" if skipped == 1 else "lines"
-    return f"{skipped} {lines} not read"
+def _reported(report: LoadReport, blocks: int) -> str:
+    """Return the message about what the files held that could not be taken, if any."""
+    parts = [str(report)] if report else []
+    if blocks:
+        parts.append(f"{blocks} data block{'' if blocks == 1 else 's'} not read")
+    return "; ".join(parts)
 
 
 def provenance() -> str:

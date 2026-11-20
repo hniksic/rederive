@@ -126,17 +126,17 @@ def test_a_file_that_is_not_there_is_refused(session, files):
         read(session, named(["missing"]))
 
 
-def test_lines_that_will_not_parse_are_counted(session, files, tmp_path):
+def test_lines_that_will_not_parse_are_reported(session, files, tmp_path):
     (tmp_path / "bent.mth").write_text("x + 1\n2 +\n) (\n", encoding="utf-8")
     _, message = read(session, named(["bent"]))
-    assert message == "2 lines not read"
-    assert [entry.text for entry in session.entries] == ["x+1"]
+    assert message == "2 lines kept as strings (#2, #3)"
+    assert [entry.text for entry in session.entries] == ["x+1", '"2 +"', '") ("']
 
 
 def test_one_such_line_is_counted_in_the_singular(session, files, tmp_path):
     (tmp_path / "bent.mth").write_text("x + 1\n2 +\n", encoding="utf-8")
     _, message = read(session, named(["bent"]))
-    assert message == "1 line not read"
+    assert message == "1 line kept as strings (#2)"
 
 
 # -- what the screen opens on ------------------------------------------------
@@ -160,7 +160,7 @@ async def test_what_would_not_read_is_said_in_place_of_the_invitation(files, tmp
     (tmp_path / "bent.mth").write_text("x + 1\n2 +\n", encoding="utf-8")
     app = opened(["bent"])
     async with app.run_test():
-        assert message(app) == "1 line not read"
+        assert message(app) == "1 line kept as strings (#2)"
 
 
 async def test_a_demonstration_runs_as_soon_as_there_is_a_screen(files):

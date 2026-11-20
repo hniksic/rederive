@@ -1,8 +1,10 @@
 """Numeric data files: rows of numbers in, matrices out.
 
 The format is the original's DAT format: each line is a matrix row of numbers separated
-by spaces and/or commas, and a blank line starts a new matrix. There is no header,
-which made the format easy for instruments and other programs to write.
+by blanks, tabs, commas or semicolons, and a blank line starts a new matrix. There is no
+header, which made the format easy for instruments and other programs to write. A line
+whose first character that isn't blank is `;` is the annotation of the next matrix, as
+Derive 5 reads it. A decimal comma can't be told from a separator, and separates.
 
 Derive syntax has no exponent notation, so `-2.325E-7` is translated to
 `-2.325*10^-7`. `D` is accepted in place of `E`, as Fortran writes double precision.
@@ -18,7 +20,10 @@ _MAGNITUDE = r"[-+]?(?:\d+\.?\d*|\.\d+)"
 NUMBER = re.compile(rf"^(?P<size>{_MAGNITUDE})(?:[EeDd](?P<power>[-+]?\d+))?"
                     rf"(?P<over>/\d+)?$")
 
-SEPARATORS = re.compile(r"[\s,]+")
+SEPARATORS = re.compile(r"[\s,;]+")
+
+#: What starts the annotation line of a matrix.
+COMMENT = ";"
 
 
 def matrix(block: list[str]) -> str:
@@ -32,17 +37,26 @@ def matrix(block: list[str]) -> str:
     return rows[0] if len(rows) == 1 else f"[{','.join(rows)}]"
 
 
-def blocks(text: str) -> list[list[str]]:
-    """Split the file's lines into blocks separated by blank lines."""
-    found: list[list[str]] = []
+def blocks(text: str) -> list[tuple[list[str], str | None]]:
+    """Split the file's lines into blocks separated by blank lines, each with the
+    annotation an annotation line before it gives, or None."""
+    found: list[tuple[list[str], str | None]] = []
     current: list[str] = []
+    annotation: str | None = None
     for line in text.splitlines():
-        if line.strip():
+        stripped = line.strip()
+        if stripped.startswith(COMMENT):
+            if current:
+                found.append((current, annotation))
+                current = []
+            annotation = stripped[len(COMMENT) :].strip()
+        elif stripped:
             current.append(line)
         elif current:
-            found.append(current)
+            found.append((current, annotation))
             current = []
-    return found + ([current] if current else [])
+            annotation = None
+    return found + ([(current, annotation)] if current else [])
 
 
 def _numbers(line: str) -> list[str]:

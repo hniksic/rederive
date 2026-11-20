@@ -32,6 +32,8 @@ SQRT3 = Decimal("1.732050807568877293527446341505872366943")
 
 x = sp.Symbol("x", real=True)
 y = sp.Symbol("y", real=True)
+#: A coefficient whose ratio is longer than its six-digit decimal.
+c = sp.Rational(10541, 11111)
 
 
 def written(expression, style, digits=6):
@@ -203,9 +205,18 @@ CASES = [
         "1.23456*10^8",
         "1.23456*10^8",
     ),
-    # Numeric coefficients are written in the style too.
-    (x / 3, "x/3", "0.333333*x", "x/3", "0.333333*x"),
-    (sp.sin(x) / 7, "SIN(x)/7", "0.142857*SIN(x)", "SIN(x)/7", "0.142857*SIN(x)"),
+    # Numeric coefficients are written in the style too, but Decimal keeps a short
+    # ratio that a decimal would cut short.
+    (x / 4, "x/4", "0.25*x", "x/4", "0.25*x"),
+    (x / 3, "x/3", "x/3", "x/3", "0.333333*x"),
+    (sp.sin(x) / 7, "SIN(x)/7", "SIN(x)/7", "SIN(x)/7", "0.142857*SIN(x)"),
+    (
+        sp.Rational(10541, 11111) * x,
+        "10541*x/11111",
+        "0.948699*x",
+        "0.948699*x",
+        "0.948699*x",
+    ),
     (x / 10**6, "x/1000000", "0.000001*x", "10^-6*x", "10^-6*x"),
     # Non-numeric quotients are left alone.
     (3 / (x + 1), "3/(x + 1)", "3/(x + 1)", "3/(x + 1)", "3/(x + 1)"),
@@ -226,13 +237,14 @@ def test_the_printer_writes_each_style(
 @pytest.mark.parametrize(
     ("expression", "expected"),
     [
-        (x / 3, "0.333333*x"),
-        (x / (3 * y), "0.333333*x/y"),
-        (sp.sqrt(2) / (3 * x * y), "0.333333*SQRT(2)/(x*y)"),
-        (1 / (3 * x**2 * y), "0.333333/(x^2*y)"),
-        (x / (3 * y**2), "0.333333*x/y^2"),
-        (2 * x * y / 6, "0.333333*x*y"),
-        (-x / 3, "-0.333333*x"),
+        (x / 3, "x/3"),
+        (c * x, "0.948699*x"),
+        (c * x / y, "0.948699*x/y"),
+        (c * sp.sqrt(2) / (x * y), "0.948699*SQRT(2)/(x*y)"),
+        (c / (x**2 * y), "0.948699/(x^2*y)"),
+        (c * x / y**2, "0.948699*x/y^2"),
+        (2 * c * x * y / 2, "0.948699*x*y"),
+        (-c * x, "-0.948699*x"),
     ],
 )
 def test_a_written_coefficient_keeps_the_rest_of_its_product(
@@ -240,17 +252,17 @@ def test_a_written_coefficient_keeps_the_rest_of_its_product(
 ) -> None:
     """The rest of the product keeps its whole denominator.
 
-    `SQRT(2)/(3·x·y)` is written over `x·y`, not as a fraction over x times y, nor with
+    `c·SQRT(2)/(x·y)` is written over `x·y`, not as a fraction over x times y, nor with
     `x·y` moved into the numerator.
     """
-    written = author_text(expression, Context(notation=Notation.DECIMAL))
+    written = author_text(
+        expression, Context(notation=Notation.DECIMAL, notation_digits=6)
+    )
     assert written == expected
-    # Read back, it is the same expression with 1/3 replaced by its six digits.
+    # Read back, it is the same expression with the coefficient cut to six digits.
     state = ParseState()
     read = to_sympy(parse_expression(written, state).node, Context())
-    wanted = expression.subs(sp.Rational(1, 3), sp.Rational("0.333333")).subs(
-        sp.Rational(1, 7), sp.Rational("0.142857")
-    )
+    wanted = expression.subs(c, sp.Rational("0.948699"))
     assert sp.simplify(read - wanted) == 0
 
 
@@ -306,11 +318,12 @@ def test_a_numeral_the_user_wrote_is_not_the_notation_s_business() -> None:
     """Every style shows an authored numeral as written, truncated to the digit count.
 
     As in the original, `12345.6789` typed on the author line shows as `12345.6` under
-    any style.
+    any style at six digits.
     """
     for style in ("Rational", "Decimal", "Mixed", "Scientific"):
         session = Session()
         session.author(f"Notation := {style}")
+        session.author("NotationDigits := 6")
         assert session.author("12345.6789").layout.lines == ("12345.6",)
         assert session.author("1.5").layout.lines == ("1.5",)
 
@@ -319,10 +332,10 @@ def test_a_numeral_the_user_wrote_is_not_the_notation_s_business() -> None:
 @pytest.mark.parametrize(
     ("text", "expected"),
     [
-        ("pi", "3.14159"),
-        ("1/3", "0.333333"),
-        ("10^7 * pi", "3.14159*10^7"),
-        ("SQRT(2)", "1.41421"),
+        ("pi", "3.141592653"),
+        ("1/3", "0.3333333333"),
+        ("10^7 * pi", "3.141592653*10^7"),
+        ("SQRT(2)", "1.414213562"),
         ("1/10^7", "10^-7"),
     ],
 )
@@ -351,7 +364,7 @@ async def test_the_value_behind_the_answer_is_the_exact_one() -> None:
     session.author("Notation := Decimal")
     session.author("1/3")
     answer = await session.simplify("#2")
-    assert answer.text == "0.333333"
+    assert answer.text == "0.3333333333"
     session.author(f"3 * #{answer.number}")
     assert (await session.simplify(f"#{answer.number + 1}")).text == "1"
     session.author(f"#{answer.number} - 1/3")
@@ -368,7 +381,7 @@ async def test_an_answer_keeps_the_style_it_was_worked_out_in() -> None:
     first = await session.simplify("#1")
     session.author("Notation := Decimal")
     assert first.layout.lines == (" 1 ", "───", " 3 ")
-    assert (await session.simplify("#1")).layout.lines == ("0.333333",)
+    assert (await session.simplify("#1")).layout.lines == ("0.3333333333",)
 
 
 async def test_approximate_arithmetic_still_answers_in_digits() -> None:
@@ -376,4 +389,4 @@ async def test_approximate_arithmetic_still_answers_in_digits() -> None:
     session = Session()
     session.settings.apply({"Precision": Precision.APPROXIMATE.value})
     entry = session.author("pi")
-    assert (await session.simplify(f"#{entry.number}")).text == "3.14159"
+    assert (await session.simplify(f"#{entry.number}")).text == "3.141592653"

@@ -156,6 +156,14 @@ AMOUNT = Menu(
     message="Select amount of factoring",
 )
 
+#: Factor's amounts for a matrix: also its factorization into a product of matrices,
+#: by elimination (`tUring`) or by Gram-Schmidt (`scHmidt`).
+MATRIX_AMOUNT = Menu(
+    AMOUNT.title,
+    (*AMOUNT.words, "tUring", "scHmidt"),
+    message=AMOUNT.message,
+)
+
 #: How much Expand factors the denominator for partial fractions. Same as `AMOUNT` minus
 #: `Complex`, which Derive omits here because it would put `#i` into real answers.
 EXPAND_AMOUNT = Menu(
@@ -164,12 +172,21 @@ EXPAND_AMOUNT = Menu(
     message=AMOUNT.message,
 )
 
-#: The seven Calculus commands. Each uses its initial as mnemonic, and each asks for an
-#: expression and a variable before its own dialog. Derive 6 added `Table`, but the DOS
-#: versions, and this one, don't have it.
+#: The eight Calculus commands. Each asks for an expression and a variable before its own
+#: dialog. Each uses its initial as mnemonic except Derive 6's `Table`, whose initial
+#: `Taylor` has.
 CALCULUS = Menu(
     "CALCULUS:",
-    ("Differentiate", "Integrate", "Limit", "Product", "Sum", "Taylor", "Vector"),
+    (
+        "Differentiate",
+        "Integrate",
+        "Limit",
+        "Product",
+        "Sum",
+        "Taylor",
+        "Vector",
+        "tAble",
+    ),
 )
 
 #: The operators `Build` offers, on one line, with `Done` last. Symbols are their own
@@ -290,6 +307,21 @@ VECTOR = settings.Dialog(
     enters=True,
 )
 
+#: The range of a `Calculus Table` index, asked as for `Calculus Vector`.
+TABLE = settings.Dialog(
+    "CALCULUS TABLE:",
+    (
+        (
+            _expression_field("Start", "TableStart", "1", ENTER_ANY, _NARROW_WIDTH),
+            _expression_field("End", "TableEnd", "", ENTER_ANY, _NARROW_WIDTH),
+            _expression_field("Step", "TableStep", "1", ENTER_ANY, _NARROW_WIDTH),
+        ),
+    ),
+    stored=False,
+    opens_on="TableEnd",
+    enters=True,
+)
+
 #: The interval for soLve's numeric search, asked only in Approximate precision (the
 #: other modes solve exactly). Defaults to `[-10, 10]` as in Derive. The command builds
 #: its own expression, so Ctrl-Enter does nothing on this line.
@@ -321,9 +353,21 @@ SELECT_INTERVAL = "Select interval of {name}"
 #: message line tells them apart.
 DECLARE_VARIABLE = Menu(
     "DECLARE VARIABLE:",
-    ("Value", "Integer", "Real", "Complex", "Nonscalar"),
+    ("Value", "Integer", "Real", "Complex", "vecTor", "Set", "Logical"),
     message=SELECT_DOMAIN,
 )
+
+#: The domain each Declare Variable word declares, where they differ: `vecTor` uses `T`
+#: because `V` is Value.
+DOMAIN_OF_WORD = {"vecTor": "Vector"}
+
+
+def domain_word(domain: str) -> str:
+    """The Declare Variable word for a declared domain; `Nonscalar` is the older word
+    for a vector."""
+    if domain in ("Vector", "Nonscalar"):
+        return "vecTor"
+    return domain
 
 #: The intervals, asked only for Integer and Real. `nonpoSitive` and `nonneGative` use
 #: later letters because `N` is Negative.
@@ -333,7 +377,7 @@ DECLARE_INTERVAL = Menu(
     message=SELECT_INTERVAL,
 )
 
-#: Domains that take an interval. Choosing Complex or Nonscalar ends the command.
+#: Domains that take an interval. Choosing any other domain ends the command.
 BOUNDED_DOMAINS = ("Integer", "Real")
 
 # Four of these commands are settings dialogs; the other four act on the session and
@@ -360,7 +404,7 @@ MANAGE = Menu(
 # windows.
 OPTIONS = Menu(
     "OPTIONS:",
-    ("Color", "Input", "Mute", "Notation", "Output", "Precision", "Radix"),
+    ("Color", "Defaults", "Input", "Mute", "Notation", "Output", "Precision", "Radix"),
 )
 
 COLOR = Menu("OPTIONS COLOR:", ("Menu", "Work"))

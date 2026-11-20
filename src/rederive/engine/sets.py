@@ -16,8 +16,12 @@ its value. An operation on an operand that isn't an explicit set, such as an und
 The operations are heads that evaluate on construction (`SetUnion`, `SetIntersection`,
 `SetDifference` and `SetComplement`), so substituting a value into one that stood
 carries it out. The complement ``s` `` of a set has no universe to be taken in, so it
-only stands, but it obeys the algebra: ``s`` `` is `s`, `s INTERSECTION s`` is `{}`, and
-`s UNION s`` is ``{}` ``, everything.
+only stands, but it obeys the algebra: ``s`` `` is `s`, `s INTERSECTION s`` is `{}`,
+`s UNION s`` is ``{}` ``, everything, and De Morgan's laws take the complement of a
+union or intersection inside.
+
+A variable declared `:epsilon Set` is a `SetSymbol`: a set with unknown elements, which
+the operations act on as on any set, so `S UNION S` is `S`.
 
 `ElidedVector` and `ElidedSet` are the ellipsis forms `[a, ..., b]` and `{a, b, ..., c}`
 whose terms can't be counted yet, such as `[1, ..., n]`; they become the vector or set
@@ -41,6 +45,7 @@ __all__ = [
     "SetDifference",
     "SetIntersection",
     "SetOf",
+    "SetSymbol",
     "SetUnion",
     "cartesian",
     "elided",
@@ -93,10 +98,21 @@ def _order(element: sp.Basic) -> tuple:
 
 
 def equal_sets(left: sp.Basic, right: sp.Basic) -> bool | None:
-    """Whether two sets are equal; None if either isn't a set literal."""
+    """Whether two sets are equal; None if that isn't known.
+
+    Two set expressions are equal when they are the same: `(a INTERSECTION b)` = a`
+    UNION b`` is `true` by De Morgan's law. Two set literals, their elements simplified,
+    are equal exactly when they have the same elements, compared as expressions (see the
+    module docstring): `{a, b} = {b, a}` is `true`, while `{a, b} = {a, c}` and `{x} =
+    {1}` are `false`. A set that isn't a literal, such as a variable or a complement,
+    is equal to another set only where it is the same one."""
+    if not (is_set(left) and is_set(right)):
+        return None
+    if left == right:
+        return True
     if not (isinstance(left, SetOf) and isinstance(right, SetOf)):
         return None
-    return left == right
+    return False
 
 
 def size(collection: SetOf) -> sp.Basic:
@@ -107,8 +123,16 @@ def size(collection: SetOf) -> sp.Basic:
 # -- the operations --------------------------------------------------------------
 
 
+class SetSymbol(sp.Symbol):
+    """A variable declared `:epsilon Set`."""
+
+    is_number = False
+
+
 class SetComplement(sp.Function):
-    """``s` ``, the complement of a set."""
+    """``s` ``, the complement of a set: `(s UNION t)` `` is ``s` INTERSECTION t` `` for
+    sets `s` and `t`, and for variables, which an operand of a set operation is (see
+    `Converter._set_operation`)."""
 
     nargs = 1
     is_number = False
@@ -117,10 +141,15 @@ class SetComplement(sp.Function):
     def eval(cls, operand: sp.Basic) -> sp.Basic | None:
         if isinstance(operand, SetComplement):
             return operand.args[0]
+        if not all(
+            is_set(each) or isinstance(each, sp.Symbol) for each in operand.args
+        ):
+            return None
+        if isinstance(operand, SetUnion):
+            return SetIntersection(*(SetComplement(each) for each in operand.args))
+        if isinstance(operand, SetIntersection):
+            return SetUnion(*(SetComplement(each) for each in operand.args))
         return None
-
-
-_EVERYTHING = SetComplement(SetOf())
 
 
 class _Associative(sp.Function):
@@ -193,6 +222,10 @@ class SetIntersection(_Associative):
         return SetIntersection(*others, SetOf(*common), evaluate=False)
 
 
+#: The complement of the empty set, everything.
+_EVERYTHING = SetComplement(SetOf())
+
+
 def _complementary(operands: list[sp.Basic]) -> bool:
     """Whether the operands include a set and its complement."""
     return any(SetComplement(operand) in operands for operand in operands)
@@ -218,7 +251,14 @@ class SetDifference(sp.Function):
         return SetOf(*(element for element in left.args if element not in right.args))
 
 
-_SET_HEADS = (SetOf, SetUnion, SetIntersection, SetDifference, SetComplement)
+_SET_HEADS = (
+    SetOf,
+    SetUnion,
+    SetIntersection,
+    SetDifference,
+    SetComplement,
+    SetSymbol,
+)
 
 
 # -- products, power sets and sequences ---------------------------------------------
@@ -228,10 +268,26 @@ def cartesian(sets: Sequence[SetOf]) -> SetOf:
     """The Cartesian product: the set of vectors taking one element from each set.
 
     `{a, b}*{c, d}` is `{[a, c], [a, d], [b, c], [b, d]}`, and three sets give
-    vectors of three.
+    vectors of three. An element that is a vector is a tuple already, whose elements
+    the product's vectors take in turn, so the product is associative:
+    `({a}*{b})*{c}` and `{a}*({b}*{c})` are both `{[a, b, c]}`, and `{[1]}*{[2], [3]}`
+    is `{[1, 2], [1, 3]}`.
     """
     chosen = itertools.product(*(each.args for each in sets))
-    return SetOf(*(Vector(*elements) for elements in chosen))
+    return SetOf(
+        *(
+            Vector(
+                *(
+                    part
+                    for element in elements
+                    for part in (
+                        element.args if isinstance(element, Vector) else (element,)
+                    )
+                )
+            )
+            for elements in chosen
+        )
+    )
 
 
 def power_set(collection: sp.Basic, count: sp.Basic | None = None) -> sp.Basic | None:

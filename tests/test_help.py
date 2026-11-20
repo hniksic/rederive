@@ -90,7 +90,7 @@ def test_the_state_subject_lays_out_in_one_column_where_two_would_not_fit():
 def test_the_functions_subject_documents_every_built_in_name():
     blocks = helps.BY_WORD["Functions"].blocks
     text = "\n".join(line for block in blocks for line in block)
-    documented = set(re.findall(r"#?\w+", text))
+    documented = set(re.findall(r"#?\w+\??", text))
     built_in = (
         names.BUILTIN_FUNCTIONS
         | names.CONSTANTS

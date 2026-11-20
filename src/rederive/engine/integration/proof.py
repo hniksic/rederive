@@ -130,6 +130,9 @@ class Stretch:
     def nonzero(self, expression: sp.Basic) -> bool:
         return self._remembered("nonzero", expression, self._nonzero)
 
+    def imaginary(self, expression: sp.Basic) -> bool:
+        return self._remembered("imaginary", expression, self._imaginary)
+
     def _continuous(self, expression: sp.Basic) -> bool:
         if not expression.has(self.variable) or expression == self.variable:
             return True
@@ -148,6 +151,9 @@ class Stretch:
             if exponent.is_integer and exponent.is_nonnegative:
                 return True
             if exponent.is_integer:
+                return self.nonzero(base)
+            if self.real(exponent) and self.imaginary(base):
+                # Off the negative real axis, where the cut is, unless zero.
                 return self.nonzero(base)
             if not (self.real(base) and self.real(exponent)):
                 return False
@@ -171,7 +177,9 @@ class Stretch:
         if isinstance(expression, self.ENTIRE + (sp.Abs,)):
             return True
         if not self.real(argument):
-            return False
+            return self.imaginary(argument) and self._imaginary_kernel(
+                expression, argument
+            )
         if isinstance(expression, self.REAL):
             return True
         for quotient, denominator in self.QUOTIENTS.items():
@@ -199,12 +207,66 @@ class Stretch:
             return self.positive(argument) and self.nonzero(argument - 1)
         return False
 
+    def _imaginary_kernel(self, expression: sp.Basic, argument: sp.Basic) -> bool:
+        """Whether a function is continuous at an imaginary argument `#i*w`, `w` real
+        and continuous: each branch cut on the imaginary axis is avoided. So
+        `ATAN(SQRT(t)/SQRT(1 - t))`, an antiderivative's term, is continuous for
+        negative `t`, where its argument is `#i*w` with `ABS(w) < 1`."""
+        if isinstance(expression, (sp.atan, sp.asinh)):
+            # Cuts where |w| >= 1; `1 + argument^2` is `1 - w^2`.
+            return self.positive(1 + argument**2)
+        if isinstance(expression, (sp.asin, sp.acos, sp.atanh)):
+            return True
+        if isinstance(expression, (sp.log, sp.acosh, sp.acot, sp.acoth)):
+            return self.nonzero(argument)
+        return False
+
+    def _imaginary(self, expression: sp.Basic) -> bool:
+        """Whether the expression is `#i` times a real one: an imaginary constant, a
+        product with an odd number of imaginary factors and the others real, or a
+        half-odd power of a base negative throughout."""
+        if not expression.has(self.variable):
+            return expression.is_imaginary is True or (
+                expression.is_zero is False
+                and attempt(expression, lambda e: sp.S((e / sp.I).is_extended_real))
+                is sp.true
+            )
+        if isinstance(expression, sp.Add):
+            return all(self.imaginary(term) for term in expression.args)
+        if isinstance(expression, sp.Mul):
+            return self._mixed(expression.args) == 1
+        if isinstance(expression, sp.Pow):
+            base, exponent = expression.args
+            return (
+                exponent.is_Rational is True
+                and exponent.q == 2
+                and self.real(base)
+                and self.positive(-base)
+            )
+        return False
+
+    def _mixed(self, factors: tuple[sp.Basic, ...]) -> int | None:
+        """The parity of the number of imaginary factors when every factor is real or
+        imaginary, else None."""
+        count = 0
+        for factor in factors:
+            if self.real(factor):
+                continue
+            if not self.imaginary(factor):
+                return None
+            count += 1
+        return count % 2
+
     def _real(self, expression: sp.Basic) -> bool:
         if expression == self.variable:
             return True
         if not isinstance(expression, (sp.Add, sp.Mul, sp.Pow, sp.Function)):
             return expression.is_extended_real is True
-        if isinstance(expression, (sp.Add, sp.Mul)):
+        if isinstance(expression, sp.Mul):
+            if all(self.real(term) for term in expression.args):
+                return True
+            return self._mixed(expression.args) == 0
+        if isinstance(expression, sp.Add):
             return all(self.real(term) for term in expression.args)
         if isinstance(expression, sp.Pow):
             base, exponent = expression.args

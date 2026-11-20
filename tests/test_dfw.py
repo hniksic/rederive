@@ -76,7 +76,7 @@ RTF = (
 
 def test_expressions_load_in_order_with_their_annotations(session, file):
     Sheet().expression("SIN(x)/2").expression("SIN(x)/2", "Simp(#1)").write(file)
-    assert session.load(file) == 0
+    assert not session.load(file)
     assert texts(session) == ["SIN(x)/2", "SIN(x)/2"]
     assert annotations(session) == ["User", "Simp(#1)"]
 
@@ -121,7 +121,8 @@ def test_merging_numbers_the_worksheet_after_what_is_there(session, file):
 def test_a_utf16_annotation_and_expression_are_read(session, file):
     Sheet().expression("λ+1", "Benutzer", wide=True).write(file)
     session.load(file)
-    assert texts(session) == ["λ+1"]
+    # An entry's text spells a Greek letter by name.
+    assert texts(session) == ["lambda+1"]
     assert annotations(session) == ["User"]
 
 
@@ -150,10 +151,42 @@ def test_derive_5_codes_in_an_expression_are_read(session, file):
     assert texts(session) == ["v SUB 2<=pi"]
 
 
-def test_plots_and_embedded_objects_are_left_out(session, file):
+def test_derive_5_greek_letters_in_the_state_are_the_names_derive_6_saves(session, file):
+    """0xDE 0xBF 0xAD are sigma, lambda and epsilon, as aligning the definitions that
+    version 5 and 6 worksheets both save shows; 0xDF is beta, not a sharp s."""
+    Sheet(OLD, state=[b"\xde(\xbf, \xad):=\xad + \xbf", b"\xdf:=2 + \x8b2"]).write(file)
+    assert not session.load(file)
+    assert session.functions["σ"].names == ("λ", "ε")
+    assert list(session.assignments) == ["β"]
+
+
+async def test_derive_5_not_sign_and_greek_letters_in_the_state(session, file):
+    """0xAC is the NOT sign, as in ISO 8859-1 (`IF(¬ DIM(a) = n ∨ ¬ DIM(b) = n, ...)`);
+    0xBA, 0xB4 and 0xA5 are rho, kappa and capital phi, the letters the expressions of
+    the same worksheets spell as `rho`, `kappa` and `PHI`."""
+    state = [
+        b"t(a, n):=IF(\xac DIM(a) = n \x90 \xac n > 0, 1, 2)",
+        b"\xba(\xb4):=\xb4 + 1",
+    ]
+    Sheet(OLD, state=[*state, b"\xa5:=7"]).write(file)
+    assert not session.load(file)
+    assert session.functions["ρ"].names == ("κ",)
+    assert (await session.simplify("[t([1], 1), t([1], 2), ρ(1)]")).text == "[2, 1, 2]"
+    assert list(session.assignments) == ["φ"]
+
+
+def test_derive_5_sharp_s_in_a_word_or_string_is_a_sharp_s(session, file):
+    """0xDF between two letters of a word, or in a string, is the sharp s a German
+    user typed, not beta."""
+    Sheet(OLD).expression(b'["gr\xf6\xdfter Wert:", \xdf0_]').write(file)
+    session.load(file)
+    assert texts(session) == ['["größter Wert:",β0_]']
+
+
+def test_plots_and_embedded_objects_are_left_out_and_counted(session, file):
     sheet = Sheet().expression("a").plot().embedded().expression("b")
     sheet.text(r"{\rtf1 After\par}").plot().expression("c").write(file)
-    assert session.load(file) == 0
+    assert str(session.load(file)) == "2 plots and 1 embedded object not loaded"
     assert texts(session) == ["a", "b", '"After"', "c"]
 
 
@@ -164,10 +197,14 @@ def test_the_worksheet_is_saved_as_a_math_file(session, file):
     assert session.file == file.with_suffix(".mth")
 
 
-def test_an_expression_that_does_not_parse_is_counted(session, file):
-    Sheet().expression("a").expression("2 +").expression("#1").write(file)
-    assert session.load(file) == 1
-    assert texts(session) == ["a", "#1"]
+def test_an_expression_that_does_not_parse_is_kept_as_a_string(session, file):
+    """It keeps its number, so a later reference to the expression after it still
+    means that expression."""
+    Sheet().expression("a").expression("2 +", "Simp(#1)").expression("#3").write(file)
+    report = session.load(file)
+    assert texts(session) == ["a", '"2 +"', "#3"]
+    assert annotations(session) == ["User", "Simp(#1)", "User"]
+    assert str(report) == "1 line kept as strings (#2)"
 
 
 # -- the saved state -------------------------------------------------------
@@ -199,14 +236,14 @@ async def test_what_the_saved_session_no_longer_had_is_forgotten(session, file):
 
 async def test_nothing_is_forgotten_when_the_state_cannot_all_be_read(session, file):
     """An unreadable state line might have defined the name, so it is kept."""
-    sheet = Sheet(OLD, state=[b"\xbf:=1", b"g(x):=x+1"]).expression("a:=7")
+    sheet = Sheet(OLD, state=[b"\x81:=1", b"g(x):=x+1"]).expression("a:=7")
     sheet.write(file)
     session.load(file)
     assert (await session.simplify("a+g(1)")).text == "9"
 
 
 async def test_a_state_line_with_an_unknown_derive_5_code_is_left_out(session, file):
-    Sheet(OLD, state=[b"\xbf:=1", b"SQ(u):=u\x93 2"]).write(file)
+    Sheet(OLD, state=[b"\x81:=1", b"SQ(u):=u\x93 2"]).write(file)
     session.load(file)
     assert list(session.assignments) == []
     assert (await session.simplify("SQ(1)")).text == "true"
@@ -238,14 +275,114 @@ def test_the_expressions_read_with_the_saved_case_mode(session, file):
     assert session.assignments.keys() >= {"A", "a"}
 
 
+def test_the_saved_settings_apply_before_the_definitions(session, file):
+    """They are saved last, but the definitions were saved under them."""
+    Sheet(state=["A:=1", "a:=2", "CaseMode:=Sensitive"]).expression("A+a").write(file)
+    assert not session.load(file)
+    assert session.assignments.keys() >= {"A", "a"}
+    assert texts(session) == ["A+a"]
+
+
+async def test_a_definition_may_use_a_function_defined_further_down(session, file):
+    """The state block is sorted by name, so the order of definition is lost."""
+    state = ["EXTREM(a):=EXTR_ONE(a, 2) + F_ONE(a)", "EXTR_ONE(a, b):=a*b", "F_ONE(u):=u"]
+    Sheet(state=state).expression("EXTREM(3)").write(file)
+    assert not session.load(file)
+    assert (await session.simplify("#1")).text == "9"
+
+
+async def test_a_state_line_that_does_not_parse_is_reported_by_its_name(session, file):
+    """The rest of the state is restored, and the name is no longer declared."""
+    Sheet(state=["F(x):=x+", "G(x):=F(x, 1)", "k:="]).write(file)
+    report = session.load(file)
+    assert str(report) == "1 definition not restored (F)"
+    assert "G" in session.functions
+    assert "F" not in session.state.functions
+
+
+def test_an_undecodable_state_line_is_counted_without_a_name(session, file):
+    Sheet(OLD, state=[b"\x81:=1", b"g(x):=x+"]).write(file)
+    assert str(session.load(file)) == "2 definitions not restored (g)"
+
+
+def test_a_saved_setting_rederive_lacks_is_reported(session, file):
+    Sheet(state=[*SETTINGS, "ScientificThreshold:=5"]).write(file)
+    assert str(session.load(file)) == "1 setting ignored"
+
+
+async def test_a_utility_worksheet_reports_the_lines_it_could_not_read(session, file):
+    Sheet(state=["CUBE(t):=t^3", "SQ(t):=t^", "Notation:=Decimal"]).write(file)
+    assert str(session.load_utility(file)) == "1 line not readable (SQ)"
+    assert (await session.simplify("CUBE(2)")).text == "8"
+
+
 async def test_a_utility_worksheet_gives_its_definitions_but_not_its_settings(
     session, file
 ):
     Sheet(state=["CUBE(t):=t^3", "Notation:=Decimal"]).expression("x").write(file)
-    assert session.load_utility(file) == 0
+    assert not session.load_utility(file)
     assert session.entries == []
     assert session.settings["Notation"] == "Rational"
     assert (await session.simplify("CUBE(2)")).text == "8"
+
+
+async def test_a_function_name_beside_an_operand_in_the_state_multiplies(session, file):
+    """The state is written as Derive displays it, where only a built-in applies to
+    an operand without parentheses: a function defined further down doesn't make the
+    product a call."""
+    Sheet(state=["g(x):=k x + d", "k(x):=x^2"]).write(file)
+    assert not session.load(file)
+    assert write_expression(session.functions["g"].body) == "k*x+d"
+    assert (await session.simplify("k(3)")).text == "9"
+
+
+def test_where_a_plot_s_cross_was_defines_nothing(session, file):
+    state = [
+        "hCross:=APPROX(39615384615384617/10000000000000000)",
+        "vCross:=1",
+        "zCross:=2",
+    ]
+    Sheet(state=state).write(file)
+    assert not session.load(file)
+    assert not session.assignments and not session.state.variables
+
+
+def test_a_declaration_repeated_is_one(session, file):
+    Sheet(state=["k:=", "k:=", "k:=", '"$by1":=']).write(file)
+    assert not session.load(file)
+    assert "k" in session.state.variables
+
+
+async def test_domain_lines_in_every_notation(session, file):
+    state = [
+        "d:epsilon Real (-0.5, 0.5)",
+        "x:epsilon Real (0, ∞)",
+        "n:epsilonInteger [0, inf)",
+        "u:epsilon Vector",
+        "NIL:epsilon Error",
+    ]
+    Sheet(state=state).write(file)
+    assert not session.load(file)
+    answer = await session.simplify("[SQRT(x^2), SQRT((d - 1)^2), SIN(n*pi)]")
+    assert answer.text == "[x, 1 - d, 0]"
+    assert {"u", "NIL"} <= set(session.domains)
+
+
+async def test_a_setting_assigned_in_a_saved_body_is_left_for_the_body(session, file):
+    state = [
+        "F(t_):=PROG(t_ ≔ Trigonometry, Trigonometry ≔ Collect, Trigonometry ≔ t_)",
+        *SETTINGS,
+    ]
+    Sheet(state=state).write(file)
+    assert not session.load(file)
+    assert session.settings["Trigonometry"] == "Auto"
+
+
+async def test_a_saved_definition_of_a_built_in_is_refused(session, file):
+    Sheet(state=["EI(x, m):=\ue7c3 + LN(x) + ∑(x^n_/(n_·n_!), n_, 1, m)"]).write(file)
+    assert str(session.load(file)) == "1 refused as built-in (EI)"
+    assert (await session.simplify("INT(EXP(x)/x, x)")).text == "EI(x)"
+    assert (await session.simplify("EI(x, 1)")).text == "LN(x) + x + euler_gamma"
 
 
 # -- what is read as what --------------------------------------------------
@@ -367,7 +504,7 @@ def test_rtf_skips_hidden_groups_and_reads_escaped_symbols():
         ("x ≔ 1", "x:=1"),
         ("∑(k, k, 1, n)·∏(k, k, 1, n)", "SUM(k,k,1,n)*PRODUCT(k,k,1,n)"),
         ("∂(x^2, x) + ∫(x, x)", "DIF(x^2,x)+INT(x,x)"),
-        ("¬ p ∧ q ∨ r → s", "NOT(p) AND q OR r IMP s"),
+        ("¬ p ∧ q ∨ r → s", "(NOT(p) AND q) OR r IMP s"),
         ("a ≠ b", "a/=b"),
         ("u ⋅ v", "u . v"),
         ("(3) +  + ", "GAMMA(3)+euler_gamma+pi"),

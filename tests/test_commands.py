@@ -66,7 +66,7 @@ async def test_a_special_function_typed_in_lower_case_is_a_call(session):
     # `ERF(i)*1`.
     session.author("erfi(1)")
     assert texts(session) == ["ERFI(1)"]
-    assert (await session.approx("#1")).text == "1.65042"
+    assert (await session.approx("#1")).text == "1.650425758"
 
 
 async def test_a_greek_letter_is_named_in_the_line_and_its_answer_alike(session):
@@ -332,11 +332,11 @@ async def test_an_assignment_in_a_body_is_made_when_the_function_is_called(sessi
 async def test_a_definition_in_a_body_is_made_when_the_function_is_called(session):
     """As in Derive, the call defines the inner function with its arguments written in.
 
-    `A1(y^2, y)` defines `A2(y) := y^2`, parameter included, and is `y^2`.
+    `A1(y^2, y)` defines `A2(y) := y^2`, parameter included, and is that definition.
     """
     session.author("A1(u, x) := (A2(x) := u)")
     session.author("A1(y^2, y)")
-    assert (await session.simplify("#2")).text == "y^2"
+    assert (await session.simplify("#2")).text == "A2(y) := y^2"
     assert (await session.simplify("A2(3)")).text == "9"
 
 
@@ -349,9 +349,11 @@ async def test_a_definition_made_by_a_call_holds_for_the_rest_of_the_command(ses
 
 
 async def test_a_variable_assigned_in_a_body_keeps_its_value(session):
+    """`b` is no parameter of `B`, so the body assigns the global, and the call's value
+    is that assignment."""
     session.author("B(u) := (b := u)")
     session.author("B(7)")
-    assert (await session.simplify("#2")).text == "7"
+    assert (await session.simplify("#2")).text == "b := 7"
     assert (await session.simplify("b + 1")).text == "8"
     session.author("C(u) := [b :=, u] SUB 2")
     assert (await session.simplify("C(4)")).text == "4"
@@ -399,7 +401,7 @@ async def test_nothing_is_guessed_about_a_variable_nobody_declared(session):
 async def test_the_precision_setting_reaches_the_command(session):
     session.author("1/3")
     session.settings.assign("Precision", "Approximate")
-    assert (await session.simplify("#1")).text.startswith("0.333333")
+    assert (await session.simplify("#1")).text.startswith("0.3333333333")
 
 
 # -- Factor ------------------------------------------------------------------
@@ -597,7 +599,7 @@ async def test_solving_the_same_equation_twice_appends_duplicates(session):
 
 async def test_a_system_appends_one_entry(session):
     session.author("[x + y = 3, x - y = 1]")
-    assert [entry.text for entry in await session.solve("#1")] == ["[x = 2, y = 1]"]
+    assert [entry.text for entry in await session.solve("#1")] == ["x = 2 AND y = 1"]
 
 
 async def test_solve_names_the_whole_entry_even_where_a_part_is_highlighted(session):
@@ -619,21 +621,28 @@ async def test_the_arbitrary_counter_survives_across_commands(session):
 
 
 async def test_an_authored_arbitrary_value_moves_the_counter_past_itself(session):
-    """A `SOLVE` simplified from the author line also mints arbitrary values, so the
-    counter watches every entry."""
-    session.author("SOLVE(z = z, z)")
-    assert (await session.simplify("#1")).text == "[z = @1]"
+    """A `SOLUTIONS` simplified from the author line also mints arbitrary values, so
+    the counter watches every entry."""
+    session.author("SOLUTIONS(z = z, z)")
+    assert (await session.simplify("#1")).text == "[@1]"
     session.author("x = x")
     assert (await session.solve("#3"))[0].text == "x = @2"
 
 
 async def test_the_counter_moves_past_every_value_one_simplification_mints(session):
-    session.author("SOLVE(z = z, z)")
-    assert (await session.simplify("#1")).text == "[z = @1]"
-    assert (await session.simplify("VECTOR(SOLVE(w = w, w), i, 1, 2)")).text == (
-        "[[w = @2], [w = @3]]"
+    session.author("SOLUTIONS(z = z, z)")
+    assert (await session.simplify("#1")).text == "[@1]"
+    assert (await session.simplify("VECTOR(SOLUTIONS(w = w, w), i, 1, 2)")).text == (
+        "[[@2], [@3]]"
     )
-    assert (await session.simplify("SOLVE(v = v, v)")).text == "[v = @4]"
+    assert (await session.simplify("SOLUTIONS(v = v, v)")).text == "[@4]"
+
+
+async def test_solve_mints_no_arbitrary_value(session):
+    """An identity solves to `true`, which shows no constant, so none is used up."""
+    session.author("SOLVE(z = z, z)")
+    assert (await session.simplify("#1")).text == "true"
+    assert (await session.simplify("SOLUTIONS(v = v, v)")).text == "[@1]"
 
 
 async def test_the_bounds_reach_the_command(session):
@@ -702,27 +711,35 @@ def test_a_system_is_counted_before_anything_is_computed(session):
 async def test_an_approximated_answer_is_appended_and_annotated(session):
     session.author("pi")
     answer = await session.approx("#1")
-    assert texts(session) == ["pi", "3.14159"]
+    assert texts(session) == ["pi", "3.141592653"]
     assert answer.annotation == "Approx(#1)"
 
 
 async def test_a_typed_expression_is_approximated_as_the_users_own(session):
-    assert (await session.approx("SQRT(3)")).text == "1.73205"
+    assert (await session.approx("SQRT(3)")).text == "1.732050807"
     assert session.entries[0].annotation == "Approx(User)"
+
+
+async def test_an_approximated_equation_keeps_its_form_as_a_simplified_one_does(session):
+    """The command approximates the whole expression, which is not an argument of
+    `APPROX`, so a top-level equation is not decided."""
+    session.author("2*3 = 6")
+    assert (await session.approx("#1")).text == "6 = 6"
+    assert (await session.approx("APPROX(2*3 = 6)")).text == "true"
 
 
 async def test_approximating_part_of_an_entry_copies_the_rest_of_it(session):
     session.author("SQRT(2) + x^2")
     part(session, "right")
     answer = await session.approx("#1")
-    assert answer.layout.lines == ("           2", "1.41421 + x ")
+    assert answer.layout.lines == ("               2", "1.414213562 + x ")
     assert answer.annotation == "Approx(#1')"
 
 
 async def test_the_settings_are_left_where_they_were(session):
     """The precision is approximate for the one command, not from now on."""
     session.author("1/3")
-    assert (await session.approx("#1")).text == "0.333333"
+    assert (await session.approx("#1")).text == "0.3333333333"
     assert session.settings["Precision"] == "Exact"
     assert (await session.simplify("#1")).text == "1/3"
 
@@ -740,8 +757,8 @@ async def test_the_digit_settings_read_as_variables(session):
 
     BESSEL.MTH's `BESSEL_J` sums a number of terms that depends on `PrecisionDigits`.
     """
-    assert (await session.simplify("PrecisionDigits")).text == "6"
-    assert (await session.simplify("NotationDigits")).text == "6"
+    assert (await session.simplify("PrecisionDigits")).text == "10"
+    assert (await session.simplify("NotationDigits")).text == "10"
     session.author("F(x) := x*PrecisionDigits")
     session.settings.assign("PrecisionDigits", 12)
     assert (await session.simplify("F(2)")).text == "24"
@@ -763,7 +780,7 @@ async def test_a_line_that_does_not_parse_approximates_nothing(session):
 async def test_an_assignment_reaches_the_approximation(session):
     session.author("k := 2")
     session.author("SQRT(k)")
-    assert (await session.approx("#2")).text == "1.41421"
+    assert (await session.approx("#2")).text == "1.414213562"
 
 
 # -- Build --------------------------------------------------------------------
@@ -882,6 +899,8 @@ async def test_a_build_taken_with_ctrl_enter_appends_one_entry(session):
         ("TAYLOR", "Taylor", ("x", "1", "3"), "TAYLOR(x^2*y,x,1,3)"),
         ("VECTOR", "Vector", ("x", "1", "5"), "VECTOR(x^2*y,x,1,5)"),
         ("VECTOR", "Vector", ("x", "1", "5", "2"), "VECTOR(x^2*y,x,1,5,2)"),
+        ("TABLE", "Table", ("x", "1", "5"), "TABLE(x^2*y,x,1,5)"),
+        ("INT", "Int", ("x", "c"), "INT(x^2*y,x,c)"),
     ],
     ids=str,
 )
@@ -971,3 +990,89 @@ def test_a_name_is_a_variable(session, text):
 )
 def test_anything_that_is_not_one_name_is_not(session, text):
     assert not session.is_variable(text)
+
+
+# -- names ---------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("lines", "text", "expected"),
+    [
+        # The case of a name is kept, and another spelling is another name.
+        (["perm(v, n) := v + n"], "[perm(1, 2), PERM(5, 2), Perm(5, 2)]", "[3, 20, 20]"),
+        (["H(s) := 2*s", "h(s) := s + 5"], "[H(1), h(1)]", "[2, 6]"),
+        (["H(s) := 2*s", "h1(s) := IF(s <= 2, H(s), 0)"], "h1(1)", "2"),
+        (["Step := 1/40"], "Step + STEP(3)", "41/40"),
+        (["rE := [1, 2, 3]"], "rE SUB 2", "2"),
+        (["table := [[0, 1, 1], [48, 7, 5]]"], "table SUB 2 SUB 1", "48"),
+        (["C := 5", "c := 7"], "C - c", "-2"),
+        (["dim(n) := DIMENSION(n)"], "dim([a, b]) + DIM([a, b, c])", "5"),
+        ([], "sin(0) + Sin(0) + SIN(0)", "0"),
+        ([], "A + a", "2*a"),
+        (["foo := 3"], "FOO + Foo", "6"),
+        # Greek names are letters; the functions are upper case.
+        (["gamma(k) := k + 1"], "[gamma(2), GAMMA(4)]", "[3, 6]"),
+        (["π(a) := a + 1"], "π(1)", "2"),
+        (["π(a) := a + 1"], "pi", "pi"),
+        # A built-in that yields to a definition gets the name back on an empty one.
+        (["ZETA(s) := s + 1"], "ZETA(2)", "3"),
+        (["ZETA(s) := s + 1", "ZETA(s) :="], "ZETA(2)", "pi^2/6"),
+        (["VAR(x, n, xvar) := x + n + xvar"], "VAR(1, 2, 3)", "6"),
+        (["INTERSECTION(u, v) := u"], "INTERSECTION([1], [2])", "[1]"),
+        # A pre-defined name of an older utility file is free to define.
+        (["HEX(a) := a + 1"], "HEX(1)", "2"),
+        (["EXACT(p, q) := p + q"], "EXACT(1, 2)", "3"),
+        (["ei(x) := x + 1"], "ei(2)", "3"),
+        (["position(e, u) := 0"], "position(c, [a, b])", "0"),
+        (["trace := [[0, 0]]", "exp := [20, 20]"], "trace SUB 1 + exp", "[20, 20]"),
+        (["trace := [[0, 0]]"], "TRACE([[1, 2], [3, 4]]) + EXP(0)", "6"),
+        # Old names compute as the Derive 6 functions.
+        ([], "REVERSE_VECTOR([a, b, c])", "[c, b, a]"),
+        ([], "DELETE_ELEMENT([a, b, c], 2)", "[a, c]"),
+        ([], "REPLACE_ELEMENT(d, [a, b, c], 2)", "[a, d, c]"),
+        ([], "INSERT_ELEMENT(d, [a, b, c], 2)", "[a, d, b, c]"),
+        ([], "DIMENSION([a, b, c])", "3"),
+        ([], "[PRIME(1991), PRIME(1993), PRIME?(1993), PRIME(7, 3)]", (
+            "[false, true, true, true]"
+        )),
+        ([], "SELECT(PRIME(k), k, [3, 5, 7, 9, 11])", "[3, 5, 7, 11]"),
+        ([], "[NUMBER(3), NUMBER?(3)]", "[true, true]"),
+        ([], "ELEMENT([a, b, c], 2)", "b"),
+        ([], "CROSS([a, b, c], [d, e, f])", "[b*f - c*e, c*d - a*f, a*e - b*d]"),
+        ([], "[VAR(1, 2, 3), VARIANCE(1, 2, 3)]", "[1, 1]"),
+        (
+            [
+                "list_to_set(v) := IF(v = [], {}, {v SUB 1} UNION "
+                "list_to_set(DELETE_ELEMENT(v, 1)))"
+            ],
+            "list_to_set([3, 1, 3, 2])",
+            "{1, 2, 3}",
+        ),
+        ([], "FIRST([a, 1 + 1])", "a"),
+        ([], "MEMBER?(a, [a, 1 + 1])", "true"),
+        # A built-in Rederive does not evaluate yet stays as written.
+        ([], "INVERSE_MOD(a, 1 + 1)", "INVERSE_MOD(a, 2)"),
+    ],
+    ids=lambda value: value if isinstance(value, str) else "",
+)
+async def test_a_name_means_what_derive_6_means_by_it(session, lines, text, expected):
+    session.settings.assign("InputMode", "Word")
+    for line in lines:
+        session.author(line)
+    assert (await session.simplify(text)).text == expected
+
+
+async def test_an_unknown_function_called_with_several_arguments_stays(session):
+    session.settings.assign("InputMode", "Word")
+    assert (await session.simplify("Plot_Thing(a, 1 + 1)")).text == "Plot_Thing(a, 2)"
+    assert "Plot_Thing" not in session.state.functions
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["SIN(x) := x + 1", "EI(x, m) := x + m", "pi := 3", "Real := 3", "ROW := 3"],
+    ids=str,
+)
+def test_a_built_in_cannot_be_redefined(session, text):
+    with pytest.raises(DeriveSyntaxError):
+        session.author(text)

@@ -34,6 +34,7 @@ from rederive.syntax.state import (
     SettingDeclaration,
     VariableDeclaration,
     VariableInfo,
+    reserved,
 )
 from rederive.syntax.writer import write_expression
 
@@ -60,6 +61,7 @@ __all__ = [
     "is_name",
     "parse_expression",
     "parse_source",
+    "reserved",
     "source_lines",
     "write_expression",
     "write_source",

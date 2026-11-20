@@ -18,6 +18,7 @@ from __future__ import annotations
 import math
 import re
 
+import mpmath
 import pytest
 import sympy as sp
 from simplifying import declared, declaring, parse, simp
@@ -1037,26 +1038,39 @@ def test_an_antiderivative_pairs_roots_whose_radicals_are_written_apart():
     assert abs(float(between.evalf(30)) - 0.924651705775538) < 1e-12
     # Over the tenth roots of unity, sympy kept only the pair on the imaginary axis and
     # answered `pi/10`.
-    assert simp("INT(1/(x^10 + 1), x, 0, inf)") == "SQRT(5)*pi/10 + pi/10"
+    assert simp("INT(1/(x^10 + 1), x, 0, inf)") == "pi*(SQRT(5) + 1)/10"
+
+
+@pytest.mark.parametrize("n", [7, 9])
+def test_an_integral_of_a_rational_function_converging_at_infinity_is_finite(n):
+    """The logarithms in the antiderivative of `1/(x^n + 1)` grow as `LN(x)` with
+    coefficients that sum to zero only via identities of cosines of multiples of
+    `pi/n`, so the naive limit at `inf` is `inf`. From 0 the integral is the beta
+    integral `pi/(n*SIN(pi/n))`; from 1 it is the antiderivative's limit."""
+    assert simp(f"INT(1/(x^{n} + 1), x, 0, inf)") == f"pi/({n}*SIN(pi/{n}))"
+    answer = simp(f"INT(1/(x^{n} + 1), x, 1, inf)")
+    value = to_sympy(parse_expression(answer, ParseState()).node)
+    expected = mpmath.quad(lambda x: 1 / (x**n + 1), [1, mpmath.inf])
+    assert abs(float(value.evalf(30)) - float(expected)) < 1e-12
 
 
 @pytest.mark.parametrize(
-    "n, expected",
+    "text, expected",
     [
-        (7, "4*pi*(2*COS(pi/14) + 3*SIN(pi/7) + COS(3*pi/14))/49"),
-        (9, "2*pi*(3*SQRT(3) + 4*COS(pi/18) + 8*SIN(pi/9) + 2*SIN(2*pi/9))/81"),
+        ("INT(x/(x^7 + 1), x, 0, inf)", "pi/(7*SIN(2*pi/7))"),
+        ("INT(x^2/(2*x^4 + 8), x, 0, inf)", "pi/8"),
+        ("INT(1/(-x^3 - 8), x, 0, inf)", "-SQRT(3)*pi/18"),
+        # Divergent at infinity, so not by the rule.
+        ("INT(x^6/(x^7 + 1), x, 0, inf)", "inf"),
     ],
 )
-def test_an_integral_of_a_rational_function_converging_at_infinity_is_finite(
-    n, expected
+def test_a_power_over_a_binomial_from_zero_to_infinity_is_a_beta_integral(
+    text, expected
 ):
-    """The logarithms in the antiderivative of `1/(x^n + 1)` grow as `LN(x)` with
-    coefficients that sum to zero only via identities of cosines of multiples of
-    `pi/n`, so the naive limit at `inf` is `inf`. The integral is `pi/(n*SIN(pi/n))`."""
-    answer = simp(f"INT(1/(x^{n} + 1), x, 0, inf)")
-    assert answer == expected
-    value = to_sympy(parse_expression(answer, ParseState()).node)
-    assert abs(float(value.evalf(30)) - math.pi / (n * math.sin(math.pi / n))) < 1e-12
+    """`INT(x^m/(a*x^n + b), x, 0, inf)` is
+    `pi*(b/a)^((m + 1)/n)/(n*b*SIN((m + 1)*pi/n))` for `a` and `b` of one sign and
+    `-1 < m < n - 1`."""
+    assert simp(text) == expected
 
 
 @pytest.mark.parametrize(
@@ -1378,6 +1392,14 @@ PARAMETRIC_INTEGRALS = [
     ("INT(#e^(-a*x^2), x, -inf, inf)", "IF(a > 0, SQRT(pi)/SQRT(a), inf)"),
     ("INT(x^n*LN(x), x, 0, 1)", "IF(n > -1, -1/(n + 1)^2, -inf)"),
     ("INT(#e^(-x)*x^n, x, 0, inf)", "IF(n > -1, n!, inf)"),
+    # An exponent with several terms in the variable is not taken to vanish at
+    # infinity for every value of the parameter: `#e^(-s*t - 3*t)` grows for `s < -3`.
+    ("INT(#e^(-s*t - 3*t), t, 0, inf)", "IF(s > -3, 1/(s + 3), inf)"),
+    ("INT(#e^(s*t - 3*t), t, 0, inf)", "IF(s < 3, 1/(3 - s), inf)"),
+    ("INT(#e^(-s*t - 3*t), t, 1, inf)", "IF(s > -3, #e^(-s - 3)/(s + 3), inf)"),
+    ("INT(t*#e^(-s*t - 3*t), t, 0, inf)", "IF(s > -3, 1/(s + 3)^2, inf)"),
+    ("INT(t*#e^(-s*t^2 - t^2), t, 0, inf)", "IF(s > -1, 1/(2*(s + 1)), inf)"),
+    ("INT((2*s*t + 1)*#e^(-s*t^2 - t), t, 0, inf)", "IF(s < 0, -inf, 1)"),
     # One expression covering every sign.
     ("INT(SIN(a*x)/x, x, 0, inf)", "pi*SIGN(a)/2"),
     ("INT(COS(a*x)*#e^(-x^2), x, -inf, inf)", "SQRT(pi)*#e^(-a^2/4)"),
@@ -1490,6 +1512,39 @@ def test_a_definite_integral_of_a_power_uses_its_antiderivative(text, expected):
     assert simp(text) == expected
 
 
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        # Sympy's antiderivative is piecewise, its cases parted at -1: the difference
+        # at the ends was -9.87*#i. The integral is 15.49*#i.
+        (
+            "INT(t^(3/2)*(1 - t)^(7/2), t, 0, -3/2)",
+            "7*#i*(LN(SQRT(15)/5 + 1) - LN(1 - SQRT(15)/5))/1024 + 1023*SQRT(15)*#i/256",
+        ),
+        (
+            "INT(t^(3/2)*((1 - t)^(7/2) - 1) - (1 - t)^(7/2), t, 0, -3/2)",
+            "625*SQRT(10)/144 - 2/9 + 7*#i*LN(SQRT(10)/2 + SQRT(6)/2)/512 "
+            "+ 1023*SQRT(15)*#i/256 - 9*SQRT(6)*#i/20",
+        ),
+        # Integrals over a stretch where the integrand is imaginary or crosses a cut.
+        (
+            "INT(t^(1/2)*(1 - t)^(1/2), t, 0, -2)",
+            "#i*LN(SQRT(3) + SQRT(2))/4 - 5*SQRT(6)*#i/4",
+        ),
+        ("INT(LN(t), t, -1, 2)", "2*LN(2) - 3 + #i*pi"),
+        ("INT(t^(1/3), t, -1, 1)", "9/8 + 3*SQRT(3)*#i/8"),
+        ("INT(t*LN(t), t, -1, 0)", "1/4 - #i*pi/2"),
+        ("INT(LN(1 - t^2), t, 0, 2)", "3*LN(3) - 4 + #i*pi"),
+    ],
+)
+def test_a_definite_integral_across_a_branch_cut_is_the_integral(text, expected):
+    """A value sympy gives as an antiderivative's difference at the ends is refused
+    where quadrature refutes it, and the integral is taken from an antiderivative proved
+    continuous between the ends, imaginary arguments of the inverse functions included.
+    Each value here agrees with quadrature."""
+    assert simp(text) == expected
+
+
 _T, _A = sp.symbols("t a", real=True)
 
 
@@ -1565,7 +1620,7 @@ STEP_ANTIDERIVATIVES = [
     # with a floor: each arch of `ABS(SIN(x))` adds 2.
     ("INT(ABS(SIN(x)), x)", "2*FLOOR(x/pi) - SIGN(SIN(x))*COS(x)"),
     ("INT(ABS(COS(x)), x)", "SIGN(COS(x))*SIN(x) + 2*FLOOR(x/pi + 1/2)"),
-    ("INT(SIGN(SIN(x)), x)", "(-pi*FLOOR(x/pi) + x - pi/2)*SIGN(SIN(x))"),
+    ("INT(SIGN(SIN(x)), x)", "(MOD(x, pi) - pi/2)*SIGN(SIN(x))"),
     ("INT(ABS(SIN(2*x)), x)", "FLOOR(2*x/pi) - SIGN(SIN(2*x))*COS(2*x)/2"),
     (
         "INT(STEP(COS(x)), x)",
@@ -1619,7 +1674,7 @@ KINKED_ANTIDERIVATIVES = [
     # Terms with different jumps are integrated apart.
     (
         "INT(ABS(x - 1) + ABS(x + 1), x)",
-        "x*ABS(x - 1)/2 + x*ABS(x + 1)/2 - ABS(x - 1)/2 + ABS(x + 1)/2",
+        "(x - 1)*ABS(x - 1)/2 + (x + 1)*ABS(x + 1)/2",
     ),
 ]
 
@@ -1660,7 +1715,7 @@ def test_a_step_antiderivative_agrees_with_the_integral_far_from_the_origin(
     [
         ("INT(ABS(x), x, a, b)", "b*ABS(b)/2 - a*ABS(a)/2"),
         ("INT(SIGN(x - a), x, 0, 1)", "ABS(a - 1) - ABS(a)"),
-        ("INT(ABS(x - a), x, 0, b)", "a*ABS(a)/2 - a*ABS(a - b)/2 + b*ABS(a - b)/2"),
+        ("INT(ABS(x - a), x, 0, b)", "(b - a)*ABS(a - b)/2 + a*ABS(a)/2"),
         ("INT(MAX(x, -x), x, a, b)", "b*ABS(b)/2 - a*ABS(a)/2"),
     ],
     ids=str,
@@ -1723,3 +1778,110 @@ def test_a_real_integral_to_a_symbolic_limit_is_real():
     """With the limit's sign unknown, the integrand is real on the whole line, so an
     answer with `#i` must be proved real. Sympy's is right only for positive `z`."""
     assert simp("INT((1 - #e^(-u))/u, u, 0, z)") == "INT((1 - #e^(-u))/u, u, 0, z)"
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        # The integrand averaged with its reflection about the middle of the interval
+        # is constant, or simpler, or zero.
+        ("INT(SIN(x)^n/(SIN(x)^n + COS(x)^n), x, 0, pi/2)", "pi/4"),
+        ("INT(LN(x)/LN(x*(1 - x)), x, 0, 1)", "1/2"),
+        ("INT(1/(1 + TAN(x)^r), x, 0, pi/2)", "pi/4"),
+        ("INT((1 + x)^3*COS(x)/(1 + 3*x^2), x, -1, 1)", "2*SIN(1)"),
+        # Odd about the middle, whatever the sign of `c`.
+        ("INT(x^3*COS(x)*SQRT(1 - x^2), x, -c, c)", "0"),
+        ("INT(x^5*#e^(x^2)*COS(x), x, -1, 1)", "0"),
+        # Odd too, but not integrable.
+        ("INT(1/x^3, x, -1, 1)", "?"),
+        ("INT(1/x - 1/(1 - x), x, 0, 1)", "?"),
+    ],
+)
+def test_a_definite_integral_is_taken_of_the_integrand_and_its_reflection(
+    text, expected
+):
+    assert simp(text) == expected
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        # A polynomial times a Gaussian over the line; `s` can't be 0 where the
+        # integrand is defined.
+        (
+            "INT(#e^(m*x/s^2 - x^2/(2*s^2)), x, -inf, inf)",
+            "SQRT(2)*SQRT(pi)*#e^(m^2/(2*s^2))*ABS(s)",
+        ),
+        ("INT(x*#e^(-(x - m)^2/2), x, -inf, inf)", "SQRT(2)*SQRT(pi)*m"),
+        ("INT(x^2*#e^(-x^2), x, -inf, inf)", "SQRT(pi)/2"),
+        # Bose-Einstein integrals, by the geometric series of the denominator.
+        ("INT(x^3/(#e^x - 1), x, 0, inf)", "pi^4/15"),
+        ("INT(x/(#e^(2*x) - 1), x, 0, inf)", "pi^2/24"),
+        ("INT(SQRT(x)/(#e^x - 1), x, 0, inf)", "SQRT(pi)*ZETA(3/2)/2"),
+        ("INT(1/(#e^x - 1), x, 0, inf)", "inf"),
+        # The log-sine integrals.
+        ("INT(LN(SIN(x)), x, 0, pi/2)", "-pi*LN(2)/2"),
+        ("INT(LN(COS(x)), x, 0, pi/2)", "-pi*LN(2)/2"),
+        ("INT(LN(SIN(x)), x, 0, pi)", "-pi*LN(2)"),
+        # `x = r*u` takes the parameter out, for either sign of `r`.
+        ("INT(x*SQRT((r - x)/r)/SQRT((x + r)/r), x, 0, r)", "(1 - pi/4)*r^2"),
+        ("INT(x*SQRT((r - x)/r)/SQRT((x + r)/r), x, -r, 0)", "-(pi/4 + 1)*r^2"),
+        ("INT(1/SQRT(a^2 - x^2), x, 0, a)", "pi*SIGN(a)/2"),
+    ],
+)
+def test_a_definite_integral_without_an_antiderivative_is_found_by_rule(
+    text, expected
+):
+    assert simp(text) == expected
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        # A `?` picked only at the points between the cases doesn't count; one picked
+        # on a stretch of the interval does.
+        (
+            "INT(IF(0 < x < 0.8, 23*x/8 - 5/2, IF(0.8 < x < 6, -0.2, "
+            "IF(6 < x < 10, -SQRT(621*x - 3710)/20, ?))), x, 0, 10)",
+            "-17873/2025",
+        ),
+        ("INT(IF(6 < x < 10, -SQRT(621*x - 3710)/20, ?)^2, x, 6, 10)", "629/50"),
+        ("INT(IF(0 < x < 1, x, IF(1 < x < 2, 1, ?)), x, 0, 3)", "?"),
+        # Up to a variable, the `?` may or may not be reached, so the integral stands.
+        (
+            "INT(IF(0 < x < 1, x, IF(1 < x < 2, 1, ?)), x, 0, t)",
+            "INT(IF(0 < x < 1, x, IF(1 < x < 2, 1, ?)), x, 0, t)",
+        ),
+        ("INT(IF(x < 1, -x, x), x, -2, 5)", "27/2"),
+        ("INT(-x*CHI(-inf, x, 1) + x*CHI(1, x, inf), x, -2, 5)", "27/2"),
+        # Infinite intervals.
+        ("INT(IF(x < 1, #e^(-1), #e^(1 - 2*x)), x, 0, inf)", "3*#e^(-1)/2"),
+        ("INT(#e^(-ABS(x - 1)), x, 0, inf)", "(2*#e - 1)*#e^(-1)"),
+        ("INT(#e^(-ABS(x - 1) - x), x, 0, inf)", "3*#e^(-1)/2"),
+        ("INT(#e^(-ABS(x - 1) - x), x, 0, 2)", "(3*#e^2 - 1)*#e^(-3)/2"),
+        ("INT(#e^(-ABS(x)), x, -inf, inf)", "2"),
+        ("INT(SIGN(x)*#e^(-ABS(x)), x, -inf, inf)", "0"),
+        ("INT(#e^(-MAX(x, 0)), x, -inf, 0)", "inf"),
+        ("INT(ABS(SIN(t) + SIN(2*t - pi/2)), t, 0, 2*pi)", "3*SQRT(3)"),
+        ("INT(ABS(SIN(x))*COS(2*x), x, -pi, pi)", "-4/3"),
+        # Tests not on the variable are kept, each case integrated.
+        ("INT(IF(p > 0, x, x^2), x)", "IF(p > 0, x^2/2, x^3/3)"),
+        ("INT(IF(p > 0, x, x^2), x, 0, 1)", "IF(p > 0, 1/2, 1/3)"),
+    ],
+)
+def test_a_function_defined_by_cases_is_integrated_case_by_case(text, expected):
+    assert simp(text) == expected
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        # Up to a variable, from the side of the lower end.
+        ("INT(1/x, x, -3, x)", "LN(-x/3)"),
+        ("INT(1/(t - 1), t, -3, x)", "LN(1/4 - x/4)"),
+        # Sympy's answer is on the polar plane, `-POLYLOG(2, (x - 1)*EXP_POLAR(pi*#i))`.
+        ("INT(LN(x)/(x - 1), x)", "-POLYLOG(2, 1 - x)"),
+    ],
+)
+def test_an_integral_with_logarithms_is_written_where_it_is_real(text, expected):
+    assert simp(text) == expected

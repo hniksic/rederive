@@ -167,12 +167,12 @@ class Files:
         path = Path(SHARED)
         self._storage.keep(path, text)
         try:
-            skipped = self._session.merge(path)
+            report = self._session.merge(path)
         except OSError:
             return UNREADABLE_LINK
         count = len(self._session.entries)
         opening = FROM_LINK.format(count=count, s="" if count == 1 else "s")
-        return opening if not skipped else f"{opening}, {skipped} of them unreadable"
+        return opening if not report else f"{opening}; {report}"
 
     # -- while the screen is up --------------------------------------------
 

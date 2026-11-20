@@ -96,7 +96,7 @@ def decided(test: sp.Basic, context: Context) -> bool | None:
         return None
     box = _box(test, context)
     if box is None:
-        return None
+        return _by_range(test)
     difference = _attempt(lambda: test.lhs - test.rhs)
     if difference is None:
         return None
@@ -104,6 +104,36 @@ def decided(test: sp.Basic, context: Context) -> bool | None:
         if box.asks(predicate, difference):
             return holds
     return None
+
+
+def _by_range(test: Relational) -> bool | None:
+    """An ordering settled by the range of the difference of its sides over every real
+    value of its variables, as interval arithmetic bounds it: `4 - 3*COS(t)^2 > 0`
+    holds, the difference lying in [1, 4]. None where the range doesn't settle it."""
+    readings = _READINGS.get(type(test))
+    if readings is None or isinstance(test, (sp.Equality, sp.Unequality)):
+        return None
+    if not test.free_symbols:
+        return None
+    difference = _attempt(lambda: test.lhs - test.rhs)
+    if difference is None or not isinstance(difference, sp.Expr):
+        return None
+    reach = _attempt(lambda: _range(difference, {}))
+    if reach is None:
+        return None
+    for holds, predicate in readings:
+        if _holds(predicate, reach):
+            return holds
+    return None
+
+
+def always_positive(expression: sp.Basic) -> bool:
+    """Whether `expression` is provably real and above zero, whatever its variables, by
+    the symbols' assumptions or interval arithmetic (see `never_negative`)."""
+    if expression.is_positive:
+        return True
+    reach = _attempt(lambda: _range(expression, {}))
+    return reach is not None and _holds(Q.positive, reach)
 
 
 def never_negative(expression: sp.Basic) -> bool:
@@ -234,7 +264,7 @@ def _box(expression: sp.Basic, context: Context) -> _Box | None:
         if not isinstance(symbol, sp.Symbol):
             continue
         domain = context.domain(symbol.name)
-        if domain.kind in (DomainKind.COMPLEX, DomainKind.NONSCALAR):
+        if domain.kind is DomainKind.COMPLEX or not domain.kind.is_scalar:
             continue
         about = symbol
         if domain.kind is DomainKind.INTEGER:

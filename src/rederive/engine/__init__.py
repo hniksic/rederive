@@ -50,8 +50,8 @@ Every command makes two promises:
 
 `factor(node, context, amount, variables)` is Derive's Factor: Simplify followed by
 factoring into a product. `amount` is Trivial, Squarefree, Rational, raDical or Complex,
-each including the previous; `variables` names the factorization variables, empty meaning
-all.
+each including the previous, or tUring or scHmidt, which write a matrix as a product of
+matrices; `variables` names the factorization variables, empty meaning all.
 
 `expand(node, context, amount, variables)` is Derive's Expand: Simplify followed by
 expanding into a sum. Everything free of `variables` (empty meaning all) is left alone,
@@ -61,11 +61,12 @@ far the denominator is factored; `Complex` is Factor-only.
 
 `solve(node, context, variables, bounds)` is Derive's soLve: Simplify followed by solving.
 It returns a *tuple* of results, one per solution, each a relation with the variable
-alone on the left. `x^2 - 5*x + 6 = 0` gives two, a system gives one holding the solution
-vector, and an inequality gives a chained relation such as `-2 < x < 2`. Three special
-answers are deliberately distinct: the empty tuple means no solutions were found, an
-identity answers `x = @1` (an arbitrary value from `Context.arbitrary_index`), and an
-unsolvable equation answers its own residual, e.g. `COS(x) - x = 0`. None raises.
+alone on the left. `x^2 - 5*x + 6 = 0` gives two, a system gives one per solution, the
+conjunction `x = 2 AND y = 1`, and an inequality gives a chained relation such as `-2 < x
+< 2`. Three special answers are deliberately distinct: the empty tuple means no solutions
+were found, an identity answers `x = @1` (an arbitrary value from
+`Context.arbitrary_index`), and an unsolvable equation answers itself, rearranged, e.g.
+`x^5 + x = -3`. None raises.
 
 `variables` defaults to the single variable of a scalar or the most main of a system;
 `bounds` limits a numeric search to an interval and applies only in Approximate mode.
@@ -73,8 +74,8 @@ Solve always works on a whole entry, since a solved subexpression can't be splic
 
 Factoring, expanding and solving live below the pipeline, because `FACTOR(u, amount, x,
 ...)`, `EXPAND(u, amount, x, ...)` and `SOLVE(u, x)` can be written in an expression and
-Simplify evaluates them. `SOLVE` evaluates to a vector of relations, the Derive 3 and 4
-shape that the shipped libraries use with `DIMENSION` and `RHS`.
+Simplify evaluates them. `SOLVE` evaluates to a Boolean expression, as in Derive 6: `x =
+-1 OR x = 1`; `SOLUTIONS` to the vector of the values (see `solution_forms`).
 
 `replace(node, replacements, state)` is Derive's Manage Substitute. It computes nothing:
 it replaces every match of each subtree at once and returns the result unsimplified. This

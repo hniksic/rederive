@@ -245,7 +245,7 @@ def test_loading_replaces_the_history_and_numbers_it_again(session, file):
     session.author("b")
     session.save(file)
     session.author("c")
-    assert session.load(file) == 0
+    assert not session.load(file)
     assert texts(session) == ["a", "b"]
     assert [entry.number for entry in session.entries] == [1, 2]
     assert session.selected == 1 and session.route == ()
@@ -268,6 +268,32 @@ async def test_what_a_loaded_line_defines_reaches_the_next_command(session, file
     assert (await other.simplify("#2")).text == "8"
 
 
+def test_derive_6_forms_are_saved_so_they_read_back(session, file):
+    """Definition heads with defaults or one bare parameter, updates, element targets,
+    `RETURN`, `exit`, the word operators and matrix rows each survive a save and a load
+    as the same entry."""
+    lines = [
+        "SUMSQ(x, y := 0, z := 0) := x^2 + y^2 + z^2",
+        "Block commands := commands SUB DIM(commands)",
+        "F() := 5",
+        "IF(k > n, exit, RETURN [k, n])",
+        "k :+ 1",
+        "c SUB 2 SUB k := c SUB 2 SUB k + 1",
+        "p IFF q AND u SUBSET v",
+        "m ROW 2 + m COL [1, 2] + m SUB SUB (-1) + a DOTPRODUCT b CROSSPRODUCT c",
+        "(-135) DEG",
+        "[a, b; c, d]",
+    ]
+    for line in lines:
+        session.author(line)
+    saved = written(session, file)
+    other = Session()
+    assert not other.load(file)
+    assert texts(other) == texts(session)
+    other.save(file)
+    assert file.read_text(encoding="utf-8") == saved
+
+
 def test_a_setting_a_loaded_line_assigns_takes_effect(session, file):
     session.author("Notation := Mixed")
     session.save(file)
@@ -288,12 +314,15 @@ def test_a_file_is_read_in_word_mode(session, file):
     assert session.author("ab + y1").text == "a*b+y*1"
 
 
-def test_a_file_that_sets_the_input_mode_reads_the_rest_in_it(session, file):
-    """The setting applies from its line on, and is still in force after the load."""
+def test_a_file_that_sets_the_input_mode_is_still_read_in_word_mode(session, file):
+    """The setting is the session's, for the Author line after the load. Word mode reads
+    every file Derive wrote, so the rest of the file is read in it."""
+    session.settings.assign("InputMode", "Word")
     file.write_text("ab\nInputMode := Character\nab\n")
     session.load(file)
-    assert texts(session) == ["ab", "InputMode:=Character", "a*b"]
-    session.settings.assign("InputMode", "Character")
+    assert texts(session) == ["ab", "InputMode:=Character", "ab"]
+    assert session.settings["InputMode"] == "Character"
+    assert session.author("ab").text == "a*b"
     file.write_text("InputMode := Word\n")
     session.load_utility(file)
     assert session.author("ab").text == "ab"
@@ -316,7 +345,7 @@ def test_blank_lines_separate_nothing(session, file):
 def test_the_conventions_of_a_file_the_original_wrote_are_read(session, file):
     """CRLF line endings, a Ctrl-Z ending the file, and a tilde continuation."""
     file.write_bytes(b";Mine\r\na+~\r\nb\r\n\r\nc*d\r\n\x1a")
-    assert session.load(file) == 0
+    assert not session.load(file)
     assert texts(session) == ["a+b", "c*d"]
     assert annotations(session) == ["Mine", "User"]
 
@@ -326,7 +355,7 @@ def test_a_file_written_in_code_page_437_reads(session, file):
     capital theta in the name `Θn` that its GRAPHICS.MTH uses. A file is read in Word
     mode, so `Θn` is one name, shown as the original shows it."""
     file.write_bytes(b"\xe9n + 1\r\n\x1a")
-    assert session.load(file) == 0
+    assert not session.load(file)
     assert texts(session) == ["Θn+1"]
 
 
@@ -334,19 +363,234 @@ def test_a_dos_file_s_symbols_read_as_derive_for_dos_read_them(session, file):
     """Older files, such as Douros's ODE.MTH, name variables `¿` and `£`, store byte
     0x19 for `SUB` and 0xD2 for the product sign, and use a bare `@` as a name."""
     file.write_bytes(b"\xa8:=v\x19i+\x9c\xf7\r\n\xd2(u\x19j,j,1,n)+@\r\n\x1a")
-    assert session.load(file) == 0
+    assert not session.load(file)
     assert texts(session) == ["¿:=v SUB i+£≈", "PRODUCT(u SUB j,j,1,n)+@"]
     session.save(file)
-    assert session.load(file) == 0
+    assert not session.load(file)
     assert texts(session) == ["¿:=v SUB i+£≈", "PRODUCT(u SUB j,j,1,n)+@"]
 
 
-def test_a_line_that_does_not_parse_is_left_out_and_counted(session, file):
-    """The original drops such lines silently. The rest of the file still loads, and
-    the count lets the screen report the drop."""
-    file.write_text("x^2+1\n\ny +\n\nz\n")
-    assert session.load(file) == 1
-    assert texts(session) == ["x^2+1", "z"]
+def test_a_string_split_by_a_wrap_is_joined_before_comments_are_looked_for(session, file):
+    """Derive breaks a line by length alone, so a `;` may land in either half of a
+    string; it is data in both."""
+    file.write_bytes(
+        b'"drawing, labeling & numbering~\r\n axes in the field X:-8..8; Y:-6..6 ==="'
+        b"\r\n\r\nx+1\r\n"
+        b'o1:=APPEND(o1,["s(x1-x2~\r\n);","Z:"])\r\n'
+    )
+    assert not session.load(file)
+    assert texts(session) == [
+        '"drawing, labeling & numbering axes in the field X:-8..8; Y:-6..6 ==="',
+        "x+1",
+        'o1:=APPEND(o1,["s(x1-x2);","Z:"])',
+    ]
+
+
+def test_what_follows_the_end_marker_is_not_read(session, file):
+    file.write_bytes(
+        b'names:=["#","$","@","[","\\","]","^","`","{","|","}","~"]\r\n'
+        b"\x1ajunk that is not Derive text\r\n"
+    )
+    assert not session.load(file)
+    assert texts(session) == ['names:=["#","$","@","[","\\","]","^","`","{","|","}","~"]']
+
+
+def test_a_tilde_is_data_unless_it_ends_a_line(session, file):
+    file.write_bytes(b'["~",[[1.6,7],[inf,~\r\ninf]]]\r\n')
+    assert not session.load(file)
+    assert texts(session) == ['["~",[[1.6,7],[inf,inf]]]']
+
+
+def test_the_last_annotation_line_before_an_expression_is_its_annotation(session, file):
+    file.write_bytes(b";Simp(#1)\n;Approx(#1)\n0.5\n")
+    assert not session.load(file)
+    assert annotations(session) == ["Approx(#1)"]
+
+
+def test_an_empty_annotation_is_kept(session, file):
+    """A bare `;` says nothing of how the line arose, so it is not the user's."""
+    file.write_bytes(b";\r\nx\r\n")
+    assert not session.load(file)
+    assert annotations(session) == [""]
+    assert written(session, file) == ";\nx\n"
+
+
+def test_a_comment_after_an_expression_is_left_out(session, file):
+    """DOS files write `expr ; comment`; a `;` in a string is data."""
+    file.write_bytes(b'x+1 ; a DOS comment\r\n\r\n"a ; b"\r\n')
+    assert not session.load(file)
+    assert texts(session) == ["x+1", '"a ; b"']
+
+
+def test_a_hand_broken_line_is_joined_with_the_indentation_of_its_tail(session, file):
+    file.write_bytes(b"CUBE(t):=~\r\n t^3\r\n")
+    assert not session.load_utility(file)
+    assert "CUBE" in session.functions
+
+
+def test_escapes_and_a_byte_order_mark_are_read(session, file):
+    file.write_bytes(b"\xef\xbb\xbffl\x7f00e4che:=\x7fe7c2*r^2\r\n")
+    assert not session.load(file)
+    assert texts(session) == ["fläche:=pi*r^2"]
+
+
+def test_a_greek_letter_of_code_page_437_is_part_of_a_name(session, file):
+    file.write_bytes(b"z\xe0:=1\r\n")
+    assert not session.load(file)
+    assert texts(session) == ["zα:=1"]
+
+
+def test_an_escape_for_a_control_character_is_left_as_written(session, file):
+    """The line can't be read, so it is kept as a string."""
+    file.write_bytes(b"\x7f0001+1\r\n")
+    assert str(session.load(file)) == "1 line kept as strings (#1)"
+    assert texts(session) == ['"\x7f0001+1"']
+
+
+# -- settings in files -------------------------------------------------------
+
+
+def test_a_settings_vector_applies_every_setting_in_it(session, file):
+    file.write_bytes(
+        b";\r\n[InputMode:=Word,Precision:=Approximate,PrecisionDigits:=10,"
+        b"Notation:=Scienti~\r\nfic,NotationDigits:=8]\r\n"
+    )
+    assert not session.load(file)
+    assert session.settings["Precision"] == "Approximate"
+    assert session.settings["Notation"] == "Scientific"
+    assert session.settings["NotationDigits"] == 8
+
+
+def test_a_derive_setting_never_becomes_a_variable(session, file):
+    """`DisplaySteps` is recognized and has no effect; `ScientificThreshold`, which
+    Rederive lacks, is ignored and reported."""
+    file.write_bytes(
+        b"variableorder:=[y,x,z]\r\n\r\nDisplaySteps:=false\r\n\r\n"
+        b"ScientificThreshold:=5\r\n"
+    )
+    assert str(session.load(file)) == "1 setting ignored"
+    assert texts(session) == [
+        "VariableOrder:=[y,x,z]",
+        "DisplaySteps:=false",
+        "ScientificThreshold:=5",
+    ]
+    assert session.order == ("y", "x", "z")
+    assert not session.assignments
+    assert not session.state.variables
+
+
+def test_a_setting_value_that_is_not_one_of_its_choices_is_ignored(session, file):
+    file.write_bytes(b"Angle:=Turn\r\n\r\nDisplaySteps:=maybe\r\n")
+    assert str(session.load(file)) == "2 settings ignored"
+    assert session.settings["Angle"] == "Radian"
+    assert not session.assignments
+
+
+def test_a_setting_name_in_another_case_with_no_value_is_a_variable(session, file):
+    """`angle:=` is an empty declaration of a user variable: a setting line in another
+    case spelling needs a value the setting takes."""
+    file.write_bytes(b"angle:=\r\n\r\nbranch:=\r\n\r\nangle:=30\r\n")
+    assert not session.load(file)
+    assert texts(session) == ["angle:=", "branch:=", "angle:=30"]
+    assert session.settings["Angle"] == "Radian"
+    assert session.settings["Branch"] == "Principal"
+    assert "angle" in session.assignments
+
+
+def test_a_built_in_word_may_stand_as_a_setting_value(session, file):
+    # `GRAD` is a function, but here only a word that is no value of `Angle`.
+    file.write_bytes(b"Angle:=Grad\r\n")
+    assert str(session.load(file)) == "1 setting ignored"
+    assert texts(session) == ["Angle:=Grad"]
+    assert session.settings["Angle"] == "Radian"
+
+
+def test_a_definition_of_a_built_in_is_refused_and_reported(session, file):
+    """A file can't redefine a built-in; the line is kept as a string, reported by
+    name, and the rest loads."""
+    file.write_bytes(b"SORT(v):=v\r\n\r\nFIRST(v):=v SUB 1\r\n\r\nsort(v):=v\r\n")
+    report = session.load(file)
+    assert str(report) == "2 refused as built-in (SORT, FIRST)"
+    assert texts(session) == ['"SORT(v):=v"', '"FIRST(v):=v SUB 1"', "sort(v):=v"]
+    assert set(session.functions) == {"sort"}
+
+
+async def test_a_utility_file_cannot_redefine_an_added_built_in(session, file):
+    """Derive 3.14's EXP_INT.MTH defines `SI`, which is built in here."""
+    file.write_bytes(
+        b"SI(z):=INT(SIN(t_)/t_,t_,0,z)\r\n\r\nEN(n,z):=INT(#e^(-z*t_)/t_^n,t_,1,inf)\r\n"
+    )
+    assert str(session.load_utility(file)) == "1 refused as built-in (SI)"
+    assert set(session.functions) == {"EN"}
+    assert (await session.simplify("SI(inf)")).text == "pi/2"
+
+
+async def test_an_unknown_name_before_a_parenthesis_in_a_file_is_a_call(session, file):
+    """Derive writes every product with `*`, so `k(x)` is a function defined later in
+    the file, or never, whatever the number of arguments; a known variable still
+    multiplies."""
+    file.write_bytes(
+        b"g(x):=k(x)+d\r\n\r\nk(x):=x^2\r\n\r\ng(2)\r\n\r\n"
+        b'EXTR_DEC(a,s,r,h):=IF(DER_2ND(a,s,r,h)<0,"Maximum","Minimum")\r\n\r\n'
+        b"AreaUnder(x^2,x,0,1)\r\n\r\nSEP_GEN(p,q,x,y,c):=p\r\n\r\n"
+        b"SEP_GEN(SIN(x),y,x,y,c)\r\n\r\nm:=3\r\n\r\nm(b+c)\r\n"
+    )
+    assert not session.load(file)
+    assert texts(session)[3:5] == [
+        'EXTR_DEC(a,s,r,h):=IF(DER_2ND(a,s,r,h)<0,"Maximum","Minimum")',
+        "AreaUnder(x^2,x,0,1)",
+    ]
+    assert (await session.simplify("#3")).text == "d + 4"
+    assert (await session.simplify("#5")).text == "AreaUnder(x^2, x, 0, 1)"
+    assert (await session.simplify("#7")).text == "SIN(x)"
+    assert (await session.simplify("#9")).text == "3*b + 3*c"
+
+
+def test_a_radix_may_be_assigned_as_a_number(session, file):
+    file.write_bytes(b"OutputBase:=16\r\n\r\nInputBase:=10\r\n")
+    assert not session.load(file)
+    assert session.settings["OutputBase"] == "Hexadecimal"
+    assert session.settings["InputBase"] == "Decimal"
+
+
+def test_the_input_base_of_a_file_reads_the_numbers_after_it(session, file):
+    file.write_bytes(b"InputBase:=Binary\r\n\r\n[101,11]\r\n")
+    session.load(file)
+    numbers = session.entries[1].node.children
+    assert [number.value for number in numbers] == ["5", "3"]
+
+
+def test_a_case_mode_in_a_file_keeps_names_apart_after_it(session, file):
+    file.write_bytes(
+        b"InputMode:=Word\r\n\r\nCaseMode:=Sensitive\r\n\r\nRg:=R1+R2*RL/(R2+RL)\r\n\r\n"
+        b"rg:=1\r\n"
+    )
+    assert not session.load(file)
+    assert session.assignments.keys() == {"Rg", "rg"}
+
+
+def test_character_mode_in_a_file_is_for_the_author_line_after_it(session, file):
+    file.write_bytes(b"InputMode:=Character\r\n\r\nabc:=7\r\n\r\nabc\r\n")
+    session.settings.assign("InputMode", "Word")
+    assert not session.load(file)
+    assert texts(session) == ["InputMode:=Character", "abc:=7", "abc"]
+    assert session.settings["InputMode"] == "Character"
+
+
+def test_a_line_that_does_not_parse_is_kept_as_a_string(session, file):
+    """As in Derive, so that it can be corrected and entered again. It keeps its number
+    and annotation, so references to the lines after it still mean them, and the rest of
+    the file loads."""
+    file.write_text('x^2+1\n\n;Simp(#1)\ny + "a" +\n\n#3\n')
+    report = session.load(file)
+    assert texts(session) == ["x^2+1", "\"y + 'a' +\"", "#3"]
+    assert annotations(session) == ["User", "Simp(#1)", "User"]
+    assert str(report) == "1 line kept as strings (#2)"
+
+
+def test_the_report_names_at_most_five_lines(session, file):
+    file.write_text("x +\n" * 7)
+    assert str(session.load(file)) == "7 lines kept as strings (#1, #2, #3, #4, #5, ...)"
 
 
 def test_a_file_that_is_not_there_leaves_the_history_alone(session, file):
@@ -370,7 +614,7 @@ def test_merging_appends_and_carries_the_numbering_on(session, file):
     session.author("a")
     session.author("b")
     session.save(file)
-    assert session.merge(file) == 0
+    assert not session.merge(file)
     assert texts(session) == ["a", "b", "a", "b"]
     assert [entry.number for entry in session.entries] == [1, 2, 3, 4]
 
@@ -458,7 +702,7 @@ async def test_clearing_all_is_the_other_three_at_once(session):
 
 async def test_a_utility_file_defines_without_being_displayed(session, file):
     file.write_text("CUBE(t) := t^3\n\nk := 11\n")
-    assert session.load_utility(file) == 0
+    assert not session.load_utility(file)
     assert texts(session) == []
     session.author("CUBE(k)")
     assert (await session.simplify("#1")).text == "1331"
@@ -475,9 +719,9 @@ def test_a_utility_file_does_not_become_the_session_file(session, file):
     assert session.file == file
 
 
-def test_a_utility_line_that_does_not_parse_is_counted(session, file):
-    file.write_text("CUBE(t) := t^3\n\ny +\n")
-    assert session.load_utility(file) == 1
+def test_a_utility_line_that_does_not_parse_is_reported_by_its_name(session, file):
+    file.write_text("CUBE(t) := t^3\n\ny +\n\nSQ(t) := t^\n")
+    assert str(session.load_utility(file)) == "2 lines not readable (SQ)"
 
 
 async def test_a_utility_files_names_are_read_whole(session, file):
@@ -487,7 +731,7 @@ async def test_a_utility_files_names_are_read_whole(session, file):
     one variable. This is what makes SOLVE.MTH's `xk` a variable rather than a product.
     """
     file.write_text("SECOND(ab, cd) := cd - ab\n")
-    assert session.load_utility(file) == 0
+    assert not session.load_utility(file)
     assert (await session.simplify("SECOND(2, 5)")).text == "3"
 
 
@@ -617,17 +861,21 @@ async def test_the_save_targets_are_languages_of_this_century(app):
 # -- the save options dialog -------------------------------------------------
 
 
-async def test_the_save_options_are_the_three_the_original_offers(app):
+async def test_the_save_options_are_the_original_s_three_and_the_state(app):
+    """The fourth is Derive 6's "Save State Variables": the settings, saved first."""
     async with app.run_test() as pilot:
         await pilot.press("t", "s", "o")
         assert band(app) == [
-            " TRANSFER SAVE OPTIONS: Range: All Some  Annotation:(Save)Omit  Length: 79"
+            " TRANSFER SAVE OPTIONS: Range: All Some  Annotation:(Save)Omit  Length: 79",
+            "                        State: Save(Omit)",
         ]
         assert message(app) == "Select save range"
         await pilot.press("tab")
         assert message(app) == "Select annotation mode"
         await pilot.press("tab")
         assert message(app) == "Enter line length"
+        await pilot.press("tab")
+        assert message(app) == "Select whether the settings are saved"
 
 
 async def test_the_save_options_leave_their_own_menu_up(app):
@@ -766,8 +1014,8 @@ async def test_a_file_with_a_line_that_will_not_parse_says_how_many(app, file):
     file.write_text("x^2+1\n\ny +\n\nz\n")
     async with app.run_test() as pilot:
         await pilot.press("t", "l", "d", *file.name, "enter")
-        assert entries(app) == ["x^2+1", "z"]
-        assert message(app) == "1 expression could not be read"
+        assert entries(app) == ["x^2+1", '"y +"', "z"]
+        assert message(app) == "1 line kept as strings (#2)"
 
 
 async def test_loading_a_utility_file_shows_nothing_and_defines_everything(app, file):
@@ -1267,6 +1515,13 @@ async def test_a_demonstration_authors_and_simplifies_a_step_at_a_time(app, demo
         await pilot.press("space")
         assert band(app)[0].startswith(" COMMAND:")
         assert message(app) == "Enter option"
+
+
+def test_a_demonstration_is_read_as_a_math_file_is():
+    """A comment goes with the line below it, a continued line is joined, a caption
+    counts as a comment, and a comment after an expression is left out."""
+    text = ';Adding\r\nx+~\r\n y\r\n\r\n"A caption"\r\nz ; aside\r\n\r\nw\r\n'
+    assert worksheet.steps_of(text) == (("Adding", "x+ y"), ("A caption", "z"), ("", "w"))
 
 
 async def test_a_demonstration_step_is_read_in_word_mode(app, tmp_path):

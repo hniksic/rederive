@@ -182,6 +182,8 @@ class Plot:
     #: added, and changed from its right-click menu.
     connected: bool = False
     point_size: float = POINT_SIZE
+    #: Whether the expression is evaluated anew at each point (see `Add.pointwise`).
+    pointwise: bool = False
 
     @property
     def named(self) -> str:

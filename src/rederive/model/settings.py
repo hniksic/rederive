@@ -71,7 +71,7 @@ _DIGITS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
 @dataclass(frozen=True)
 class NumberField:
-    """A data entry field holding an integer, such as `Digits: 6`."""
+    """A data entry field holding an integer, such as `Digits: 10`."""
 
     label: str
     message: str
@@ -195,7 +195,7 @@ PRECISION = Dialog(
                 "Exact",
             ),
             NumberField(
-                "Digits", "Enter significant digits", "PrecisionDigits", 6, minimum=1
+                "Digits", "Enter significant digits", "PrecisionDigits", 10, minimum=1
             ),
         ),
     ),
@@ -216,7 +216,7 @@ NOTATION = Dialog(
                 "Digits",
                 "Enter significant digits to display",
                 "NotationDigits",
-                6,
+                10,
                 minimum=1,
             ),
         ),
@@ -378,6 +378,23 @@ PLOT_FIELDS: tuple[Field, ...] = (
 )
 
 
+#: State variables of Derive's that Rederive recognizes without acting on them: it shows
+#: no steps, and Simplify never solves a relation. They have no dialog, but read back
+#: the value assigned.
+INERT_FIELDS: tuple[Field, ...] = (
+    ChoiceField(
+        "Steps", "Display steps", "DisplaySteps", ("false", "true"), "false"
+    ),
+    ChoiceField(
+        "Relations",
+        "Simplify relations",
+        "SimplifyRelations",
+        ("false", "true"),
+        "false",
+    ),
+)
+
+
 # -- the Manage screens ------------------------------------------------------
 #
 # The four Manage commands that set something. Each chooses the direction in which
@@ -502,6 +519,15 @@ SAVE = Dialog(
                 minimum=worksheet.MINIMUM_LENGTH,
                 recorded=False,
             ),
+            # Derive's "Save State Variables" box: the settings, written first.
+            ChoiceField(
+                "State",
+                "Select whether the settings are saved",
+                "SaveState",
+                ("Save", "Omit"),
+                "Omit",
+                recorded=False,
+            ),
         ),
     ),
     keeps_menu=True,
@@ -569,6 +595,7 @@ DIALOGS: tuple[Dialog, ...] = (
 _ALL_FIELDS: tuple[Field, ...] = (
     *(field for dialog in DIALOGS for field in dialog.fields),
     *PLOT_FIELDS,
+    *INERT_FIELDS,
 )
 
 DEFAULTS: dict[str, str | int] = {
@@ -595,12 +622,21 @@ def _read(field: Field, value: str) -> str | int | None:
                 return choice
         if field.prompt is None:
             return None
+        named = field.choices
         field = field.prompt
+    else:
+        named = ()
     try:
         number = int(value)
     except ValueError:
         return None
-    return number if field.accepts(number) else None
+    if not field.accepts(number):
+        return None
+    # A radix with a name is held by its name: `OutputBase := 2` is `Binary`.
+    return next(
+        (name for name, base in BASES.items() if base == number and name in named),
+        number,
+    )
 
 
 class Settings:
@@ -616,6 +652,10 @@ class Settings:
 
     def __getitem__(self, setting: str) -> str | int:
         return self._values[setting]
+
+    def values(self) -> dict[str, str | int]:
+        """Every setting's value, by name."""
+        return dict(self._values)
 
     def watch(self, callback: Callable[[frozenset[str]], None]) -> None:
         """Call `callback` with the names of the settings that just changed."""
@@ -648,12 +688,13 @@ class Settings:
         """Apply an authored `Name := Value`, and return whether it took effect.
 
         Authoring `InputMode := Word` is equivalent to setting it in the Options
-        Input dialog. Unknown settings and invalid values change nothing.
+        Input dialog. Unknown settings and invalid values change nothing. An empty
+        value, `Name :=`, restores the factory default.
         """
         field = FIELDS.get(setting)
         if field is None:
             return False
-        wanted = _read(field, value)
+        wanted = field.default if value == "" else _read(field, value)
         if wanted is None:
             return False
         self.apply({setting: wanted})

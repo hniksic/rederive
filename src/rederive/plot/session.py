@@ -32,7 +32,15 @@ from rederive.plot.backend import Backend, WindowHandle
 from rederive.plot.model import POINT_SIZE, Plot, Surface
 from rederive.plot.protocol import PlotKind, Where, WindowKind
 
-__all__ = ["Executor", "PlotSession", "Sampler", "curves", "preferred", "said"]
+__all__ = [
+    "Executor",
+    "PlotSession",
+    "Sampler",
+    "cancelled",
+    "curves",
+    "preferred",
+    "said",
+]
 
 
 def said(error: Exception) -> str:
@@ -58,12 +66,37 @@ class Executor(Protocol):
         """Pass a result to the drawing side, on whatever thread it runs."""
 
 
+class _Job:
+    """Whether one sampling job is still wanted (see `cancelled`)."""
+
+    __slots__ = ("cancelled",)
+
+    def __init__(self) -> None:
+        self.cancelled = False
+
+
+#: The job running on each thread, for `cancelled`.
+_running = threading.local()
+
+
+def cancelled() -> bool:
+    """Whether the job running on this thread is no longer wanted: a newer job with its
+    key was submitted, or its window closed.
+
+    Most jobs can't stop midway and run to completion, their results discarded. An
+    expression evaluated point by point asks between points, and stops.
+    """
+    job = getattr(_running, "job", None)
+    return job is not None and job.cancelled
+
+
 class Sampler:
     """Keyed queue for all numeric jobs, where the latest job for each key wins.
 
     A new job replaces a pending one with the same key, so the queue is never longer
-    than the number of curves. A job already running can't be interrupted and runs to
-    completion; the window discards its result if the view has changed.
+    than the number of curves. A job already running is told it is no longer wanted
+    (see `cancelled`), and runs to completion unless it asks; the window discards its
+    result if the view has changed.
 
     A job that raises returns the exception as its result, so the window can report it.
     """
@@ -72,6 +105,8 @@ class Sampler:
         self._lock = threading.Lock()
         self._jobs: dict[Any, tuple[Callable[[], Any], Callable[[Any], None]]] = {}
         self._order: list[Any] = []
+        #: The jobs running, by key.
+        self._busy: dict[Any, _Job] = {}
         self._executor = executor
         executor.serving(self)
 
@@ -93,18 +128,46 @@ class Sampler:
             if report is not None:
                 self._executor.deliver(lambda values: report(*values), arguments)
 
+        job = _Job()
         with self._lock:
+            running = self._busy.get(key)
+            if running is not None:
+                running.cancelled = True
             if key not in self._jobs:
                 self._order.append(key)
-            self._jobs[key] = (lambda: _answered(work, reporting), done)
+            self._jobs[key] = (lambda: self._run(key, job, work, reporting), done)
         self._executor.wake()
 
     def drop(self, matches: Callable[[Any], bool]) -> None:
-        """Drop pending jobs whose keys match, e.g. those of a closed window."""
+        """Drop pending jobs whose keys match, e.g. those of a closed window, and tell
+        running ones they are no longer wanted."""
         with self._lock:
             for key in [key for key in self._order if matches(key)]:
                 self._order.remove(key)
                 self._jobs.pop(key, None)
+            for key, job in self._busy.items():
+                if matches(key):
+                    job.cancelled = True
+
+    def _run(
+        self,
+        key: Any,
+        job: _Job,
+        work: Callable[..., Any],
+        reporting: Callable[..., None],
+    ) -> Any:
+        """Run a job taken from the queue, as the running job of its key and thread."""
+        with self._lock:
+            self._busy[key] = job
+        before = getattr(_running, "job", None)
+        _running.job = job
+        try:
+            return _answered(work, reporting)
+        finally:
+            _running.job = before
+            with self._lock:
+                if self._busy.get(key) is job:
+                    del self._busy[key]
 
     def take(self) -> tuple[Callable[[], Any], Callable[[Any], None]] | None:
         """The next job and its completion callback, or None if the queue is empty.
@@ -435,6 +498,7 @@ def curves(request: protocol.Add) -> list[Plot]:
             # point style is final here.
             connected=bool(request.options.connected),
             point_size=request.options.point_size or POINT_SIZE,
+            pointwise=request.pointwise,
         )
 
     def element(index: int, node: Any) -> Plot:

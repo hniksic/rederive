@@ -16,6 +16,7 @@ import sympy as sp
 from rederive.engine.computing import (
     Amount,
     Context,
+    Definition,
     expand,
     simplify,
     written_as_ratio,
@@ -249,7 +250,7 @@ def test_rounding_happens_after_expanding_not_before():
     everywhere in Approximate mode.
     """
     assert exp("1/(x^2 - 2)", RADICAL, context=APPROXIMATE) == (
-        "0.353553/(x - 1.41421) - 0.353553/(x + 1.41421)"
+        "0.3535533905/(x - 1.414213562) - 0.3535533905/(x + 1.414213562)"
     )
 
 
@@ -347,11 +348,17 @@ HEADS = [
         "x^3 + 3*x^2*(2*y + 1) + 3*x*(2*y + 1)^2 + (2*y + 1)^3",
     ),
     ("EXPAND(1/(x^2 - 1), Trivial)", "1/(x^2 - 1)"),
+    # A string in arithmetic is a variable.
+    ('EXPAND("x2"*("w"*"x3" - 2*"x3"), Trivial)', '"w"*"x2"*"x3" - 2*"x2"*"x3"'),
     (
         "EXPAND(1/(x^2 - 2), raDical, x)",
         "SQRT(2)/(4*(x - SQRT(2))) - SQRT(2)/(4*(x + SQRT(2)))",
     ),
     ("EXPAND([(x + 1)^2, (x + 2)^2])", "[x^2 + 2*x + 1, x^2 + 4*x + 4]"),
+    # Terms whose other factors involve the variable are independent, so they are not
+    # collected over a power of it: LaplaceTransforms transforms these two apart.
+    ("EXPAND(t^2*(SIGN(t - 2) + 1)/2, t)", "t^2*SIGN(t - 2)/2 + t^2/2"),
+    ("EXPAND(a*x*SIN(x) + b*x*SIN(x) + c*x, x)", "x*(a + b)*SIN(x) + c*x"),
     # Complex is an amount for Factor, not Expand, so here it's read as a variable and
     # the denominator stays unfactored.
     ("EXPAND(1/(x^2 + 1), Complex, x)", "1/(x^2 + 1)"),
@@ -361,6 +368,49 @@ HEADS = [
 @pytest.mark.parametrize(("text", "expected"), HEADS, ids=str)
 def test_simplify_evaluates_an_expand_head(text, expected):
     assert simplify(parse(text), Context()).text == expected
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        # A logical expression expands to its disjunctive normal form.
+        ("EXPAND(p AND (q OR r))", "(p AND q) OR (p AND r)"),
+        (
+            "EXPAND((x = -1772148577 OR x = 1772148577) AND (y = -159789256 OR y = "
+            "159789256))",
+            "(x = -1772148577 AND y = -159789256) OR (x = -1772148577 AND y = "
+            "159789256) OR (x = 1772148577 AND y = -159789256) OR (x = 1772148577 AND "
+            "y = 159789256)",
+        ),
+        ("TERMS(p AND (q OR r))", "[p AND q, p AND r]"),
+        # The terms in a variable are its powers, the zeroth too: those free of it are
+        # one term, as a program matching coefficients counts them.
+        ("TERMS(1 - a + b*x + c*x, x)", "[x*(b + c), 1 - a]"),
+        ("TERMS(EXPAND(1 - a + b*x, x))", "[b*x, 1 - a]"),
+        ("TERMS(x*(a + b)^2 + c, Trivial)", "[a^2*x, 2*a*b*x, b^2*x, c]"),
+        # A relation has its sides expanded, then is decided where its sides decide it.
+        ("EXPAND(x + 1 = (8 - x)^3)", "x + 1 = -x^3 + 24*x^2 - 192*x + 512"),
+        ("EXPAND((x + 1)^2 = x^2 + 2*x + 1)", "true"),
+        (
+            "EXPAND(1/(x^2 - 2), Radical, x)",
+            "SQRT(2)/(4*(x - SQRT(2))) - SQRT(2)/(4*(x + SQRT(2)))",
+        ),
+    ],
+    ids=str,
+)
+def test_expand_takes_formulas_and_relations(text, expected):
+    assert simplify(parse(text), Context()).text == expected
+
+
+def test_a_definition_expands_what_its_calls_give_it():
+    context = Context(functions={"G": Definition(("u",), parse("EXPAND(u)"))})
+    state = ParseState()
+    state.declare(FunctionDeclaration("G"))
+    shown = simplify(parse("G(u) := EXPAND(u)", state), context, state).text
+    assert shown == "G(u) := EXPAND(u)"
+    assert simplify(parse("G((x + 1)^2)", state), context, state).text == (
+        "x^2 + 2*x + 1"
+    )
 
 
 def test_the_amount_argument_may_be_left_out():
@@ -446,8 +496,10 @@ def test_a_head_that_will_not_survive_freezing_is_held_whole(monkeypatch):
 def test_an_approximate_spline_segment_expands_to_its_monomials():
     """SPLINE.DOC's #37 is the Expand of PARA under Approximate: `0.642857 t^3 -
     0.642857 t` for the segment PARA leaves as `t*(9*t^2 - 9)/14`."""
-    assert exp("t*(9*t^2 - 9)/14", context=APPROXIMATE) == "0.642857*t^3 - 0.642857*t"
+    assert exp("t*(9*t^2 - 9)/14", context=APPROXIMATE) == (
+        "0.6428571428*t^3 - 0.6428571428*t"
+    )
     assert (
         exp("-t*(27*t^2 - 81*t + 54)/28", context=APPROXIMATE)
-        == "-0.964285*t^3 + 2.89285*t^2 - 1.92857*t"
+        == "-0.9642857142*t^3 + 2.892857142*t^2 - 1.928571428*t"
     )

@@ -100,7 +100,7 @@ xyz    =>    (juxt x y z)
 abc    =>    (juxt a b c)
 mx    =>    (juxt m x)
 x y z    =>    (juxt x y z)
-BETA    =>    β
+BETA    =>    (juxt b e t a)    # not a Greek name: those are lower case or capitalized
 velocity    =>    (juxt v e l o (apply CI t) y)    # verified against Derive 4.11 with CI defined, as CI is built in here
 x2    =>    (juxt x 2)
 x 2    =>    (juxt x 2)
@@ -156,7 +156,7 @@ sin(x)    =>    (juxt s i n x)
 X    =>    X
 x    =>    x
 [state: CaseMode=Sensitive; InputMode=Word]
-rPle(e,v,n):=VECTOR(IF(iI=n,e,ELEMENT(v,iI)),iI,DIMENSION(v))    =>    (fundef rPle (params e v n) (call VECTOR (call IF (rel iI = n) e (call ELEMENT v iI)) iI (call DIMENSION v)))
+rPle(e,v,n):=VECTOR(IF(iI=n,e,ELEMENT(v,iI)),iI,DIMENSION(v))    =>    (fundef rPle (params e v n) (call VECTOR (call IF (rel iI = n) e (call ELEMENT v iI)) iI (call DIM v)))
 dGt(T,x):=IF(T=0,0,0,x*DIF(T,x)/T)    =>    (fundef dGt (params T x) (call IF (rel T = 0) 0 0 (/ (* x (call DIF T x)) T)))
 lInarx(A,r):=IF(r>1,lInarx(APPEND(A),r-1),A)    =>    (fundef lInarx (params A r) (call IF (rel r > 1) (call lInarx (call APPEND A) (- r 1)) A))
 lhs-rhs    =>    (- lhs rhs)
@@ -200,9 +200,9 @@ FIT3(mx,mf):=mx+mf    =>    (fundef FIT3 (params mx mf) (+ mx mf))
 mx+mf    =>    (+ mx mf)
 mx    =>    mx
 quux(z)    =>    (juxt q u u x z)
-gh(p,q):=    =>    (fundef GH (params p q))
-[declared: fun GH/2; var p; var q]
-gh(1,2)    =>    (call GH 1 2)
+gh(p,q):=    =>    (fundef gh (params p q))
+[declared: fun gh/2; var p; var q]
+gh(1,2)    =>    (call gh 1 2)
 default1:=1    =>    (:= default1 1)
 [declared: var default1]
 default1    =>    default1
@@ -256,7 +256,7 @@ a a^x    =>    (juxt a (^ a x))
 2 #i    =>    (juxt 2 #i)
 (1 + 2 #i) (3 + #i)    =>    (juxt (+ 1 (juxt 2 #i)) (+ 3 #i))
 4/3 #i    =>    (juxt (/ 4 3) #i)
--30 DEG    =>    (neg (juxt 30 deg))
+-30 DEG    =>    (neg (degrees 30))    # Derive 6: `DEG` is a postfix operator
 17/6 pi    =>    (juxt (/ 17 6) pi)
 x y    =>    (juxt x y)
 x^2 y^3    =>    (juxt (^ x 2) (^ y 3))
@@ -397,8 +397,8 @@ FACTOR(w,Rational,y2)    =>    (call FACTOR w Rational y2)
 ACCELERATION(6)    =>    (call ACCELERATION 6)
 f(x)    =>    (juxt f x)
 quux(z)    =>    (juxt q u u x z)
-f(x,y)    =>    ERROR@6    # rejection confirmed; offset not machine-checked
-f(x,y):=x+y    =>    (fundef F (params x y) (+ x y))
+f(x,y)    =>    (call f x y)    # an unknown name with two arguments is a call
+f(x,y):=x+y    =>    (fundef f (params x y) (+ x y))
 SIN[x]    =>    (apply SIN (vec x))
 SIN{x}    =>    (apply SIN (set x))
 
@@ -437,7 +437,7 @@ SQRT (4 - 2 * SQRT (3))    =>    (call SQRT (- 4 (* 2 (call SQRT 3))))
 SQRT (5 + SQRT 24) + SQRT (5 - SQRT 24)    =>    (+ (call SQRT (+ 5 (apply SQRT 24))) (call SQRT (- 5 (apply SQRT 24))))
 SQRT (-1)    =>    (call SQRT (neg 1))
 COS (17/6 pi)    =>    (call COS (juxt (/ 17 6) pi))
-SIN (-30 DEG)    =>    (call SIN (neg (juxt 30 deg)))
+SIN (-30 DEG)    =>    (call SIN (neg (degrees 30)))    # Derive 6: `DEG` is a postfix operator
 (SIN x)^3 + SIN x + (COS x)^2 SIN x    =>    (+ (^ (apply SIN x) 3) (apply SIN x) (juxt (^ (apply COS x) 2) (apply SIN x)))
 TAN ATAN x    =>    (apply TAN (apply ATAN x))
 CSC ACSC x    =>    (apply CSC (apply ACSC x))
@@ -572,7 +572,7 @@ NOT(FREE(b_,a))    =>    (not (call FREE b_ a))    # confirmed with the function
 a ≤ b AND b ≤ c OR a ≥ b AND b ≥ c    =>    (or (and (rel a <= b) (rel b <= c)) (and (rel a >= b) (rel b >= c)))
 a=b OR a=c OR b=c    =>    (or (rel a = b) (or (rel a = c) (rel b = c)))
 n>=0 AND FLOOR(n)=n    =>    (and (rel n >= 0) (rel (call FLOOR n) = n))
-m_=1 OR m_=DIMENSION(v)    =>    (or (rel m_ = 1) (rel m_ = (call DIMENSION v)))
+m_=1 OR m_=DIMENSION(v)    =>    (or (rel m_ = 1) (rel m_ = (call DIM v)))
 v SUB n=e OR n<1    =>    (or (rel (sub v n) = e) (rel n < 1))
 MOD(a-1/2)=0 AND (MOD(b)=0 AND (b>=1 AND (MOD(c-1/2)=0 AND NOT(a<c<3/2))))    =>    (and (rel (call MOD (- a (/ 1 2))) = 0) (and (rel (call MOD b) = 0) (and (rel b >= 1) (and (rel (call MOD (- c (/ 1 2))) = 0) (not (rel (rel a < c) < (/ 3 2)))))))
 TRUTH_TABLE(p,q,p AND q)    =>    (call TRUTH_TABLE p q (and p q))
@@ -600,14 +600,14 @@ LINE(x,y,m,t):=y+m*(t-x)    =>    (fundef LINE (params x y m t) (+ y (* m (- t x
 KRONECKER(i,j):=IF(i=j,1,0)    =>    (fundef KRONECKER (params i j) (call IF (rel i = j) 1 0))
 ACCELERATION(f, m) := f/m    =>    (fundef ACCELERATION (params f m) (/ f m))
 F(x):=    =>    (fundef F (params x))
-f(x,y,z):=    =>    (fundef F (params x y z))
+f(x,y,z):=    =>    (fundef f (params x y z))
 MATRIX(z,i,m,j,n):=VECTOR(VECTOR(z,j,1,n),i,1,m)    =>    (fundef MATRIX (params z i m j n) (call VECTOR (call VECTOR z j 1 n) i 1 m))
-OUTER(v,w):=VECTOR([v SUB i],i,DIMENSION(v)) . [w]    =>    (fundef OUTER (params v w) (dot (call VECTOR (vec (sub v i)) i (call DIMENSION v)) (vec w)))
+OUTER(v,w):=VECTOR([v SUB i],i,DIMENSION(v)) . [w]    =>    (fundef OUTER (params v w) (dot (call VECTOR (vec (sub v i)) i (call DIM v)) (vec w)))
 [declared: fun EPS/1]
-E__ijk:==EPS(3)    =>    (:== E__ijk (call EPS 3))    # confirmed with the functions it calls defined, as Derive reads an unknown one as a product
+E__ijk:==EPS(3)    =>    (:= E__ijk (call EPS 3))    # Derive 6 reads `:==` as `:=`; confirmed with the functions it calls defined, as Derive reads an unknown one as a product
 [declared: ]
 [declared: fun TAYLOR_S/4]
-S1:==TAYLOR_S(SIN(x),x,0,12)    =>    (:== S1 (call TAYLOR_S (call SIN x) x 0 12))    # confirmed with the functions it calls defined, as Derive reads an unknown one as a product
+S1:==TAYLOR_S(SIN(x),x,0,12)    =>    (:= S1 (call TAYLOR_S (call SIN x) x 0 12))    # Derive 6 reads `:==` as `:=`; confirmed with the functions it calls defined, as Derive reads an unknown one as a product
 [declared: ]
 [X(r):=,Y(r):=]    =>    (vec (fundef X (params r)) (fundef Y (params r)))
 [a:=,b:=,c:=,X:=ELEMENT(x,1)]    =>    (vec (:= a) (:= b) (:= c) (:= X (call ELEMENT x 1)))
@@ -644,7 +644,7 @@ k:epsilonReal (0, inf)    =>    (domain k Real (ivl "(" 0 inf ")"))
 n :ε Real [-2,10)    =>    (domain n Real (ivl "[" (neg 2) 10 ")"))
 n :ε Integer [1, 10]    =>    (domain n Integer (ivl "[" 1 10 "]"))
 t :ε Real (-inf, 0]    =>    (domain t Real (ivl "(" (neg inf) 0 "]"))
-[phi(x):=,omega(x):=,k:epsilonReal (0, inf),Branch:=Any]    =>    (vec (fundef PHI (params x)) (fundef OMEGA (params x)) (domain k Real (ivl "(" 0 inf ")")) (:= Branch Any))
+[phi(x):=,omega(x):=,k:epsilonReal (0, inf),Branch:=Any]    =>    (vec (fundef φ (params x)) (fundef ω (params x)) (domain k Real (ivl "(" 0 inf ")")) (:= Branch Any))
 
 ## Group: Special forms
 
@@ -656,18 +656,18 @@ IF(i=j,1,0)    =>    (call IF (rel i = j) 1 0)
 IF(0 <= h AND h <= 168, 10h, ?)    =>    (call IF (and (rel 0 <= h) (rel h <= 168)) (juxt 10 h) ?)
 IF(a=b OR a=c OR b=c, "Isosceles", "Scalene")    =>    (call IF (or (rel a = b) (or (rel a = c) (rel b = c))) "Isosceles" "Scalene")
 IF(DIF(LIM(r,y,x*y),x),u,"inapplicable","inapplicable")    =>    (call IF (call DIF (call LIM r y (* x y)) x) u "inapplicable" "inapplicable")
-IF(DIMENSION(a)=1,a SUB 1,a,a)    =>    (call IF (rel (call DIMENSION a) = 1) (sub a 1) a a)
+IF(DIMENSION(a)=1,a SUB 1,a,a)    =>    (call IF (rel (call DIM a) = 1) (sub a 1) a a)
 IF(v=[] OR (v=[a] OR (v=[b] OR (v=[a,b] OR v=[b,a]))),true,false,false)    =>    (call IF (or (rel v = (vec)) (or (rel v = (vec a)) (or (rel v = (vec b)) (or (rel v = (vec a b)) (rel v = (vec b a)))))) true false false)
 [declared: fun POLES_6/2]
-IF(DIMENSION(SELECT(x=g__,g__,VARIABLES(u)))=1,POLES_6(u,x),[],[])    =>    (call IF (rel (call DIMENSION (call SELECT (rel x = g__) g__ (call VARIABLES u))) = 1) (call POLES_6 u x) (vec) (vec))    # confirmed with the functions it calls defined, as Derive reads an unknown one as a product
+IF(DIMENSION(SELECT(x=g__,g__,VARIABLES(u)))=1,POLES_6(u,x),[],[])    =>    (call IF (rel (call DIM (call SELECT (rel x = g__) g__ (call VARIABLES u))) = 1) (call POLES_6 u x) (vec) (vec))    # confirmed with the functions it calls defined, as Derive reads an unknown one as a product
 [declared: ]
 VECTOR(u,k,n)    =>    (call VECTOR u k n)
 VECTOR(u,k,m,n)    =>    (call VECTOR u k m n)
 VECTOR(u,k,m,n,s)    =>    (call VECTOR u k m n s)
 VECTOR(u,k,v)    =>    (call VECTOR u k v)
 VECTOR([x,x^2,x^3],x,1,8)    =>    (call VECTOR (vec x (^ x 2) (^ x 3)) x 1 8)
-VECTOR(m_ SUB k SUB 1,k,DIMENSION(m_),1,-1)    =>    (call VECTOR (sub (sub m_ k) 1) k (call DIMENSION m_) 1 (neg 1))
-VECTOR(VECTOR(u_ SUB n_,u_,v),n_,DIMENSION(v SUB 1))    =>    (call VECTOR (call VECTOR (sub u_ n_) u_ v) n_ (call DIMENSION (sub v 1)))
+VECTOR(m_ SUB k SUB 1,k,DIMENSION(m_),1,-1)    =>    (call VECTOR (sub (sub m_ k) 1) k (call DIM m_) 1 (neg 1))
+VECTOR(VECTOR(u_ SUB n_,u_,v),n_,DIMENSION(v SUB 1))    =>    (call VECTOR (call VECTOR (sub u_ n_) u_ v) n_ (call DIM (sub v 1)))
 SUM(u,n)    =>    (call SUM u n)
 SUM(u,n,k,m)    =>    (call SUM u n k m)
 SUM([1,2,3])    =>    (call SUM (vec 1 2 3))
@@ -752,7 +752,7 @@ PI    =>    pi
 ""    =>    ""
 "abc    =>    "abc"
 LI(x,m):=EI(LN(x),m)*;    =>    ERROR@21    # rejection confirmed; offset not machine-checked
-"+-"    =>    ERROR@4    # rejection confirmed; offset not machine-checked
+"+-"    =>    "+-"    # before no operand, the two-character string, as Derive 6 reads it
 
 ## Group: Absolute value
 
@@ -814,7 +814,7 @@ v[1]    =>    (juxt v (vec 1))
 SQRT[1/12]    =>    (apply SQRT (vec (/ 1 12)))
 LN[(4*x)/3]    =>    (apply LN (vec (/ (* 4 x) 3)))
 ATAN[a/b]    =>    (apply ATAN (vec (/ a b)))
-DIMENSION[[a,b,c],[1,2,3]]    =>    (apply DIMENSION (vec (vec a b c) (vec 1 2 3)))
+DIMENSION[[a,b,c],[1,2,3]]    =>    (apply DIM (vec (vec a b c) (vec 1 2 3)))
 IF[n=0, 1, 2]    =>    (apply IF (vec (rel n = 0) 1 2))
 (a+b)    =>    (+ a b)
 [a+b]    =>    (vec (+ a b))
@@ -838,7 +838,7 @@ x == y    =>    ERROR@3    # rejection confirmed; offset not machine-checked
 1..10    =>    ERROR@2    # rejection confirmed; offset not machine-checked
 a && b    =>    ERROR@2    # rejection confirmed; offset not machine-checked
 $x    =>    ERROR@0    # rejection confirmed; offset not machine-checked
-'(2+3)    =>    ERROR@0    # rejection confirmed; offset not machine-checked
+'(2+3)    =>    (quote (+ 2 3))
 
 ## Group: Error cases
 
@@ -851,7 +851,7 @@ x+1)    =>    ERROR@3    # rejection confirmed; offset not machine-checked
 [1,2    =>    ERROR@4    # rejection confirmed; offset not machine-checked
 1,2]    =>    ERROR@1    # rejection confirmed; offset not machine-checked
 [1,2,]    =>    ERROR@5    # rejection confirmed; offset not machine-checked
-f(x,y)    =>    ERROR@6    # rejection confirmed; offset not machine-checked
+f(x,y)    =>    (call f x y)    # an unknown name with two arguments is a call
 #q    =>    ERROR@1    # rejection confirmed; offset not machine-checked
 #    =>    ERROR@1    # rejection confirmed; offset not machine-checked
 "abc    =>    "abc"
@@ -875,7 +875,7 @@ DSOLVE1_GEN(p,q,x,y,c,a_):=IF("inapplicable"=a_:=INTEGRATING_FACTOR_GEN(p,q,x,y,
 [declared: ]
 LUCAS(n):=(ITERATE(IF((n AND d_)=0,[a_^2-2*(-1)^c_,a_*b_-(-1)^c_,2*c_,d_/2],[a_*b_-(-1)^c_,b_^2+2*(-1)^c_,2*c_+1,d_/2]),[a_,b_,c_,d_],[2,1,0,2^FLOOR(LOG(n,2))],FLOOR(LOG(n,2))+1)) SUB 1    =>    (fundef LUCAS (params n) (sub (call ITERATE (call IF (rel (and n d_) = 0) (vec (- (^ a_ 2) (* 2 (^ (neg 1) c_))) (- (* a_ b_) (^ (neg 1) c_)) (* 2 c_) (/ d_ 2)) (vec (- (* a_ b_) (^ (neg 1) c_)) (+ (^ b_ 2) (* 2 (^ (neg 1) c_))) (+ (* 2 c_) 1) (/ d_ 2))) (vec a_ b_ c_ d_) (vec 2 1 0 (^ 2 (call FLOOR (call LOG n 2)))) (+ (call FLOOR (call LOG n 2)) 1)) 1))
 [declared: fun FIT_AUX4/2; fun FIT_AUX5/2]
-FIT_AUX3(x,f,mx,mf,w):=FIT_AUX4([y_:=,FIT_AUX5(APPEND(x,[y_,NUMERATOR(f)-y_*DENOMINATOR(f)]),APPEND(mx`,[mf,VECTOR(0,i_,DIMENSION(w)),w])`)] SUB 2,y_)    =>    (fundef FIT_AUX3 (params x f mx mf w) (call FIT_AUX4 (sub (vec (:= y_) (call FIT_AUX5 (call APPEND x (vec y_ (- (call NUMERATOR f) (* y_ (call DENOMINATOR f))))) (transpose (call APPEND (transpose mx) (vec mf (call VECTOR 0 i_ (call DIMENSION w)) w))))) 2) y_))    # confirmed with the functions it calls defined, as Derive reads an unknown one as a product
+FIT_AUX3(x,f,mx,mf,w):=FIT_AUX4([y_:=,FIT_AUX5(APPEND(x,[y_,NUMERATOR(f)-y_*DENOMINATOR(f)]),APPEND(mx`,[mf,VECTOR(0,i_,DIMENSION(w)),w])`)] SUB 2,y_)    =>    (fundef FIT_AUX3 (params x f mx mf w) (call FIT_AUX4 (sub (vec (:= y_) (call FIT_AUX5 (call APPEND x (vec y_ (- (call NUMERATOR f) (* y_ (call DENOMINATOR f))))) (transpose (call APPEND (transpose mx) (vec mf (call VECTOR 0 i_ (call DIM w)) w))))) 2) y_))    # confirmed with the functions it calls defined, as Derive reads an unknown one as a product
 [declared: ]
 (x^6+a^6)(x+1)/((x^6+a^6)*(x^2-a^2)+a^2*x^2*(x^4-a^4))+a^2*x^2(x+1)/(x^6-a^6-a^2*x^2*(x^2-a^2))    =>    (+ (/ (juxt (+ (^ x 6) (^ a 6)) (+ x 1)) (+ (* (+ (^ x 6) (^ a 6)) (- (^ x 2) (^ a 2))) (* (^ a 2) (^ x 2) (- (^ x 4) (^ a 4))))) (/ (prod (^ a 2) * (^ x 2) juxt (+ x 1)) (- (^ x 6) (^ a 6) (* (^ a 2) (^ x 2) (- (^ x 2) (^ a 2))))))
 ((1/x^2+1/y^2)/(1/x^2-1/y^2)-(1/x^2-1/y^2)/(1/x^2+1/y^2))/((2x+y)/(((x+y)/(x-y)+(x-y)/(x+y))*(x^2/y^2+y^2/x^2-2)))    =>    (/ (- (/ (+ (/ 1 (^ x 2)) (/ 1 (^ y 2))) (- (/ 1 (^ x 2)) (/ 1 (^ y 2)))) (/ (- (/ 1 (^ x 2)) (/ 1 (^ y 2))) (+ (/ 1 (^ x 2)) (/ 1 (^ y 2))))) (/ (+ (juxt 2 x) y) (* (+ (/ (+ x y) (- x y)) (/ (- x y) (+ x y))) (sum (/ (^ x 2) (^ y 2)) + (/ (^ y 2) (^ x 2)) - 2))))
@@ -884,9 +884,9 @@ FIT_AUX3(x,f,mx,mf,w):=FIT_AUX4([y_:=,FIT_AUX5(APPEND(x,[y_,NUMERATOR(f)-y_*DENO
 [declared: fun LUCAS/1]
 FIBONACCI(n):=IF(n>=0 AND FLOOR(n)=n,(2*LUCAS(n+1)-LUCAS(n))/5,1/SQRT(5)*(((1+SQRT(5))/2)^n-((SQRT(5)-1)/2)^n*COS(pi*n)))    =>    (fundef FIBONACCI (params n) (call IF (and (rel n >= 0) (rel (call FLOOR n) = n)) (/ (- (* 2 (call LUCAS (+ n 1))) (call LUCAS n)) 5) (* (/ 1 (call SQRT 5)) (- (^ (/ (+ 1 (call SQRT 5)) 2) n) (* (^ (/ (- (call SQRT 5) 1) 2) n) (call COS (* pi n)))))))    # confirmed with the functions it calls defined, as Derive reads an unknown one as a product
 [declared: ]
-PIVOT(a,i,j):=VECTOR(IF(m_<=i,a SUB m_,a SUB m_-a SUB m_ SUB j/a SUB i SUB j*a SUB i),m_,DIMENSION(a))    =>    (fundef PIVOT (params a i j) (call VECTOR (call IF (rel m_ <= i) (sub a m_) (- (sub a m_) (* (/ (sub (sub a m_) j) (sub (sub a i) j)) (sub a i)))) m_ (call DIMENSION a)))
-FORCE0(a,i,j,p):=VECTOR(IF(m_=i,a SUB i-a SUB i SUB j/a SUB p SUB j*a SUB p,a SUB m_),m_,DIMENSION(a))    =>    (fundef FORCE0 (params a i j p) (call VECTOR (call IF (rel m_ = i) (- (sub a i) (* (/ (sub (sub a i) j) (sub (sub a p) j)) (sub a p))) (sub a m_)) m_ (call DIMENSION a)))
-SMOOTH_VECTOR(v):=VECTOR(IF(m_=1 OR m_=DIMENSION(v),v SUB m_,(v SUB (m_-1)+v SUB m_+v SUB (m_+1))/3),m_,DIMENSION(v))    =>    (fundef SMOOTH_VECTOR (params v) (call VECTOR (call IF (or (rel m_ = 1) (rel m_ = (call DIMENSION v))) (sub v m_) (/ (+ (sub v (- m_ 1)) (sub v m_) (sub v (+ m_ 1))) 3)) m_ (call DIMENSION v)))
+PIVOT(a,i,j):=VECTOR(IF(m_<=i,a SUB m_,a SUB m_-a SUB m_ SUB j/a SUB i SUB j*a SUB i),m_,DIMENSION(a))    =>    (fundef PIVOT (params a i j) (call VECTOR (call IF (rel m_ <= i) (sub a m_) (- (sub a m_) (* (/ (sub (sub a m_) j) (sub (sub a i) j)) (sub a i)))) m_ (call DIM a)))
+FORCE0(a,i,j,p):=VECTOR(IF(m_=i,a SUB i-a SUB i SUB j/a SUB p SUB j*a SUB p,a SUB m_),m_,DIMENSION(a))    =>    (fundef FORCE0 (params a i j p) (call VECTOR (call IF (rel m_ = i) (- (sub a i) (* (/ (sub (sub a i) j) (sub (sub a p) j)) (sub a p))) (sub a m_)) m_ (call DIM a)))
+SMOOTH_VECTOR(v):=VECTOR(IF(m_=1 OR m_=DIMENSION(v),v SUB m_,(v SUB (m_-1)+v SUB m_+v SUB (m_+1))/3),m_,DIMENSION(v))    =>    (fundef SMOOTH_VECTOR (params v) (call VECTOR (call IF (or (rel m_ = 1) (rel m_ = (call DIM v))) (sub v m_) (/ (+ (sub v (- m_ 1)) (sub v m_) (sub v (+ m_ 1))) 3)) m_ (call DIM v)))
 DEF_INT_PARTS(u,v,x,a,b):=(LIM(u*INT(v,x),x,b,-1)-LIM(u*INT(v,x),x,a,1))-INT(INT(v,x)*DIF(u,x),x,a,b)    =>    (fundef DEF_INT_PARTS (params u v x a b) (- (- (call LIM (* u (call INT v x)) x b (neg 1)) (call LIM (* u (call INT v x)) x a 1)) (call INT (* (call INT v x) (call DIF u x)) x a b)))
 LIN2_CCF_PARTIC(h,r,x):=h . SUM(r LIM([-ELEMENT(h,2),ELEMENT(h,1)]/DET([h,LIM(h,x,x+1)]),x,x+1),x)    =>    (fundef LIN2_CCF_PARTIC (params h r x) (dot h (call SUM (juxt r (call LIM (/ (vec (neg (call ELEMENT h 2)) (call ELEMENT h 1)) (call DET (vec h (call LIM h x (+ x 1))))) x (+ x 1))) x)))
 [declared: fun LIN2_CCF_AUX/4; fun LIN2_CCF_HOM/4]
@@ -906,14 +906,14 @@ IMPOSE_BV2(x,y_,x1,y1,x2,y2):=SOLVE([LIM(y_,x,x1)=y1, LIM(y_,x,x2)=y2],[@1, @2])
 [declared: fun F21_SOL_2/6]
 F21_SOL(a,b,c,z,g,x):=IF(MOD(c)/=0 OR (MOD(a)=0 AND (c<=a<=0 OR c>a>0) OR MOD(b)=0 AND (c<=b<=0 OR c>b>0)),F21_SOL_2(a,b,c,z,g,x),0)    =>    (fundef F21_SOL (params a b c z g x) (call IF (or (rel (call MOD c) /= 0) (or (and (rel (call MOD a) = 0) (or (rel (rel c <= a) <= 0) (rel (rel c > a) > 0))) (and (rel (call MOD b) = 0) (or (rel (rel c <= b) <= 0) (rel (rel c > b) > 0))))) (call F21_SOL_2 a b c z g x) 0))    # confirmed with the functions it calls defined, as Derive reads an unknown one as a product
 [declared: ]
-FIT_AUX6(v,dv,m,dm):=FIT(APPEND(DELETE_ELEMENT(v,dv),[w_,w_*v SUB dv]),APPEND(DELETE_ELEMENT(m`,dv),[VECTOR(m SUB i_ SUB dv*m SUB i_ SUB (dv+1),i_,dm)])`)    =>    (fundef FIT_AUX6 (params v dv m dm) (call FIT (call APPEND (call DELETE_ELEMENT v dv) (vec w_ (* w_ (sub v dv)))) (transpose (call APPEND (call DELETE_ELEMENT (transpose m) dv) (vec (call VECTOR (* (sub (sub m i_) dv) (sub (sub m i_) (+ dv 1))) i_ dm))))))
+FIT_AUX6(v,dv,m,dm):=FIT(APPEND(DELETE_ELEMENT(v,dv),[w_,w_*v SUB dv]),APPEND(DELETE_ELEMENT(m`,dv),[VECTOR(m SUB i_ SUB dv*m SUB i_ SUB (dv+1),i_,dm)])`)    =>    (fundef FIT_AUX6 (params v dv m dm) (call FIT (call APPEND (call DELETE v dv) (vec w_ (* w_ (sub v dv)))) (transpose (call APPEND (call DELETE (transpose m) dv) (vec (call VECTOR (* (sub (sub m i_) dv) (sub (sub m i_) (+ dv 1))) i_ dm))))))
 [declared: fun POLY/3; fun DPOLY/3; fun DIM/1]
 EQNS(data,ddata,a,n):=APPEND(VECTOR(POLY(data SUB i SUB 1,a,n)=data SUB i SUB 2,i,1,DIM(data),1),VECTOR(DPOLY(ddata SUB i SUB 1,a,n)=ddata SUB i SUB 2,i,1,DIM(ddata),1))    =>    (fundef EQNS (params data ddata a n) (call APPEND (call VECTOR (rel (call POLY (sub (sub data i) 1) a n) = (sub (sub data i) 2)) i 1 (call DIM data) 1) (call VECTOR (rel (call DPOLY (sub (sub ddata i) 1) a n) = (sub (sub ddata i) 2)) i 1 (call DIM ddata) 1)))    # confirmed with the functions it calls defined, as Derive reads an unknown one as a product
 [declared: ]
 [declared: fun NEWT_ITERATES/4; fun SUBST/3]
 NEWT(u,x,x0,k):=IF(k>0,NEWT_ITERATES(u,x,x0,k),?,SUBST(x-u/DIF(u,x),x,x0))    =>    (fundef NEWT (params u x x0 k) (call IF (rel k > 0) (call NEWT_ITERATES u x x0 k) ? (call SUBST (- x (/ u (call DIF u x))) x x0)))    # confirmed with the functions it calls defined, as Derive reads an unknown one as a product
 [declared: ]
-[SUBST(u,x,a):=,SECANT(u,x,a,h):=,TANGENT(u,x,a):=,NEWT(u,x,x0,k):=]    =>    (vec (fundef SUBST (params u x a)) (fundef SECANT (params u x a h)) (fundef TANGENT (params u x a)) (fundef NEWT (params u x x0 k)))
+[SUBST(u,x,a):=,SECANT(u,x,a,h):=,TANGENT(u,x,a):=,NEWT(u,x,x0,k):=]    =>    ERROR@13    # SUBST is a built-in
 THANK_YOU_!!!    =>    (juxt t h a n k_ y o (fact (fact (fact u_))))
 
 ## Precedence note on the interior `:=`

@@ -22,6 +22,7 @@ from rederive.engine.computing import (
 )
 from rederive.engine.context import Angle, Precision
 from rederive.engine.to_sympy import (
+    DEGREE,
     DIMENSION,
     FUNCTIONS,
     Assign,
@@ -36,7 +37,6 @@ from rederive.engine.to_sympy import (
 )
 from rederive.model.expr import Kind
 from rederive.syntax import (
-    DeriveSyntaxError,
     FunctionDeclaration,
     ParseState,
     parse_expression,
@@ -115,16 +115,12 @@ def test_e_and_i_are_variables():
     assert convert("i^2") == sp.Symbol("i", real=True) ** 2
 
 
-def test_a_decimal_is_rounded_to_the_precision_in_approximate_mode():
-    """An approximate number becomes the simplest rational the precision allows.
-
-    One tenth is exact. With six digits, `123456789/10000` is indistinguishable from
-    `308642/25`, so approximate mode reads it as the latter, matching the original. This
-    rounding on input is what makes approximate arithmetic approximate.
-    """
-    approximate = Context(precision=Precision.APPROXIMATE)
+def test_a_decimal_is_the_exact_fraction_in_approximate_mode():
+    """A numeral is the fraction it spells in every mode, whatever the precision: a
+    typed number keeps the digits it was typed with."""
+    approximate = Context(precision=Precision.APPROXIMATE, precision_digits=6)
     assert convert("0.1", approximate) == sp.Rational(1, 10)
-    assert convert("12345.6789", approximate) == sp.Rational(308642, 25)
+    assert convert("12345.6789", approximate) == sp.Rational(123456789, 10000)
 
 
 def test_a_string_is_inert_and_is_not_the_variable_of_that_name():
@@ -200,12 +196,13 @@ def test_a_subscript_on_a_matrix_selects_a_row():
 
 
 def test_a_subscript_reaches_through_every_dimension_there_is():
-    """`SUB` is another spelling of `ELEMENT`, so it reaches equally deep.
+    """A chain of `SUB`s is `ELEMENT` with one index per link, so it reaches equally
+    deep.
 
     This includes a vector of matrices. Each index in the chain selects from the result
     of the previous one."""
     assert convert("[[[1, 2], [3, 4]], [[5, 6], [7, 8]]] SUB 2 SUB 1 SUB 2") == 6
-    assert convert("[[[1, 2], [3, 4]], [[5, 6], [7, 8]]] SUB [2, 1, 2]") == 6
+    assert convert("ELEMENT([[[1, 2], [3, 4]], [[5, 6], [7, 8]]], 2, 1, 2)") == 6
 
 
 def test_a_subscript_on_a_vector_with_no_index_yet_keeps_the_access():
@@ -220,11 +217,13 @@ def test_a_subscript_on_a_vector_with_no_index_yet_keeps_the_access():
 
 def test_a_transpose_of_a_matrix_is_a_matrix_and_of_a_scalar_is_the_scalar():
     # 8.5 p.205: the transpose of a scalar is the scalar, and anything not declared
-    # nonscalar is a scalar. A non-expression such as an equation keeps the head.
+    # nonscalar is a scalar. A vector without a transpose keeps the head, and the
+    # complement of a logical value such as an equation is its negation.
     assert convert("[[1, 2], [3, 4]]`") == Vector(Vector(1, 3), Vector(2, 4))
     assert convert("a`") == sp.Symbol("a", real=True)
     assert convert("a``") == sp.Symbol("a", real=True)
-    assert convert("(x = 1)`") == Transposed(sp.Eq(sp.Symbol("x", real=True), 1))
+    assert convert("[1, [2, 3]]`") == Transposed(Vector(1, Vector(2, 3)))
+    assert convert("(x = 1)`") == sp.Ne(sp.Symbol("x", real=True), 1)
 
 
 def test_a_transpose_of_a_declared_nonscalar_is_held_as_one():
@@ -449,17 +448,16 @@ def test_a_substitution_converts_back_from_the_vectors_it_is_written_as():
         ("MEIJERG(x)", "m*EI(j)*e*r*g*x"),
         ("BESSELI(z)", "b*e*s*s*e*l*i*z"),
         ("LOWERGAMMA(1, z)", "l*o*w*e*r*GAMMA(1, z)"),
-        ("LI(x)", "l*i*x"),
+        ("UPPERGAMMA(1, z)", "u*p*p*e*r*GAMMA(1, z)"),
     ],
     ids=str,
 )
 def test_a_sympy_class_name_is_no_function_name(text, letters):
     """Function names come from the notation, not from sympy's exported classes.
 
-    Sympy's hypergeometric and Bessel functions, incomplete gammas and logarithmic
-    integral have no name here, so their sympy names are read like any undefined name:
-    letter by letter, with known functions found among the letters as in any word. The
-    logarithmic integral is written `EI(LN(x))`.
+    Sympy's hypergeometric and Bessel functions and incomplete gammas have no name here,
+    so their sympy names are read like any undefined name: letter by letter, with known
+    functions found among the letters as in any word.
     """
     converted = convert(text)
     assert converted == convert(letters)
@@ -478,10 +476,15 @@ def test_a_sympy_class_name_is_no_function_name(text, letters):
     ids=str,
 )
 def test_a_sympy_class_name_takes_no_arguments(text):
-    # An undefined name isn't a function, and an argument list is only a valid factor
-    # when it holds one argument.
-    with pytest.raises(DeriveSyntaxError):
-        parse(text)
+    # An undefined name isn't a function. An argument list of several arguments makes
+    # its last letter an undefined function, as it can't be a factor.
+    converted = convert(text)
+    assert not converted.atoms(sp.hyper, sp.meijerg, sp.besseli)
+    assert {type(call).__name__ for call in converted.atoms(AppliedUndef)} <= {
+        "R",
+        "G",
+        "I",
+    }
 
 
 def test_an_interval_converts_back_to_the_bounds_a_limit_answered_with():
@@ -649,10 +652,15 @@ def test_a_function_outside_the_table_is_opaque_and_round_trips(name):
 # -- the angle mode ----------------------------------------------------------
 
 
-def test_degree_mode_measures_trig_arguments_in_degrees():
+def test_degree_mode_shows_an_inverse_function_s_angle_in_degrees():
+    """Trigonometric functions take radians in either mode; under Degree an angle that
+    is a rational multiple of pi is shown in degrees, with its value unchanged."""
     degrees = Context(angle=Angle.DEGREE)
-    assert convert("SIN(45)", degrees) == sp.sqrt(2) / 2
-    assert convert("ASIN(1/2)", degrees) == 30
+    assert convert("SIN(45)", degrees) == sp.sin(45)
+    assert convert("SIN(45 deg)", degrees) == sp.sqrt(2) / 2
+    thirty = convert("ASIN(1/2)", degrees)
+    assert thirty.xreplace({DEGREE: sp.pi / 180}) == sp.pi / 6
+    assert thirty == 30 * DEGREE
 
 
 def test_radian_mode_still_understands_the_degree_constant():
@@ -693,11 +701,14 @@ KINDS = [
     "p OR q",
     "p XOR q",
     "p IMP q",
+    "p IFF q",
+    "m ROW 2",
     "u := 5",
     "F(x, y) := x + y",
     "x :epsilon Real",
     "x :epsilon Real [0, inf)",
     "x + 1 =",
+    "'(x + 1)",
 ]
 
 
@@ -728,7 +739,7 @@ UNCHANGED = [
     "x SUB 1",
     "x SUB (i + 1)",
     "(x + 1) SUB 2",
-    "(x = 1)`",
+    "[1, [2, 3]]`",
     "a . [1, 2]",
     "±x",
     '"note"',
@@ -817,7 +828,8 @@ def test_every_node_kind_is_covered_by_a_round_trip_case():
         ("-inf", "-inf"),
         ("x :epsilon Real [0, inf)", "x :epsilon Real [0, inf)"),
         ("F(x) :=", "F(x) :="),
-        ("u :==", "u :=="),
+        # `:==` is read as `:=`.
+        ("u :==", "u :="),
         ("[[1, 2], [3]]", "[[1, 2], [3]]"),
         ("SOLVE(x^2 = 1, x)", "SOLVE(x^2 = 1, x)"),
         # The fourth argument is the value when the test is undecidable. `Piecewise`

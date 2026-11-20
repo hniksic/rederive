@@ -46,6 +46,13 @@ RESAMPLE_DELAY_MS = 100
 GRID_SHARE = 0.5
 MAX_GRID = 512
 
+#: The most points per axis of a grid evaluated point by point, for a field and for a
+#: surface. Each point runs the expression's programs, at a fraction of a millisecond
+#: or more where numpy takes nanoseconds, so the grids are coarser: a 64 by 64 field is
+#: 4096 points, a 32 by 32 surface 1024.
+POINTWISE_FIELD = 64
+POINTWISE_SURFACE = 32
+
 
 def keyed(window: int, plot: Plot) -> tuple[int, int]:
     """The job key of a plot in a window; a resample replaces the job with this key."""
@@ -72,19 +79,21 @@ def job(
     from rederive.plot import evaluate
 
     node, context = plot.node, plot.context
+    pointwise = getattr(plot, "pointwise", False)
     if plot.kind in FIELDS:
         return _field(plot, xrange, yrange, size)
     if plot.kind in PARAMETRIZED:
         return _curve(plot, xrange, yrange, size, degrees)
     if plot.kind is PlotKind.DATA:
-        return lambda report: evaluate.points(node, context)
+        return lambda report: evaluate.points(node, context, pointwise)
     variables = plot.options.variables
     closure = plot.closure
 
     def work(report: Callable[..., None]) -> Any:
         made = closure
         if made is None:
-            made = evaluate.closure(node, context, variables or ("x",))
+            made = evaluate.closure(node, context, variables or ("x",), pointwise)
+        evaluate.budgeted(made)
         xs, ys = evaluate.sample_adaptive(made, xrange, yrange, size, report=report)
         return made, xs, ys
 
@@ -105,13 +114,17 @@ def grid_job(
     from rederive.plot import evaluate
 
     node, context, names = surface.node, surface.context, surface.axes
+    pointwise = getattr(surface, "pointwise", False)
     made = surface.closure
     nx, ny = grid
+    if pointwise:
+        nx, ny = min(nx, POINTWISE_SURFACE), min(ny, POINTWISE_SURFACE)
 
     def work(_report: Callable[..., None]) -> Any:
         f = made
         if f is None:
-            f = evaluate.closure(node, context, names)
+            f = evaluate.closure(node, context, names, pointwise)
+        evaluate.budgeted(f)
         xs, ys, values = evaluate.grid_eval(f, xdomain, ydomain, nx, ny)
         boundary = evaluate.grid_boundary(f, xs, ys, values)
         return f, xs, ys, values, boundary
@@ -138,6 +151,7 @@ def _curve(
     from rederive.plot import evaluate
 
     node, context, options = plot.node, plot.context, plot.options
+    pointwise = getattr(plot, "pointwise", False)
     names = options.variables or ("t",)
     made, radius, known = plot.pair, plot.closure, plot.trange
     pending = plot.bounds
@@ -151,11 +165,14 @@ def _curve(
                 # A curve switched to polar by the view already has its closure, and
                 # r = f(θ) uses the same f.
                 if inner is None:
-                    inner = evaluate.closure(node, context, names)
+                    inner = evaluate.closure(node, context, names, pointwise)
                 pair = evaluate.polar_pair(inner, degrees)
             else:
-                pair = evaluate.pair(node, context, names)
+                pair = evaluate.pair(node, context, names, pointwise)
             trange = (-turn, turn)
+        if inner is not None:
+            evaluate.budgeted(inner)
+        evaluate.budgeted(pair[0])
         if pending is not None:
             low = evaluate.number(pending[0], context, trange[0])
             high = evaluate.number(pending[1], context, trange[1])
@@ -184,17 +201,20 @@ def _field(
     from rederive.plot import evaluate
 
     node, context = plot.node, plot.context
+    pointwise = getattr(plot, "pointwise", False)
     names = plot.axes
     made = plot.closure
     implicit = plot.kind is PlotKind.IMPLICIT
-    nx = int(min(max(size[0] * GRID_SHARE, 2), MAX_GRID))
-    ny = int(min(max(size[1] * GRID_SHARE, 2), MAX_GRID))
+    most = POINTWISE_FIELD if pointwise else MAX_GRID
+    nx = int(min(max(size[0] * GRID_SHARE, 2), most))
+    ny = int(min(max(size[1] * GRID_SHARE, 2), most))
 
     def work(_report: Callable[..., None]) -> Any:
         f = made
         if f is None:
             reading = evaluate.difference if implicit else evaluate.mask
-            f = reading(node, context, names)
+            f = reading(node, context, names, pointwise)
+        evaluate.budgeted(f)
         xs, ys, values = evaluate.grid_eval(f, xrange, yrange, nx, ny)
         return f, xs, ys, values
 

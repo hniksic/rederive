@@ -9,6 +9,7 @@ the integrand before sympy runs and fix its answer afterwards. The dispatch in
 from __future__ import annotations
 
 from collections.abc import Callable
+from contextvars import ContextVar
 from typing import NamedTuple
 
 import sympy as sp
@@ -25,6 +26,8 @@ from rederive.engine.integration.proof import (
     proved_zero,
     unbroken,
 )
+from rederive.engine import budget
+from rederive.engine.budget import within
 from rederive.engine.rewriting import attempt
 from rederive.engine.signs import folded_signs
 
@@ -37,6 +40,7 @@ __all__ = [
     "between_the_ends",
     "between_the_steps",
     "beyond_convergence",
+    "by_reflection",
     "by_the_antiderivative",
     "by_the_sign_of_a_parameter",
     "definite",
@@ -168,6 +172,189 @@ def odd_about_the_middle(head: sp.Basic) -> bool:
         return False
     bounds = (low, high) if orientation > 0 else (high, low)
     return unbroken(balance, variable, *bounds)
+
+
+def by_reflection(head: sp.Basic, convergent: bool) -> sp.Basic | None:
+    """A definite integral over a finite interval from `a` to `b`, by the integrand `F`
+    averaged with its reflection about the middle, `G = (F(x) + F(a + b - x))/2`, or
+    None.
+
+    The two integrals are equal wherever the first exists, so `G` is integrated if it is
+    zero or free of `x`, or else if it is smaller than `F` and integrates in closed
+    form: `INT(SIN(x)^n/(SIN(x)^n + COS(x)^n), x, 0, pi/2)` is `pi/4`, and the odd
+    `x^3*COS(x)*SQRT(1 - x^2)` integrates to 0 from `-c` to `c`, whatever `c`.
+
+    `G` is simplified with the variable inside the interval (see `_on_the_interval`).
+    That `F` is integrable must be proved: it is if `convergent` (a verdict of
+    `at_the_singularities`), if it is continuous on a neighborhood of the closed
+    interval, or, for a constant `G`, if `F` and its reflection have one sign on the
+    interval, which bounds `F` by `2*G`.
+    """
+    if not definite(head) or _reflecting.get():
+        return None
+    variable, low, high = head.limits[0]
+    integrand = head.function
+    if not (low.is_finite and high.is_finite) or integrand.has(sp.Piecewise):
+        return None
+    if not integrand.has(variable) or _orientation(low, high) is None and (
+        low.free_symbols | high.free_symbols
+    ) & integrand.free_symbols:
+        return None
+    reflected = attempt(integrand, lambda f: f.subs(variable, low + high - variable))
+    if reflected is None or reflected == integrand:
+        return None
+    orientation = _orientation(low, high)
+    if orientation is None:
+        bounds = (sp.S.NegativeInfinity, sp.S.Infinity)
+    else:
+        bounds = (low, high) if orientation > 0 else (high, low)
+    stretch = Stretch(variable, *bounds)
+    average = _on_the_interval(stretch, (integrand + reflected) / 2)
+    if average is None:
+        return None
+    constant = not average.has(variable)
+    if not constant and sp.count_ops(average) >= sp.count_ops(integrand):
+        return None
+    continuous = _continuous_around(integrand, variable, low, high, orientation)
+    if not (convergent or continuous):
+        if not constant or average.is_finite is not True:
+            return None
+        signs = {_sign_on(stretch, integrand), _sign_on(stretch, reflected)}
+        if len(signs) != 1 or None in signs:
+            return None
+    if constant:
+        return average * (high - low)
+    token = _reflecting.set(True)
+    try:
+        value = indefinite.integral(sp.Integral(average, (variable, low, high)))
+    finally:
+        _reflecting.reset(token)
+    return None if value.has(sp.Integral) or value.is_finite is False else value
+
+
+#: Set while the average of an integrand and its reflection is integrated, which is its
+#: own reflection.
+_reflecting: ContextVar[bool] = ContextVar("reflecting", default=False)
+
+
+def _on_the_interval(stretch: Stretch, expression: sp.Basic) -> sp.Basic | None:
+    """`expression` over one denominator and cancelled, with the variable inside the
+    interval of `stretch`, or None.
+
+    If that leaves the variable in, each function of the variable that `stretch` proves
+    positive or negative there is written as a positive or negative unknown first, and
+    cotangents, secants and cosecants as reciprocals, so that
+    `1/(1 + TAN(x)^r) + 1/(1 + COT(x)^r)` is 1 on `(0, pi/2)`.
+    """
+    variable = stretch.variable
+    plain = _cancelled(expression)
+    if plain is None or not plain.has(variable):
+        return plain
+    written = attempt(
+        expression,
+        lambda e: e.replace(
+            lambda f: isinstance(f, (sp.cot, sp.sec, sp.csc)) and f.has(variable),
+            lambda f: 1 / {sp.cot: sp.tan, sp.sec: sp.cos, sp.csc: sp.sin}[f.func](
+                f.args[0]
+            ),
+        ),
+    )
+    if written is None:
+        return None
+    kernels = {
+        kernel
+        for kernel in written.atoms(sp.Function)
+        if kernel.has(variable) and not isinstance(kernel, sp.Piecewise)
+    }
+    stand_ins: dict[sp.Basic, sp.Basic] = {}
+    back: dict[sp.Basic, sp.Basic] = {}
+    for kernel in sorted(kernels, key=sp.default_sort_key):
+        sign = _sign_on(stretch, kernel)
+        if sign is None:
+            return plain
+        stand_in = sp.Dummy("k", positive=True)
+        stand_ins[kernel] = sign * stand_in
+        back[stand_in] = sign * kernel
+    if not stand_ins:
+        return plain
+    replaced = attempt(written, lambda e: e.xreplace(stand_ins))
+    simplified = _cancelled(replaced)
+    if simplified is None:
+        return plain
+    restored = attempt(simplified, lambda e: e.xreplace(back))
+    return plain if restored is None else restored
+
+
+def _cancelled(expression: sp.Basic) -> sp.Basic | None:
+    """`expression` over one denominator and cancelled, or None if that fails or would
+    multiply out too many terms.
+
+    Cancelling multiplies out the numerator and the denominator, which for a power of a
+    long sum is past reach: the reflection of `(3*x^2 + 10*x^27)^12` about `1/2` raises
+    a sum of 28 terms to the 12th power, billions of terms.
+    """
+    # Imported here, since `normal` imports modules that import this one.
+    from rederive.engine.normal import expands_within_reach
+
+    combined = attempt(expression, sp.together)
+    if combined is None or not all(
+        expands_within_reach(part) for part in sp.fraction(combined)
+    ):
+        return None
+    return attempt(combined, sp.cancel)
+
+
+def _sign_on(stretch: Stretch, expression: sp.Basic) -> int | None:
+    """1 if `expression` is proved positive throughout the interval of `stretch`, -1 if
+    negative, None if neither is proved; by the signs of its parts where it is a sum,
+    product or power."""
+    if not expression.has(stretch.variable):
+        if expression.is_positive:
+            return 1
+        return -1 if expression.is_negative else None
+    if isinstance(expression, sp.Add):
+        signs = {_sign_on(stretch, term) for term in expression.args}
+        return signs.pop() if len(signs) == 1 and None not in signs else None
+    if isinstance(expression, sp.Mul):
+        total = 1
+        for factor in expression.args:
+            sign = _sign_on(stretch, factor)
+            if sign is None:
+                return None
+            total *= sign
+        return total
+    if isinstance(expression, sp.Pow):
+        base, exponent = expression.args
+        sign = _sign_on(stretch, base)
+        if sign == 1 and exponent.is_extended_real:
+            return 1
+        if sign == -1 and exponent.is_integer:
+            if exponent.is_even:
+                return 1
+            if exponent.is_odd:
+                return -1
+        return None
+    if expression == stretch.variable or isinstance(expression, sp.Function):
+        if stretch.positive(expression):
+            return 1
+        if stretch.positive(-expression):
+            return -1
+    return None
+
+
+def _continuous_around(
+    integrand: sp.Basic,
+    variable: sp.Basic,
+    low: sp.Basic,
+    high: sp.Basic,
+    orientation: int | None,
+) -> bool:
+    """Whether the integrand is proved continuous on an open interval containing both
+    ends, the whole line if their order isn't known."""
+    if orientation is None:
+        return unbroken(integrand, variable, sp.S.NegativeInfinity, sp.S.Infinity)
+    left, right = (low, high) if orientation > 0 else (high, low)
+    return unbroken(integrand, variable, left - 1, right + 1)
 
 
 def by_the_antiderivative(head: sp.Basic) -> sp.Basic | None:
@@ -302,7 +489,9 @@ def _positively(
         if isinstance(call, sp.Abs) or call.exp.is_Rational and call.exp.q == 2
     }
     stand_ins = {
-        kernel: sp.Dummy(positive=True) for kernel in kernels if _never_negative(kernel)
+        kernel: sp.Dummy(positive=True)
+        for kernel in sp.ordered(kernels)
+        if _never_negative(kernel)
     }
     if not stand_ins:
         return None
@@ -833,15 +1022,33 @@ def _end_verdict(
         powers = _NEAR
         direction = "+" if side > 0 else "-"
 
+    exhausted = False
+
     def approached(weight: sp.Basic) -> sp.Basic | None:
-        found = attempt(
-            integrand, lambda f: sp.limit(f * weight, variable, end, direction)
+        # An optional question, bounded as Simplify's rewrites are: unanswered, the
+        # part is unsettled, and sympy's limit of a product of logarithms and powers
+        # can run for minutes.
+        nonlocal exhausted
+        found = within(
+            budget.CONVERGING,
+            lambda: (
+                attempt(
+                    integrand, lambda f: sp.limit(f * weight, variable, end, direction)
+                ),
+            ),
         )
+        if found is None:
+            exhausted = True
+            return None
+        (found,) = found
         if found is None or found.has(sp.AccumBounds, sp.nan, sp.zoo, sp.Limit):
             return None
         return found
 
     leading = approached(distance)
+    if exhausted:
+        # The limits with the other powers of the distance are no easier.
+        return _UNSETTLED
     if leading is not None and leading != 0:
         if leading.is_extended_positive:
             return sp.oo

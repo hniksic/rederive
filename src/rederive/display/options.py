@@ -29,5 +29,5 @@ class DisplayOptions:
     times: str = DOT
     compressed: bool = False
     output_base: int = 10
-    notation_digits: int = 6
+    notation_digits: int = 10
     height: int | None = None

@@ -21,7 +21,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-from rederive.model.expr import Kind, Node
+from rederive.model.expr import Kind, Node, parameter_names
 from rederive.syntax.writer import write_expression
 
 # Precedence levels shared by the four targets, loosest first. In all four, power binds
@@ -444,7 +444,7 @@ class _Writer:
         C and Rust get an assignment, as in the original: a line the reader turns into a
         function, not one a compiler accepts.
         """
-        parameters = ", ".join(str(child.value) for child in node.children[0].children)
+        parameters = ", ".join(parameter_names(node.children[0]))
         # `F(x) :=` declares an arbitrary function and has no body.
         body = self.operand(node.children[1], ASSIGN) if len(node.children) > 1 else ""
         if self.language.lambdas:

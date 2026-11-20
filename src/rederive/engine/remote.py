@@ -26,11 +26,13 @@ run for hours, and Esc is the time limit.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import multiprocessing
+import os
 import signal
 import threading
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Iterator, Sequence
 from multiprocessing.connection import Connection
 from multiprocessing.context import BaseContext
 from multiprocessing.process import BaseProcess
@@ -38,14 +40,17 @@ from typing import Any
 
 from rederive import memory
 from rederive.engine import worker
-from rederive.engine.boundary import Amount, Result
+from rederive.engine.boundary import Amount, PlotForm, Result
 from rederive.engine.client import (
+    PATIENCE,
     EngineAborted,
     EngineBug,
     EngineDied,
     EngineDown,
     EngineError,
     EngineMemoryExceeded,
+    EngineStepLimit,
+    EngineTimedOut,
 )
 from rederive.engine.context import Context
 from rederive.engine.policy import Deaths
@@ -60,6 +65,8 @@ __all__ = [
     "EngineDown",
     "EngineError",
     "EngineMemoryExceeded",
+    "EngineStepLimit",
+    "EngineTimedOut",
     "RemoteEngine",
     "default_cap",
 ]
@@ -133,6 +140,9 @@ class RemoteEngine:
         self._number = 0
         #: Number of workers spawned, used by tests of the respawn policy.
         self.starts = 0
+        #: Called, on the thread waiting for the answer, with each text a running
+        #: program shows (see `Runner.progress`).
+        self.progress: Callable[[str, bool], None] | None = None
 
     # -- the engine interface ----------------------------------------------
     #
@@ -187,9 +197,23 @@ class RemoteEngine:
     ) -> str | None:
         return await self._await("relation_of", (node, context))
 
-    async def _await(self, method: str, args: tuple[Any, ...]) -> Any:
+    async def plot_form(
+        self,
+        node: Node,
+        context: Context,
+        state: ParseState | None = None,
+        running: bool = True,
+    ) -> PlotForm:
+        """The form a plot draws, given `PATIENCE` seconds, after which the worker is
+        stopped and `EngineTimedOut` raised."""
+        arguments = (node, context, state, running)
+        return await self._await("plot_form", arguments, PATIENCE)
+
+    async def _await(
+        self, method: str, args: tuple[Any, ...], patience: float | None = None
+    ) -> Any:
         """Run one request on a thread from the loop's pool and await it."""
-        return await asyncio.to_thread(self._ask, method, args)
+        return await asyncio.to_thread(self._ask, method, args, patience)
 
     # -- lifecycle ---------------------------------------------------------
 
@@ -232,11 +256,15 @@ class RemoteEngine:
 
     # -- one request -------------------------------------------------------
 
-    def _ask(self, method: str, args: tuple[Any, ...]) -> Any:
+    def _ask(
+        self, method: str, args: tuple[Any, ...], patience: float | None = None
+    ) -> Any:
         """Send one request and wait for its answer or the worker's death.
 
         The abort count is read before queueing, so Esc pressed while waiting for the
-        lock or for a worker to start aborts the call too.
+        lock or for a worker to start aborts the call too. A request given `patience`
+        that has no answer that many seconds after it was sent is ended like an abort,
+        with `EngineTimedOut`.
         """
         aborts = self._aborts
         with self._call:
@@ -252,13 +280,23 @@ class RemoteEngine:
                 connection.send((number, method, args))
             except (OSError, ValueError, EOFError):
                 raise self._collapse() from None
+            deadline = overdue = None
+            if patience is not None:
+                deadline = time.monotonic() + patience
+                overdue = EngineTimedOut(f"The engine took over {patience:g} s")
             while True:
-                answer = self._receive()
+                answer = self._receive(deadline, overdue)
                 # An answer with another number belongs to an abandoned request. This
                 # can't happen since aborted workers are always killed, but the check
                 # is cheap insurance.
-                if answer[0] == number:
-                    return self._answered(answer)
+                if answer[0] != number:
+                    continue
+                if answer[1] == worker.PROGRESS:
+                    progress = self.progress
+                    if progress is not None:
+                        progress(answer[2], answer[3])
+                    continue
+                return self._answered(answer)
 
     def _abandoned(self, aborts: int) -> None:
         """Raise `EngineAborted` if an abort arrived since this call started."""
@@ -292,10 +330,14 @@ class RemoteEngine:
                 self._deaths.ready()
                 return
 
-    def _receive(self, deadline: float | None = None) -> Any:
+    def _receive(
+        self, deadline: float | None = None, overdue: EngineError | None = None
+    ) -> Any:
         """The next message from the worker, checking its memory while waiting.
 
-        Any other end to the wait is a death, classified by the death path.
+        Any other end to the wait is a death, classified by the death path. Past
+        `deadline` the worker is killed, the death reported as `overdue` (by default,
+        as a worker that did not start in time).
         """
         connection = self._connection
         if connection is None:
@@ -312,7 +354,7 @@ class RemoteEngine:
             if self._watching:
                 self._watch(process)
             if deadline is not None and time.monotonic() > deadline:
-                self._record(EngineDied("The engine did not start in time"))
+                self._record(overdue or EngineDied("The engine did not start in time"))
                 self._kill()
 
     def _watch(self, process: BaseProcess) -> None:
@@ -336,6 +378,8 @@ class RemoteEngine:
             # surprising the next command.
             self._record(EngineMemoryExceeded(self._out_of_memory()))
             raise self._collapse()
+        if kind == worker.STEPS:
+            raise EngineStepLimit("Step limit exceeded")
         raise EngineBug(message, traceback_text)
 
     def _out_of_memory(self) -> str:
@@ -381,7 +425,8 @@ class RemoteEngine:
             process = self._context.Process(
                 target=worker.serve, args=(child, self.cap), daemon=True
             )
-            process.start()
+            with _hashed_alike():
+                process.start()
         except (OSError, ValueError) as error:
             _close(parent)
             _close(child)
@@ -480,3 +525,24 @@ def _death_of(process: BaseProcess | None, ready: bool) -> EngineError:
     if code is not None and code < 0:
         return EngineDied(f"The engine crashed with signal {-code}", log)
     return EngineDied("The engine stopped", log)
+
+
+#: The string hash seed every worker runs with (see `_hashed_alike`).
+HASH_SEED = "0"
+
+
+@contextlib.contextmanager
+def _hashed_alike() -> Iterator[None]:
+    """Start a worker with string hashing seeded alike in every one: the iteration
+    order of sets of names, and so the work a step does, is then the same in every
+    worker, which the work budgets of optional steps need to cut off the same step at
+    the same point (see `budget`). A spawned process inherits the environment."""
+    before = os.environ.get("PYTHONHASHSEED")
+    os.environ["PYTHONHASHSEED"] = HASH_SEED
+    try:
+        yield
+    finally:
+        if before is None:
+            del os.environ["PYTHONHASHSEED"]
+        else:
+            os.environ["PYTHONHASHSEED"] = before

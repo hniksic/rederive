@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from rederive.engine.client import (
     ORDER_LIST,
+    PATIENCE,
     Amount,
     Angle,
     Branch,
@@ -32,15 +33,21 @@ from rederive.engine.client import (
     EngineDown,
     EngineError,
     EngineMemoryExceeded,
+    EngineStepLimit,
+    EngineTimedOut,
+    PlotForm,
     Precision,
     Replacement,
     Result,
+    StepLimitExceeded,
     TrigPower,
     decomposes,
     domain_of_node,
     equations_in,
     main_order,
     replace,
+    reporting,
+    written_as_matrix,
     written_as_ratio,
 )
 from rederive.engine.evaluate import evaluated
@@ -48,6 +55,7 @@ from rederive.engine.expand import expand
 from rederive.engine.factor import factor
 from rederive.engine.from_sympy import from_sympy, parse_state_for
 from rederive.engine.pipeline import approx, simplify
+from rederive.engine.plot_form import plot_form
 from rederive.engine.printer import author_text
 from rederive.engine.solve import solve, solved
 from rederive.engine.to_sympy import authored_conditionals, to_sympy
@@ -55,6 +63,7 @@ from rederive.engine.variables import expression_variables, relation_of
 
 __all__ = [
     "ORDER_LIST",
+    "PATIENCE",
     "Amount",
     "Angle",
     "Branch",
@@ -69,9 +78,13 @@ __all__ = [
     "EngineDown",
     "EngineError",
     "EngineMemoryExceeded",
+    "EngineStepLimit",
+    "EngineTimedOut",
+    "PlotForm",
     "Precision",
     "Replacement",
     "Result",
+    "StepLimitExceeded",
     "TrigPower",
     "approx",
     "author_text",
@@ -86,11 +99,14 @@ __all__ = [
     "from_sympy",
     "main_order",
     "parse_state_for",
+    "plot_form",
     "relation_of",
     "replace",
+    "reporting",
     "simplify",
     "solve",
     "solved",
     "to_sympy",
+    "written_as_matrix",
     "written_as_ratio",
 ]

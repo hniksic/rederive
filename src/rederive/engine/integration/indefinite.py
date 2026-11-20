@@ -23,7 +23,6 @@ from __future__ import annotations
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
-from functools import lru_cache
 from typing import NamedTuple
 
 import sympy as sp
@@ -34,6 +33,8 @@ from sympy.integrals.manualintegrate import manualintegrate
 from sympy.integrals.risch import NonElementaryIntegral, risch_integrate
 from sympy.simplify.fu import TR8
 
+from rederive.engine.approximation import by_quadrature
+from rederive.engine.fresh import remembered
 from rederive.engine.integration.definite import (
     CONVERGENT,
     UNDECIDED,
@@ -43,6 +44,7 @@ from rederive.engine.integration.definite import (
     between_the_ends,
     between_the_steps,
     beyond_convergence,
+    by_reflection,
     by_the_antiderivative,
     by_the_sign_of_a_parameter,
     definite,
@@ -68,6 +70,7 @@ from rederive.engine.integration.form import (
     unwritable,
 )
 from rederive.engine.integration.proof import differentiates_back, holds
+from rederive.engine.integration.special import by_a_definite_rule
 from rederive.engine.printer import shadowed_names
 from rederive.engine.radical import radical_antiderivative
 from rederive.engine.rational import rational_antiderivative
@@ -101,7 +104,7 @@ def integral(head: sp.Basic) -> sp.Basic:
     return _integral(head, shadowed_names(), _numerically.get())
 
 
-@lru_cache(maxsize=256)
+@remembered(256)
 def _integral(head: sp.Basic, shadowed: frozenset[str], numeric: bool) -> sp.Basic:
     """`integral`, with `shadowed` the built-ins the answer may not use, and `numeric`
     whether it is within `numerically`."""
@@ -115,6 +118,9 @@ def _integral(head: sp.Basic, shadowed: frozenset[str], numeric: bool) -> sp.Bas
     combined = _with_exponentials_combined(head)
     if combined != head:
         return integral(combined)
+    nested = _with_exponents_nested(head)
+    if nested is not None:
+        return integral(nested)
     over_one = _with_radicands_combined(head)
     if over_one is not None:
         found = integral(over_one)
@@ -258,6 +264,43 @@ def _with_exponentials_combined(head: sp.Basic) -> sp.Basic:
     function = attempt(head.function, lambda f: f.replace(several, combined))
     if function is None or function == head.function:
         return head
+    return head.func(function, *head.limits)
+
+
+def _with_exponents_nested(head: sp.Basic) -> sp.Basic | None:
+    """A definite integral to an infinite end with each exponent of `#e` that is a
+    polynomial in the variable written in nested form, or None if none changes.
+
+    Sympy evaluates an antiderivative at an infinite end by substituting it where that
+    gives no infinity, and `#e^(-inf*s - inf)` comes out as `0*#e^(-inf*s)`, which is
+    0 even though it is infinite for `s < -1`. So `INT(#e^(-s*t - 3*t), t, 0, inf)` was
+    `1/(s + 3)` for every `s /= -3`. Written as `#e^(-t*(s + 3))`, and `#e^(-t*(s*t +
+    1))` for a higher degree, the variable is in a single term at each level, so a
+    substituted infinity multiplies a sum whose sign isn't known and stays unevaluated,
+    and the value is found where its sign is.
+    """
+    if not definite(head) or not head.function.has(sp.exp):
+        return None
+    variable, low, high = head.limits[0]
+    if low.is_finite is not False and high.is_finite is not False:
+        return None
+
+    def nested(power: sp.Basic) -> sp.Basic:
+        exponent = power.args[0]
+        varying = [term for term in sp.Add.make_args(exponent) if term.has(variable)]
+        if len(varying) < 2 or not exponent.is_polynomial(variable):
+            return power
+        written = sp.horner(sp.expand(exponent), wrt=variable)
+        return power if written == exponent else sp.exp(written)
+
+    function = attempt(
+        head.function,
+        lambda f: f.replace(
+            lambda e: isinstance(e, sp.exp) and e.has(variable), nested
+        ),
+    )
+    if function is None or function == head.function:
+        return None
     return head.func(function, *head.limits)
 
 
@@ -466,6 +509,12 @@ def _integral_through(head: sp.Basic) -> sp.Basic:
     elif verdict is CONVERGENT and odd_about_the_middle(head):
         return sp.S.Zero
     else:
+        ruled = by_a_definite_rule(head) if definite(head) else None
+        if ruled is not None:
+            return ruled
+        reflected = by_reflection(head, verdict is CONVERGENT)
+        if reflected is not None:
+            return reflected
         value = _answered(head, _METHODS)
         if value is None:
             value = head
@@ -559,6 +608,8 @@ def _accepted(head: sp.Basic, candidate: Candidate) -> sp.Basic | None:
     (definite, multiple, unevaluated, or `formed`) are taken as is.
     """
     value = defined_cases(candidate.value, head.function, head.limits[0][0])
+    if definite(head) and not candidate.trusted and _refuted(head, value):
+        return None
     if (
         candidate.formed
         or len(head.limits) != 1
@@ -580,6 +631,40 @@ def _accepted(head: sp.Basic, candidate: Candidate) -> sp.Basic | None:
     if narrowed == value or unwritable(narrowed, variable):
         return None
     return narrowed
+
+
+#: The digits to which quadrature must agree with a definite integral's value.
+_CHECKED_DIGITS = 15
+
+
+def _refuted(head: sp.Basic, value: sp.Basic) -> bool:
+    """Whether quadrature refutes the value of a definite integral of numbers.
+
+    Sympy evaluates a definite integral as the difference of an antiderivative at the
+    ends without asking whether the antiderivative is continuous between them, so where
+    it jumps (a case of a piecewise antiderivative ending inside the interval, a branch
+    cut crossed) the value is wrong: `INT(t^(3/2)*(1 - t)^(7/2), t, 0, -3/2)` came out
+    as `-9.87*#i` against the true `15.49*#i`. Such a value is refused, and the integral
+    is left to the methods that prove their antiderivative unbroken on the interval
+    (see `by_the_antiderivative`). Quadrature only refutes: a value it agrees with is
+    still taken on the method's own grounds, and one it can't compute to its error
+    estimate is not refuted."""
+    if not (value.is_number and head.is_number) or value.has(sp.Integral):
+        return False
+    _, low, high = head.limits[0]
+    if not (low.is_finite and high.is_finite):
+        # Quadrature over an infinite range is slow where it oscillates.
+        return False
+    numeric = by_quadrature(head, _CHECKED_DIGITS)
+    if not numeric.is_number or numeric.has(sp.Integral):
+        return False
+    try:
+        exact = complex(sp.N(value, _CHECKED_DIGITS + 5))
+        estimate = complex(numeric)
+    except (TypeError, ValueError):
+        return False
+    tolerance = 10.0 ** (5 - _CHECKED_DIGITS) * (1 + abs(estimate))
+    return abs(exact - estimate) > tolerance
 
 
 def _of_a_binomial_power(head: sp.Basic) -> Candidate | None:
@@ -785,7 +870,29 @@ def _of_a_rational_function(head: sp.Basic) -> Candidate | None:
         if head.free_symbols or integrand.free_symbols - {variable}:
             return None
         return Candidate(head, formed=True)
-    return Candidate(value, formed=True)
+    return Candidate(_on_the_side_of(value, low, high), formed=True)
+
+
+def _on_the_side_of(value: sp.Basic, low: sp.Basic, high: sp.Basic) -> sp.Basic:
+    """A definite integral from a number `low` to a variable `high`, with each logarithm
+    of an argument negative at `low` written as the logarithm of its negation, if that
+    makes it real.
+
+    The integral is the antiderivative's difference while `high` stays on the side of
+    `low` of every pole: `INT(1/t, t, -3, x)` comes out as `LN(x) - LN(3) - pi*#i`,
+    which for negative `x` is `LN(-x) - LN(3)`.
+    """
+    if not (value.has(sp.I) and low.is_number and high.is_Symbol):
+        return value
+    flipped = {}
+    for logarithm in value.atoms(sp.log):
+        argument = logarithm.args[0]
+        if argument.has(high) and argument.subs(high, low).is_negative:
+            flipped[logarithm] = sp.log(-argument) + sp.I * sp.pi
+    if not flipped:
+        return value
+    written = attempt(value, lambda v: sp.expand(v.xreplace(flipped)))
+    return value if written is None or written.has(sp.I) else written
 
 
 def _toward_an_end(
@@ -1072,7 +1179,11 @@ def _between_the_ends_of_a_kink(head: sp.Basic) -> Candidate | None:
     )
     if integrand is None:
         return None
-    steps = [step for step in integrand.atoms(sp.Abs, sp.sign) if step.has(variable)]
+    steps = [
+        step
+        for step in sp.ordered(integrand.atoms(sp.Abs, sp.sign))
+        if step.has(variable)
+    ]
     if not steps or not all(step.args[0].is_polynomial(variable) for step in steps):
         return None
     held = {step: sp.Dummy() for step in steps}
@@ -1146,7 +1257,7 @@ def _for_each_sign_of_a_parameter(head: sp.Basic) -> sp.Basic | None:
     (parameter,) = parameters
     if parameter.is_real is not True:
         return None
-    held = {step: sp.Dummy() for step in steps}
+    held = {step: sp.Dummy() for step in sp.ordered(steps)}
     if not integrand.xreplace(held).has(*parameter.free_symbols):
         return None
     sides = []
@@ -1310,7 +1421,11 @@ def _side_sizes(piece: sp.Basic, size: sp.Basic, argument: sp.Basic) -> list[sp.
     `argument` itself where the antiderivative is a polynomial in `t` and in steps of
     `t`, so it is real on the other side too."""
     sizes = [sp.Abs(argument)]
-    steps = {step: sp.Dummy() for step in piece.atoms(sp.Abs, sp.sign) if step.has(size)}
+    steps = {
+        step: sp.Dummy()
+        for step in sp.ordered(piece.atoms(sp.Abs, sp.sign))
+        if step.has(size)
+    }
     if piece.xreplace(steps).is_polynomial(size):
         sizes.append(argument)
     return sizes
@@ -2145,7 +2260,7 @@ def in_one_periodic(base: sp.Basic, variables: list) -> sp.Basic | None:
     return generator
 
 
-@lru_cache(maxsize=256)
+@remembered(256)
 def within_reach(head: sp.Basic) -> dict[str, bool]:
     """Sympy hints for a definite integral: Risch and the manual rules disabled if they
     can't find an antiderivative, otherwise no hints.

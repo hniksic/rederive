@@ -18,12 +18,18 @@ from rederive.engine.evaluate import Suspended, released
 from rederive.engine.printer import numeral
 from rederive.engine.to_sympy import (
     Assign,
+    ColumnsOf,
+    CrossProduct,
     Declare,
+    Deeper,
     Dot,
+    DotProduct,
     FunDef,
     Logical,
     PlusMinus,
+    RowsOf,
     StringLiteral,
+    SubsetOf,
     Subscript,
     Transposed,
     Vector,
@@ -167,6 +173,12 @@ def test_a_logical_operator_is_written_with_its_keyword():
     # their leading variable, so the group comes first here.
     assert written(sp.And(sp.Or(p, q), r)) == "(p OR q) AND r"
     assert written(sp.Not(sp.And(p, q))) == "NOT (p AND q)"
+    # Every logical operator binds more loosely than a relation, also one sympy
+    # declined, as `5 AND p` is.
+    assert written(sp.Eq(sp.Not(p), 0, evaluate=False)) == "(NOT p) = 0"
+    five_and_p = Logical(sp.Symbol("AND"), sp.Integer(5), p)
+    assert written(sp.Eq(five_and_p, 0, evaluate=False)) == "(5 AND p) = 0"
+    assert written(five_and_p + 1) == "(5 AND p) + 1"
 
 
 def test_the_operands_of_a_commutative_operator_are_put_in_order():
@@ -174,10 +186,10 @@ def test_the_operands_of_a_commutative_operator_are_put_in_order():
     negated first on a tie. `IMP` is not commutative and keeps its order."""
     p, q, r, s = sp.symbols("p q r s")
     assert written(sp.Or(r, q, p)) == "p OR q OR r"
-    assert written(sp.Or(sp.And(s, r), sp.And(q, p))) == "p AND q OR r AND s"
+    assert written(sp.Or(sp.And(s, r), sp.And(q, p))) == "(p AND q) OR (r AND s)"
     assert written(sp.Or(q, sp.Not(p))) == "NOT p OR q"
     assert written(sp.Or(sp.And(p, q), sp.And(sp.Not(p), r))) == (
-        "NOT p AND r OR p AND q"
+        "(NOT p AND r) OR (p AND q)"
     )
     # Variables in the order list come first, the rest alphabetically.
     assert written(sp.And(*sp.symbols("a z x"))) == "x AND z AND a"
@@ -194,6 +206,9 @@ def test_the_terms_of_a_sum_are_put_in_order():
     assert written(x**2 + sp.Symbol("c") + 1) == "x^2 + c + 1"
     # The real part of a complex number always comes first.
     assert written(7 * sp.I + 1) == "1 + 7*#i"
+    # A real constant exponent sorts by its value, among the rational ones.
+    total = x ** sp.sqrt(5) + x**sp.pi + x ** (2 * sp.sqrt(2)) + x ** sp.sqrt(3) + x**2
+    assert written(total) == "x^pi + x^(2*SQRT(2)) + x^(SQRT(5)) + x^2 + x^(SQRT(3))"
 
 
 #: The original's order for terms tied on variable and degree, checked pairwise against
@@ -359,16 +374,37 @@ INERT = [
     StringLiteral("note"),
     Subscript(x + 1, 2),
     Subscript(x, -1),
+    Subscript(x, sp.factorial(y)),
+    # Derive 6's word operators, where they don't apply.
+    RowsOf(Vector(1, 2, 3), 1),
+    ColumnsOf(x, -1),
+    Deeper(x, y, 1),
+    Deeper(RowsOf(x, 2), Vector(1, 2), 2),
+    DotProduct(Vector(1, 2), Vector(1, 2, 3)),
+    CrossProduct(x + 1, y) + 1,
+    2 * DotProduct(x, y),
+    SubsetOf(x, y),
+    sp.Eq(SubsetOf(x, y), sp.Symbol("w", real=True), evaluate=False),
+    sp.Equivalent(x, y),
     # Sympy transposes whatever it can (a scalar's transpose is the scalar), so the
-    # inert head only remains around a non-expression.
-    Transposed(sp.Eq(x, 1)),
+    # inert head only remains around a vector without a transpose.
+    Transposed(Vector(1, Vector(2, 3))),
     Dot(sp.Symbol("a", real=True), Vector(1, 2)),
     Vector(Vector(1, 2), Vector(3)),
     Logical(sp.Symbol("AND"), sp.Integer(3), sp.Symbol("p", real=True)),
+    sp.Eq(
+        Logical(sp.Symbol("AND"), sp.Integer(3), sp.Symbol("p", real=True)),
+        0,
+        evaluate=False,
+    ),
     Assign(sp.Symbol("u", real=True), sp.Symbol(":="), sp.Integer(5)),
-    Assign(sp.Symbol("u", real=True), sp.Symbol(":==")),
+    Assign(sp.Symbol("u", real=True), sp.Symbol(":+"), sp.Integer(1)),
     FunDef(sp.Symbol("F"), sp.Tuple(x, y), x + y),
     FunDef(sp.Symbol("F"), sp.Tuple(x)),
+    FunDef(
+        sp.Symbol("F"), sp.Tuple(x, Assign(y, sp.Symbol(":="), sp.Integer(0))), x + y
+    ),
+    FunDef(sp.Symbol("F"), x, x + 1),
     Declare(sp.Symbol("x", real=True), sp.Symbol("Real")),
     # The declared symbol carries the declared assumptions.
     Declare(
@@ -579,7 +615,8 @@ def test_an_inert_head_is_parenthesised_by_what_it_is_written_as():
     needs parentheses.
     """
     assert written(sp.exp(sp.zoo * z)) == "#e^((±inf)*z)"
-    assert to_sympy(from_sympy(sp.exp(sp.zoo * z)).node).args[0] == sp.zoo * z
+    assert written(sp.sin(sp.zoo * z)) == "SIN((±inf)*z)"
+    assert to_sympy(from_sympy(sp.sin(sp.zoo * z)).node).args[0] == sp.zoo * z
     # Plus-or-minus over anything else round-trips as the `PlusMinus` head.
     assert to_sympy(from_sympy(PlusMinus(sp.oo * z)).node) == PlusMinus(sp.oo * z)
 
@@ -590,7 +627,7 @@ def test_an_inert_head_is_parenthesised_by_what_it_is_written_as():
         sp.Piecewise((1 / x, sp.Ne(x, 0)), (sp.oo, True)),
         sp.Subs(sp.Function("F")(y), y, x),
         sp.Dummy("k1") * 2,
-        sp.exp(sp.zoo * z),
+        sp.sin(sp.zoo * z),
     ],
     ids=str,
 )

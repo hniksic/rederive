@@ -23,6 +23,7 @@ from pathlib import Path
 import pytest
 
 PACKAGES = [
+    "rederive.library",
     "rederive.model",
     "rederive.model.session",
     "rederive.syntax",

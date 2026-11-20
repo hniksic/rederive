@@ -50,6 +50,9 @@ def test_each_named_interval_is_written_in_standard_notation(session, word, expe
 def test_the_domains_with_no_interval_are_written_alone(session):
     assert drawn(session.declare_domain("z", "Complex")) == "z :ε Complex"
     assert drawn(session.declare_domain("w", "Nonscalar")) == "w :ε Nonscalar"
+    assert drawn(session.declare_domain("v", "Vector")) == "v :ε Vector"
+    assert drawn(session.declare_domain("s", "Set")) == "s :ε Set"
+    assert drawn(session.declare_domain("p", "Logical")) == "p :ε Logical"
 
 
 def test_an_integer_domain_carries_its_interval_too(session):
@@ -109,9 +112,10 @@ async def test_an_assignment_overrides_a_domain_declaration(session):
 
 async def test_the_definitions_own_variables_become_the_parameters(session):
     entry = session.declare_function("hyp", "sqrt(a^2 + b^2)")
-    assert entry.text == "HYP(a,b):=SQRT(a^2+b^2)"
-    # The name is now a function, so it is drawn in upper case.
-    assert entry.layout.lines[-1] == "HYP(a, b) := √(a  + b )"
+    assert entry.text == "hyp(a,b):=SQRT(a^2+b^2)"
+    # The name keeps the spelling it was declared with; the built-in is upper case.
+    assert entry.layout.lines[-1] == "hyp(a, b) := √(a  + b )"
+    # Another case spelling finds it, as no other name is spelled so.
     session.author("HYP(3, 4)")
     assert (await session.simplify("#2")).text == "5"
 
@@ -130,17 +134,17 @@ def test_the_parameters_become_variables_without_values(session):
 def test_the_parameters_are_ordered_most_main_first(session):
     """`x`, `y` and `z` are the order list; the rest follow alphabetically."""
     assert session.declare_function("p", "y + a + x + z + b").text.startswith(
-        "P(x,y,z,a,b):="
+        "p(x,y,z,a,b):="
     )
 
 
 def test_a_variable_with_a_value_is_still_a_variable(session):
     session.declare_value("k", "5")
-    assert session.declare_function("q", "k + z + m").text.startswith("Q(z,k,m):=")
+    assert session.declare_function("q", "k + z + m").text.startswith("q(z,k,m):=")
 
 
 def test_a_constant_and_a_function_are_not_variables(session):
-    assert session.declare_function("f", "pi SIN(x)").text.startswith("F(x):=")
+    assert session.declare_function("f", "pi SIN(x)").text.startswith("f(x):=")
 
 
 def test_a_definition_with_no_variables_defines_no_function(session):
@@ -151,9 +155,9 @@ def test_a_definition_with_no_variables_defines_no_function(session):
 
 def test_an_arbitrary_function_is_its_parameters_and_no_body(session):
     entry = session.declare_arbitrary("f", ("x", "y"))
-    assert entry.text == "F(x,y):="
-    assert entry.layout.lines == ("F(x, y) :=",)
-    assert "F" in session.functions or session.state.functions["F"].params == ("x", "y")
+    assert entry.text == "f(x,y):="
+    assert entry.layout.lines == ("f(x, y) :=",)
+    assert "f" in session.functions or session.state.functions["f"].params == ("x", "y")
 
 
 def test_an_arbitrary_function_with_no_parameters_is_a_variable(session):
@@ -272,3 +276,46 @@ def test_a_declared_function_name_can_be_taken_back(session):
 )
 def test_a_bound_is_a_number_or_an_infinity(session, text, accepted):
     assert session.is_bound(text) is accepted
+
+
+# -- the statements of programs ------------------------------------------------
+
+
+async def test_an_update_or_an_element_assignment_changes_nothing_when_entered(session):
+    """They change a value only when they are simplified, as a program runs them."""
+    session.author("k := 2")
+    session.author("k :+ 1")
+    session.author("v := [1, 2]")
+    session.author("v SUB 1 := 5")
+    assert session.assignments.keys() == {"k", "v"}
+    session.author("[k, v]")
+    assert (await session.simplify("#5")).text == "[2, [1, 2]]"
+    assert (await session.simplify("#2")).text == "k := 3"
+    assert (await session.simplify("#4")).text == "v SUB 1 := 5"
+    assert (await session.simplify("#5")).text == "[3, [5, 2]]"
+
+
+async def test_a_function_with_defaults_or_a_variadic_head_is_evaluated(session):
+    session.author("SUMSQ(x, y := 0, z := 0) := x^2 + y^2 + z^2")
+    session.author("FOO v := SUM(v)")
+    session.author("[SUMSQ(5), FOO(2, 3, 5)]")
+    assert (await session.simplify("#3")).text == "[25, 10]"
+    assert (await session.simplify("#1")).text == (
+        "SUMSQ(x, y := 0, z := 0) := x^2 + y^2 + z^2"
+    )
+    assert (await session.simplify("#2")).text == "FOO v := SUM(v)"
+
+
+async def test_a_function_without_parameters_is_called_with_none(session):
+    session.author("F() := 5")
+    session.author("F() + 1")
+    assert (await session.simplify("#2")).text == "6"
+
+
+async def test_an_undecided_exit_or_return_stands_and_a_return_ends_the_command(
+    session,
+):
+    session.author("IF(i > n, exit, RETURN [i, n])")
+    assert (await session.simplify("#1")).text == "IF(i > n, exit, RETURN([i, n]))"
+    session.author("(RETURN x) + 1")
+    assert (await session.simplify("#3")).text == "x"

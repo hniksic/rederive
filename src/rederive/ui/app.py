@@ -83,7 +83,7 @@ sequence lives in the handlers rather than in a table:
   Approximate precision, a search interval in a dialog. It may append any number of
   expressions; with no solutions it appends nothing and says so on the message line,
   as Derive does.
-- The seven Calculus commands ask for an expression and a variable (defaulting to the
+- The eight Calculus commands ask for an expression and a variable (defaulting to the
   expression's primary variable), then show a command-specific dialog. A `Calculus`
   holds the head to write, the annotation word, the dialog, and how its answers become
   arguments. They append the head unevaluated, for Simplify.
@@ -133,7 +133,7 @@ from rederive.model import help as helps
 from rederive.model import session as sessions
 from rederive.model.expr import Node
 from rederive.model.plotting import Unplottable, classify, learned, preferences
-from rederive.model.session import Session
+from rederive.model.session import LoadReport, Session
 from rederive.model.settings import (
     PLOT_PREFERENCES,
     ChoiceField,
@@ -321,6 +321,7 @@ ENTER_EXPRESSION = "Enter expression (press F1 for help)"
 ENTER_TO_DERIVE = "Enter expression"
 #: Asked by Quit and the two Clear commands that discard expressions.
 ABANDON_PROMPT = "Abandon expressions (Y/N)?"
+DEFAULTS_PROMPT = "Restore factory defaults (Y/N)?"
 AUTHOR_PROMPT = " AUTHOR expression: "
 SIMPLIFY_PROMPT = " SIMPLIFY expression: "
 APPROX_PROMPT = " APPROX expression: "
@@ -454,8 +455,8 @@ BROWSING_FILES = "↑↓ choose   ENTER open   ESC close"
 FILE_NOT_FOUND = "File not found"
 CANNOT_READ = "Cannot read file"
 CANNOT_WRITE = "Cannot write file"
-#: Shown when lines in a loaded file fail to parse. Derive drops them silently, but a
-#: missing expression is worth reporting.
+#: Shown when blocks of a data file are not numbers. A math file or worksheet reports
+#: what it could not take in its own words; see `LoadReport`.
 UNREADABLE = "{count} expression{s} could not be read"
 #: The same for a state file, whose lines are settings.
 UNSET = "{count} setting{s} could not be read"
@@ -542,6 +543,7 @@ class Command:
 
     `needs_amount` says whether to ask for the amount: Factor asks unless the
     expression is a number, and Expand asks only if there is a denominator to factor.
+    `matrix_amounts`, if any, is the amount menu for an expression written as a matrix.
     """
 
     #: The command word in prompts and in the amount menu title.
@@ -551,6 +553,13 @@ class Command:
     amounts: Menu
     needs_amount: Callable[[Session, str], bool]
     run: Callable[[Session, str, Amount, tuple[str, ...]], Awaitable[object]]
+    matrix_amounts: Menu | None = None
+
+    def amounts_for(self, session: Session, request: str) -> Menu:
+        """The amount menu for `request`."""
+        if self.matrix_amounts is not None and session.written_as_matrix(request):
+            return self.matrix_amounts
+        return self.amounts
 
 
 FACTOR = Command(
@@ -561,6 +570,7 @@ FACTOR = Command(
     lambda session, request, amount, variables: session.factor(
         request, amount, variables
     ),
+    menus.MATRIX_AMOUNT,
 )
 
 EXPAND = Command(
@@ -575,7 +585,7 @@ EXPAND = Command(
 
 
 #: Menus that answer a command's question rather than listing commands.
-AMOUNT_MENUS = (FACTOR.amounts, EXPAND.amounts)
+AMOUNT_MENUS = (FACTOR.amounts, menus.MATRIX_AMOUNT, EXPAND.amounts)
 
 
 def _text(values: Mapping[str, str | int], setting: str) -> str:
@@ -606,7 +616,7 @@ def _limits(values: Mapping[str, str | int], setting: str) -> tuple[str, ...]:
 
 @dataclass(frozen=True)
 class Calculus:
-    """What differs among the seven Calculus commands.
+    """What differs among the eight Calculus commands.
 
     All ask for an expression and a variable, then show their own `dialog`. Its answers
     become the arguments after the variable, in the head's order rather than the
@@ -634,10 +644,10 @@ def _order(values: Mapping[str, str | int]) -> tuple[str, ...]:
     return () if order == "1" else (order,)
 
 
-def _vector_values(values: Mapping[str, str | int]) -> tuple[str, ...]:
-    """A `Vector` index's start, end, and step, omitting a step of 1."""
-    step = _text(values, "VectorStep")
-    arguments = (_text(values, "VectorStart"), _text(values, "VectorEnd"))
+def _index_range(values: Mapping[str, str | int], setting: str) -> tuple[str, ...]:
+    """A `Vector` or `Table` index's start, end, and step, omitting a step of 1."""
+    step = _text(values, f"{setting}Step")
+    arguments = (_text(values, f"{setting}Start"), _text(values, f"{setting}End"))
     return arguments if step == "1" else (*arguments, step)
 
 
@@ -698,8 +708,16 @@ CALCULUS_COMMANDS: dict[str, Calculus] = {
         "VECTOR",
         "Vector",
         menus.VECTOR,
-        _vector_values,
+        partial(_index_range, setting="Vector"),
         lambda values: _needed(values, "VectorEnd", "VectorStart", "VectorStep"),
+    ),
+    "tAble": Calculus(
+        "TABLE",
+        "TABLE",
+        "Table",
+        menus.TABLE,
+        partial(_index_range, setting="Table"),
+        lambda values: _needed(values, "TableEnd", "TableStart", "TableStep"),
     ),
 }
 
@@ -737,6 +755,8 @@ class Asking:
     remaining: tuple[str, ...] = ()
     #: Variables chosen so far, in order; the first is the primary variable.
     chosen: tuple[str, ...] = ()
+    #: The amount menu, once it is shown.
+    amounts: Menu | None = None
 
 
 @dataclass
@@ -919,6 +939,8 @@ class Outcome:
     value: object = None
     error: Exception | None = None
     seconds: float = 0.0
+    notice: str | None = None
+    """What the command had to say beyond its answer (see `Session.notice`)."""
 
 
 async def _ran(run: Callable[[], Awaitable[object]]) -> Outcome:
@@ -976,6 +998,8 @@ def _appending(kept: list[tuple[str, bytes]]) -> Callable[[str, bytes], None]:
 def _reported(outcome: Outcome) -> str:
     """The message line text for a finished command."""
     error = outcome.error
+    if error is None and outcome.notice:
+        return outcome.notice
     if error is None:
         return COMPUTE_TIME.format(elapsed=_elapsed(outcome.seconds))
     if isinstance(error, EngineAborted):
@@ -1145,6 +1169,11 @@ class RederiveApp(App[None]):
         #: The event loop's thread (the app is run on the thread that creates it), used
         #: to tell whether an event must be passed to the loop thread.
         self._on_loop = threading.get_ident()
+        #: The last text a running program showed, while it runs (see `_progressed`).
+        self.progress: str | None = None
+        runner = self.windows.session.runner
+        if hasattr(runner, "progress"):
+            runner.progress = self._progressed
         self.plots.events = self._plot_reported
         self.plots.prefer(preferences(self.settings))
         self.settings.watch(self._settings_changed)
@@ -1238,10 +1267,8 @@ class RederiveApp(App[None]):
         #: Each amount menu's cursor, kept across invocations since Derive opens it on
         #: the last choice.
         self.amounts = {
-            command.amounts: MenuCursor(
-                command.amounts, command.amounts.words.index("Rational")
-            )
-            for command in (FACTOR, EXPAND)
+            amounts: MenuCursor(amounts, amounts.words.index("Rational"))
+            for amounts in AMOUNT_MENUS
         }
         # Commands not listed here are present and navigable but inert.
         self.commands: dict[tuple[Menu, str], Callable[[], None]] = {
@@ -1258,6 +1285,7 @@ class RederiveApp(App[None]):
             (ALGEBRA, "Unremove"): self._command_unremove,
             (ALGEBRA, "moVe"): self._command_move,
             (ALGEBRA, "approX"): self._command_approx,
+            (menus.OPTIONS, "Defaults"): self._command_defaults,
             (menus.MANAGE, "Annotate"): self._command_annotate,
             (menus.MANAGE, "Ordering"): self._command_ordering,
             (menus.MANAGE, "Renumber"): self._command_renumber,
@@ -1579,8 +1607,25 @@ class RederiveApp(App[None]):
         self, run: Callable[[], Awaitable[object]], done: Callable[[Outcome], None]
     ) -> None:
         """Wait for the answer on the worker task, then finish the command."""
+        self.progress = None
         outcome = await _ran(run)
+        notice = self.session.take_notice()
+        if notice is not None and outcome.error is None:
+            outcome = replace(outcome, notice=notice)
         self._computed(done, outcome)
+
+    def _progressed(self, text: str, displayed: bool) -> None:
+        """Show a text a running program's `DISPLAY` or `WRITE` showed on the message
+        line, from whatever thread the engine reports it on."""
+        if threading.get_ident() == self._on_loop:
+            self.call_next(self._show_progress, text)
+            return
+        self.call_from_thread(self._show_progress, text)
+
+    def _show_progress(self, text: str) -> None:
+        """Show a running program's text, in place of the clock, until it ends."""
+        self.progress = text
+        self._set_message(text)
 
     def _computed(self, done: Callable[[Outcome], None], outcome: Outcome) -> None:
         """Stop the clock and let the command finish.
@@ -1605,7 +1650,7 @@ class RederiveApp(App[None]):
         Nothing is shown before `CLOCK_AFTER`, and the line is only repainted when the
         whole-second figure changes.
         """
-        if self.computing is None:
+        if self.computing is None or self.progress is not None:
             return
         running = time.monotonic() - self.started
         if running < CLOCK_AFTER:
@@ -2923,19 +2968,21 @@ class RederiveApp(App[None]):
         """Hide the prompt band and push the amount menu."""
         pending = self.asking
         assert pending is not None
+        pending.amounts = pending.command.amounts_for(self.session, pending.request)
         self._hide_prompt()
         self.mode = MODE_MENU
-        self.stack.append(self.amounts[pending.command.amounts])
-        self.message = pending.command.amounts.message
+        self.stack.append(self.amounts[pending.amounts])
+        self.message = pending.amounts.message
         self.refresh_screen()
 
     def _chose_amount(self, index: int) -> None:
         """Choosing the amount, the last question, runs the command."""
         pending = self.asking
         assert pending is not None
-        self.amounts[pending.command.amounts].index = index
+        assert pending.amounts is not None
+        self.amounts[pending.amounts].index = index
         self.stack.pop()
-        self._answer(pending.command.amounts.words[index])
+        self._answer(pending.amounts.words[index])
 
     def _answer(self, amount: str | None = None) -> None:
         """Run the command and report how long it took."""
@@ -3339,14 +3386,14 @@ class RederiveApp(App[None]):
         assert pending is not None
         self._open_question(
             menus.DECLARE_VARIABLE,
-            self.session.declared_as(pending.name),
+            menus.domain_word(self.session.declared_as(pending.name)),
             menus.SELECT_DOMAIN.format(name=pending.name),
         )
 
     def _chose_domain(self, word: str) -> None:
-        """Handle Value or one of the four domains.
+        """Handle Value or one of the domains.
 
-        Complex and Nonscalar have no interval, so they complete the command.
+        Only Integer and Real take an interval; the others complete the command.
         """
         pending = self.declaring
         assert pending is not None
@@ -3354,9 +3401,10 @@ class RederiveApp(App[None]):
         if word == sessions.VALUE:
             self._prompt(MODE_VARIABLE_VALUE, VARIABLE_VALUE_PROMPT, "", ENTER_DEFINITION)
             return
-        pending.kind = word
-        if word not in menus.BOUNDED_DOMAINS:
-            self._declared(lambda: self.session.declare_domain(pending.name, word))
+        kind = menus.DOMAIN_OF_WORD.get(word, word)
+        pending.kind = kind
+        if kind not in menus.BOUNDED_DOMAINS:
+            self._declared(lambda: self.session.declare_domain(pending.name, kind))
             return
         self._open_question(
             menus.DECLARE_INTERVAL,
@@ -3963,7 +4011,7 @@ class RederiveApp(App[None]):
         except OSError:
             self._refuse_file(CANNOT_WRITE)
             return False
-        self._end_prompt()
+        self._end_prompt(self.session.take_notice() or ENTER_OPTION)
         return True
 
     def _load(self, name: str) -> None:
@@ -3985,11 +4033,15 @@ class RederiveApp(App[None]):
     def _read(
         self,
         name: str,
-        command: Callable[[Path], int],
+        command: Callable[[Path], int | LoadReport],
         suffix: str = worksheet.SUFFIX,
         refused: str = UNREADABLE,
     ) -> bool:
-        """Read a file into the session, leaving the line up if it can't be read."""
+        """Read a file into the session, leaving the line up if it can't be read.
+
+        The message line says what the file held that could not be taken: a load report,
+        or a count of what `refused` names.
+        """
         path = worksheet.path_of(name, suffix)
         try:
             skipped = command(path)
@@ -3999,11 +4051,12 @@ class RederiveApp(App[None]):
         except OSError:
             self._refuse_file(CANNOT_READ)
             return False
-        self._end_prompt(
-            ENTER_OPTION
-            if not skipped
-            else refused.format(count=skipped, s="" if skipped == 1 else "s")
-        )
+        if not skipped:
+            self._end_prompt(ENTER_OPTION)
+        elif isinstance(skipped, LoadReport):
+            self._end_prompt(str(skipped))
+        else:
+            self._end_prompt(refused.format(count=skipped, s="" if skipped == 1 else "s"))
         return True
 
     def _refuse_file(self, message: str) -> None:
@@ -4040,6 +4093,18 @@ class RederiveApp(App[None]):
             self._done_with_menu()
             return
         self._ask_confirm(lambda: (clear(), self._done_with_menu()))
+
+    # -- Options Defaults --------------------------------------------------
+
+    def _command_defaults(self) -> None:
+        """Put the state variables back to their factory defaults, as Derive's Reset
+        All button does, appending the assignment each change records."""
+
+        def restore() -> None:
+            self.session.restore_defaults()
+            self._done_with_menu()
+
+        self._ask_confirm(restore, DEFAULTS_PROMPT)
 
     # -- Transfer Demo -----------------------------------------------------
 
@@ -4184,7 +4249,7 @@ class RederiveApp(App[None]):
             _, text = demo.steps[demo.at]
             demo.at += 1
             try:
-                with self.session.reading_file():
+                with self.session.reading_file(demo.path):
                     self.session.author(text)
             except DeriveSyntaxError:
                 continue
@@ -4293,14 +4358,16 @@ class RederiveApp(App[None]):
     async def _classified(self, request: str, where: plots.Where | None) -> plots.Add:
         """Classify `request` and build the plot request for it, without sending it.
 
-        Runs on the compute path because getting the variables is an engine call. It
-        doesn't depend on window state (polar is the window's own view mode).
+        Runs on the compute path because the expression is simplified first, as Derive
+        plots it (see `Session.plot_form`): what is classified and drawn is the answer,
+        or the expression as written where it is evaluated point by point. It doesn't
+        depend on window state (polar is the window's own view mode).
         """
         target, label = self.session.named_target(request)
-        variables = await self.session.variables(request)
-        relation = await self.session.relation(request)
+        form = await self.session.plot_form(request)
+        drawn = form.exact
         text = write_expression(target, spaced=True)
-        plotted = classify(target, variables, text, relation)
+        plotted = classify(drawn, form.variables, text, form.relation)
         kind = plotted.kind
         options = plotted.options
         if kind in (plots.PlotKind.FAMILY, plots.PlotKind.SURFACES):
@@ -4310,7 +4377,7 @@ class RederiveApp(App[None]):
                 options,
                 texts=tuple(
                     write_expression(element, spaced=True)
-                    for element in target.children
+                    for element in drawn.children
                 ),
             )
         if kind not in plots.DRAWN:
@@ -4320,7 +4387,7 @@ class RederiveApp(App[None]):
             # `#3`; plots are keyed by the pair.
             worksheet=id(self.session),
             # The side of `y = u(x)` that is drawn, if that is not the whole tree.
-            node=target if plotted.node is None else plotted.node,
+            node=drawn if plotted.node is None else plotted.node,
             context=self.session.context,
             kind=kind,
             window=where,
@@ -4330,6 +4397,7 @@ class RederiveApp(App[None]):
             # The parse state lets the window's fields (parameter range, surface
             # domain) parse typed bounds like the worksheet does.
             state=self.session.state,
+            pointwise=form.pointwise,
         )
 
     def _plot_classified(self, outcome: Outcome) -> None:
@@ -4561,11 +4629,13 @@ class RederiveApp(App[None]):
 
     # -- confirmations -----------------------------------------------------
 
-    def _ask_confirm(self, confirmed: Callable[[], None]) -> None:
+    def _ask_confirm(
+        self, confirmed: Callable[[], None], question: str = ABANDON_PROMPT
+    ) -> None:
         """Ask a yes/no question, running `confirmed` on Y."""
         self.confirm = confirmed
         self.mode = MODE_CONFIRM
-        self.message = ABANDON_PROMPT
+        self.message = question
         self.refresh_screen()
 
     def _confirm_over(
@@ -4715,7 +4785,7 @@ class RederiveApp(App[None]):
         except DeriveSyntaxError as error:
             self._refused(error)
             return
-        self._end_prompt()
+        self._end_prompt(self.session.take_notice() or ENTER_OPTION)
 
     def _simplify(self, request: str) -> None:
         """Simplify what the line asks for."""

@@ -603,8 +603,27 @@ SINGLE_ROW = [
     ("x:epsilon Real (1/2, 5)", "x :ε Real (1/2, 5)"),
     ("y:epsilon Real (2^10, 1/3)", "y :ε Real (2^10, 1/3)"),
     ("p:epsilon Real [-2/3, 5)", "p :ε Real [- 2/3, 5)"),
-    ("90 deg", "90·°"),
+    # A degree sign after an operand is the postfix `DEG`.
+    ("90 deg", "90°"),
+    ("(-135) DEG", "(-135)°"),
+    # Derive 6's word operators: the vector products as their signs, `SUB SUB` as
+    # arrows, the others as words.
+    ("p IFF q", "p IFF q"),
+    ("u SUBSET v", "u SUBSET v"),
+    ("a-b DOTPRODUCT c+d", "a - b • c + d"),
+    ("(a+b) CROSSPRODUCT c", "(a + b) × c"),
+    ("m COL [1,2]", "m COL [1, 2]"),
+    ("m ROW -1", "m ROW (-1)"),
+    ("m SUB SUB 2", "m↓↓2"),
+    ("FOO v := SUM(v)", "FOO v := SUM(v)"),
+    ("F(x, y := 0) := x+y", "F(x, y := 0) := x + y"),
+    ("(RETURN x)+1", "(RETURN(x)) + 1"),
+    ("k :+ 1", "k :+ 1"),
     ("{a,b} UNION ({1,...,n}\\c)", "{a, b} UNION {1, ..., n}\\c"),
+    # The quote touches its operand, which is fenced unless a primary.
+    ("'(2+3)", "'(2 + 3)"),
+    ("''(1+2)", "''(1 + 2)"),
+    ("'F(x, 2) + 1", "'F(x, 2) + 1"),
 ]
 
 
@@ -629,7 +648,7 @@ def test_a_definition_prints_its_head_on_the_baseline() -> None:
         """
                   2
                  x
-        F(x) := ────
+        f(x) := ────
                   2
         """,
     )
@@ -697,9 +716,25 @@ def test_output_radix(text: str, base: int, expected: str) -> None:
     assert rendered(text, DisplayOptions(output_base=base)) == [expected]
 
 
-def test_a_numeral_with_a_radix_point_is_shown_as_written() -> None:
-    # Converting the fraction would be arithmetic, which this layer doesn't do.
-    assert rendered("1.5", DisplayOptions(output_base=16)) == ["1.5"]
+@pytest.mark.parametrize(
+    ("value", "base", "expected"),
+    [
+        ("1.5", 16, "1.8"),
+        ("24.5", 16, "18.8"),
+        ("-24.5", 2, "-11000.1"),
+        # A decimal cut to its digits determines no more digits in another base.
+        ("0.3333333333", 16, "0.55555555"),
+        ("3.141592653", 16, "3.243F6A8"),
+    ],
+)
+def test_a_numeral_with_a_radix_point_is_written_in_the_output_base(
+    value: str, base: int, expected: str
+) -> None:
+    assert glyphs.numeral(value, base, 10) == expected
+
+
+def test_a_numeral_with_a_radix_point_is_drawn_in_the_output_base() -> None:
+    assert rendered("1.5", DisplayOptions(output_base=16)) == ["1.8"]
 
 
 @pytest.mark.parametrize(
@@ -735,7 +770,7 @@ def test_output_radix_of_a_ratio(value: str, base: int, expected: str) -> None:
     ],
 )
 def test_notation_digits(text: str, expected: str) -> None:
-    assert rendered(text) == [expected]
+    assert rendered(text, DisplayOptions(notation_digits=6)) == [expected]
 
 
 def test_a_ratio_is_shown_in_full() -> None:
@@ -947,9 +982,9 @@ def test_a_subscript_chain_nests_rather_than_flattening() -> None:
 
 
 def test_a_definition_offers_its_head_and_its_body() -> None:
-    """The head selects whole, `F(x)`, and steps into its parameters."""
+    """The head selects whole, `f(x)`, and steps into its parameters."""
     assert operands("f(x):=x^2/2") == ["(params x)", "(/ (^ x 2) 2)"]
-    assert covers("f(x):=x^2/2", (0,)) == ["F(x)"]
+    assert covers("f(x):=x^2/2", (0,)) == ["f(x)"]
     assert operands("f(x):=x^2/2", (0,)) == ["x"]
 
 
@@ -1541,7 +1576,7 @@ def test_a_matrix_is_flat_inside_a_script() -> None:
 
 def test_every_name_the_lexer_knows_has_an_output_spelling() -> None:
     """The lexer's and the printer's name tables are separate, so check they agree."""
-    for name in names.GREEK_VARIABLES:
+    for name in names.GREEK_LETTERS:
         assert name in glyphs.NAMES, name
     for name in names.CONSTANTS:
         assert name in glyphs.NAMES, name

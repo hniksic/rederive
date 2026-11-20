@@ -48,8 +48,16 @@ from test_matrices import (
     VECTORS,
 )
 
+from rederive.engine import pipeline
 from rederive.engine.computing import Context, from_sympy, simplify, to_sympy
-from rederive.engine.context import Angle, Branch, Direction, Precision, TrigPower
+from rederive.engine.context import (
+    Angle,
+    Branch,
+    Definition,
+    Direction,
+    Precision,
+    TrigPower,
+)
 from rederive.engine.normal import normal_form
 from rederive.model.expr import Kind
 from rederive.syntax import ParseState, VariableDeclaration, parse_expression
@@ -197,6 +205,39 @@ def test_a_polynomial_is_not_factored():
     # Factoring is the Factor command's job. Simplify leaves the sum alone even
     # though the product is shorter.
     assert simp("x^2 + 2*x") == "x^2 + 2*x"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "x^2 + 2*x",
+        "(x + 1)^3*(y - 2)",
+        "(2*x + 4)*(x - 1)",
+        "3*x^2*y - x*y^2 + 7",
+        "(x - y)^2 - (x + y)^2",
+        "(a + b)*(a - b)*(a^2 + b^2)",
+        "x*(x + 1)*(x + 2) - x^3",
+        "-(x + 1)*(1 - x)",
+        "(v + w + x + y + z)^60",
+    ],
+)
+@pytest.mark.parametrize(
+    "context",
+    [Context(), POSITIVE_X, Context().with_precision(Precision.APPROXIMATE)],
+    ids=["exact", "declared", "approximate"],
+)
+def test_a_polynomial_with_integer_coefficients_needs_only_its_normal_form(
+    text, context, monkeypatch
+):
+    """Simplify takes such a polynomial through the normal form alone, a program's
+    values often being polynomials: every other step leaves it as it is."""
+    alone = simp(text, context)
+    monkeypatch.setattr(pipeline, "_plain_polynomial_form", lambda *_: None)
+    assert simp(text, context) == alone
+
+
+def test_a_polynomial_with_fractions_may_go_over_one_denominator():
+    assert simp("(1 - x^2)*(105*x^2/2 - 15/2)") == "(1 - x^2)*(105*x^2 - 15)/2"
 
 
 def test_a_high_power_of_a_sum_is_not_multiplied_out_to_be_thrown_away():
@@ -468,11 +509,47 @@ def test_a_quotient_in_roots_of_its_variables_cancels(text, expected):
     assert simp(text) == expected
 
 
+#: A denominator linear in one square root is multiplied by its conjugate where the
+#: rationalized denominator then cancels, and left alone where it doesn't.
+OVER_CONJUGATES = [
+    ("(x + 1)/(SQRT(x + 2) + 1)", "SQRT(x + 2) - 1"),
+    ("(x^2 - 1)/(x - SQRT(2*x^2 - 1))", "-SQRT(2*x^2 - 1) - x"),
+    # A solution of a trigonometric system in Reuleaux.dfw (Derive User Group
+    # Newsletter 108); its two roots have one radicand up to a factor 3.
+    (
+        "-(a*SQRT(-3*x^2 + 6*a*x + 9*a^2) + x*SQRT(-x^2 + 2*a*x + 3*a^2) + a*SQRT(-x^2"
+        " + 2*a*x + 3*a^2) - SQRT(3)*x^2 - (1 - 4*SQRT(3))*a*x - (SQRT(3) - 5)*a^2)"
+        "/(SQRT(3)*SQRT(-x^2 + 2*a*x + 3*a^2) - x + 5*a)",
+        "-SQRT(-x^2 + 2*a*x + 3*a^2)/2 - SQRT(3)*x/2 + (SQRT(3)/2 - 1)*a",
+    ),
+    ("1/(SQRT(x) + 1)", "1/(SQRT(x) + 1)"),
+    ("(1 - x)/(SQRT(x + 2) + 1)", "(1 - x)/(SQRT(x + 2) + 1)"),
+]
+
+
+@pytest.mark.parametrize(("text", "expected"), OVER_CONJUGATES, ids=str)
+def test_a_denominator_over_a_root_is_rationalized_where_it_cancels(text, expected):
+    assert simp(text) == expected
+
+
 def test_a_quotient_cancels_over_the_numeric_roots_in_it():
     # `x + SQRT(2)` divides both, which only the field of `SQRT(2)` shows.
     text = "(x^3 + (SQRT(2) - 2)*x^2 - (2*SQRT(2) + 3)*x - 3*SQRT(2))/(x^2 - 2)"
     assert simp(text) == "(x^2 - 2*x - 3)/(x - SQRT(2))"
     assert simp(f"FACTOR({text})") == "(x + 1)*(x - 3)/(x - SQRT(2))"
+
+
+def test_a_root_of_a_power_is_not_the_power_of_the_root():
+    """For a negative `v`, `SQRT(v^3)` and `v^(3/2)` are conjugates, so neither the
+    quotient nor the quotient of the two sums cancels."""
+    assert simp("(SQRT(v^3) + 1)/(v^(3/2) + 1)") == "(SQRT(v^3) + 1)/(v^(3/2) + 1)"
+    numerator = "y - x*(SQRT(v^3)/(1 - v) + v/(v - 1))"
+    denominator = "y + v*x/(SQRT(v) + 1)"
+    assert simp(f"({numerator})/({denominator})") == (
+        "(x*(SQRT(v^3) - v) + y*(v - 1))/(x*(v^(3/2) - v) + y*(v - 1))"
+    )
+    positive = declared("v :epsilon Real (0, inf)")
+    assert simp(f"({numerator})/({denominator})", positive) == "1"
 
 
 #: Sums in a product whose product has fewer roots are multiplied out where that is
@@ -850,7 +927,7 @@ def test_a_conditional_on_a_condition_already_asked_asks_it_once():
 def test_a_recursion_guarded_by_a_declared_variable_stands():
     """A recursion whose test the declaration leaves open is not unfolded."""
     body = parse("IF(n = 0, 1, n*F(n - 1))", declaring("F"))
-    functions = {"F": (("n",), body)}
+    functions = {"F": Definition(("n",), body)}
     assert simp("F(5)", Context(functions=functions)) == "120"
     context = replace(declared("m :epsilon Integer [0, 3]"), functions=functions)
     assert simp("F(m)", context) == "IF(m = 0, 1, m*F(m - 1))"
@@ -894,6 +971,30 @@ def test_a_logarithm_in_polar_parts_is_joined(text, expected, context):
 
 
 # -- absolute values and signs ------------------------------------------------
+
+#: A sum is written with one polynomial beside each piecewise factor, as a spline is:
+#: SPLI_1.MTH's spline in SIGN form, CubicSpline_McDonald.dfw's in CHI form. `ABS(u)`
+#: is `u*SIGN(u)` where `SIGN(u)` stands beside it.
+COLLECTED_BY_PIECES = [
+    ("x*SIGN(x) + SIGN(x)", "(x + 1)*SIGN(x)"),
+    (
+        "5*x^3*SIGN(x)/76 + 33*ABS(x)/76 + SIGN(x)/2",
+        "(5*x^3 + 33*x + 38)*SIGN(x)/76",
+    ),
+    (
+        "x^2*SIGN(x - 1) - 2*x*SIGN(x - 1) + SIGN(x - 2)*x + 3",
+        "(x^2 - 2*x)*SIGN(x - 1) + x*SIGN(x - 2) + 3",
+    ),
+    ("t*CHI(4, t, 5, 1, 0) + CHI(4, t, 5, 1, 0)", "(t + 1)*CHI(4, t, 5, 1, 0)"),
+    # One term per factor is left as it is.
+    ("x*SIGN(x - 1) + SIGN(x)", "x*SIGN(x - 1) + SIGN(x)"),
+]
+
+
+@pytest.mark.parametrize(("text", "expected"), COLLECTED_BY_PIECES, ids=str)
+def test_a_sum_is_collected_by_its_piecewise_factors(text, expected):
+    assert simp(text) == expected
+
 
 #: `ABS(u)`, `SIGN(u)` and `u` are related, so a product of two of them reduces to
 #: whichever single form is shortest.
@@ -983,6 +1084,16 @@ SIGNED = [
     # A factor that can't be negative comes out too.
     ("ABS(x*(1 + COS(x)))", "(COS(x) + 1)*ABS(x)", None),
     ("ABS(x*ATAN(x)*(1 + COS(x)))", "x*(COS(x) + 1)*ATAN(x)", None),
+    # So does one that can't be negative where it is defined, below the line too,
+    # whatever the other factors are. Its absolute value pairs with its argument.
+    ("ABS(n/(m*ABS(m)))", "ABS(n)/m^2", None),
+    ("ABS([3*n*m/ABS(m)^3, 4*n*m/ABS(m)^3])", "5*ABS(n)/m^2", None),
+    ("ABS(n/ABS(m))", "ABS(n)/ABS(m)", None),
+    ("ABS(x/ABS(x))", "1", None),
+    ("ABS(n/(m*ABS(m)))", "ABS(n/m)/ABS(m)", declared("m :epsilon Complex")),
+    ("ABS(m*ABS(m))", "ABS(m)^2", declared("m :epsilon Complex")),
+    ("ABS(n/ABS(m)^3)", "ABS(n)/ABS(m)^3", declared("m :epsilon Complex")),
+    ("ABS(z*(1 + COS(x)))", "(COS(x) + 1)*ABS(z)", declared("z :epsilon Complex")),
     # Unrelated signs stay together, and `ASIN` is complex off `[-1, 1]`.
     ("ABS(x*ATAN(y))", "ABS(x*ATAN(y))", None),
     ("ABS(x*SIN(x))", "ABS(x*SIN(x))", None),
@@ -1020,14 +1131,14 @@ TRIGONOMETRY = [
     ("ASEC(x) + ACSC(x)", "pi/2", None),
     ("2*ASIN(x) + 2*ACOS(x)", "pi", None),
     ("ASIN(x) + ACOS(x) + y", "y + pi/2", None),
-    ("ASIN(x) + ACOS(x)", "90", Context(angle=Angle.DEGREE)),
+    ("ASIN(x) + ACOS(x)", "pi/2", Context(angle=Angle.DEGREE)),
     ("ACOT(t) + ATAN(t)", "pi/2", None),
     ("ATAN(t) + ACOT(t) + y", "y + pi/2", None),
     ("2*ACOT(t) + 2*ATAN(t)", "pi", None),
-    ("ACOT(t) + ATAN(t)", "90", Context(angle=Angle.DEGREE)),
+    ("ACOT(t) + ATAN(t)", "pi/2", Context(angle=Angle.DEGREE)),
     ("ACOT(t) + ATAN(t)", "pi/2", declared("t :epsilon Real (-inf, 0)")),
     ("ACOT(-1)", "3*pi/4", None),
-    ("ACOT(-1)", "135", Context(angle=Angle.DEGREE)),
+    ("ACOT(-1)", "135 DEG", Context(angle=Angle.DEGREE)),
     ("ACOT(-inf)", "pi", None),
     ("ACOT(x)", "pi/2 - ATAN(x)", None),
     ("ACOT(x^2) + ATAN(x^2)", "pi/2", None),
@@ -1053,33 +1164,42 @@ TRIGONOMETRY = [
     # Angles related by a fractional factor cancel once written in terms of the
     # common angle. (An integer factor is `SIN(6*x)/SIN(3*x)` above.)
     ("1/(1 + TAN(a)*TAN(a/2))", "COS(a)", None),
-    ("SIN(45)", "SQRT(2)/2", Context(angle=Angle.DEGREE)),
-    ("ASIN(1/2)", "30", Context(angle=Angle.DEGREE)),
-    # In degree mode answers measure angles in degrees, like the input, so they read
-    # back as themselves. The derivative's `pi/180` comes from the chain rule, and
-    # the cosine's argument is still `x` degrees.
+    # The angle mode affects only how an angle is shown: trigonometric functions take
+    # radians in either mode, and an inverse function whose value is a rational
+    # multiple of pi answers in degrees. Calculus is unaffected.
+    ("SIN(45)", "SIN(45)", Context(angle=Angle.DEGREE)),
+    ("ASIN(1/2)", "30 DEG", Context(angle=Angle.DEGREE)),
     ("SIN(2*x)", "SIN(2*x)", Context(angle=Angle.DEGREE)),
     ("SIN(x + y)", "SIN(x + y)", Context(angle=Angle.DEGREE)),
     ("ASIN(x)", "ASIN(x)", Context(angle=Angle.DEGREE)),
     ("ATAN(y, x)", "ATAN(y, x)", Context(angle=Angle.DEGREE)),
-    ("DIF(SIN(x), x)", "pi*COS(x)/180", Context(angle=Angle.DEGREE)),
+    ("DIF(SIN(x), x)", "COS(x)", Context(angle=Angle.DEGREE)),
     ("pi*COS(x)/180", "pi*COS(x)/180", Context(angle=Angle.DEGREE)),
-    ("INT(SIN(x), x)", "-180*COS(x)/pi", Context(angle=Angle.DEGREE)),
-    ("INT(1/(1 + x^2), x)", "pi*ATAN(x)/180", Context(angle=Angle.DEGREE)),
+    ("INT(SIN(x), x)", "-COS(x)", Context(angle=Angle.DEGREE)),
+    ("INT(1/(1 + x^2), x)", "ATAN(x)", Context(angle=Angle.DEGREE)),
     (
         "ASIN(SIN(x))",
-        "(pi*x - 180*pi*FLOOR(x/180 + 1/2))*(-1)^FLOOR(x/180 + 1/2)/pi",
+        "(x - pi*FLOOR(x/pi + 1/2))*(-1)^FLOOR(x/pi + 1/2)",
         Context(angle=Angle.DEGREE),
     ),
     ("APPROX(SIN(x) + ASIN(y))", "SIN(x) + ASIN(y)", Context(angle=Angle.DEGREE)),
     ("APPROX(2*ASIN(y))", "2*ASIN(y)", Context(angle=Angle.DEGREE)),
     # A phase is an angle, in the same unit as the inverse trig functions.
-    ("PHASE(#i)", "90", Context(angle=Angle.DEGREE)),
-    ("PHASE(-1 - #i)", "-135", Context(angle=Angle.DEGREE)),
-    # `deg` is pi/180, so degrees work in radian mode too. In degree mode it is 1.
+    ("PHASE(#i)", "90 DEG", Context(angle=Angle.DEGREE)),
+    ("PHASE(-1 - #i)", "-135 DEG", Context(angle=Angle.DEGREE)),
+    # `deg` is pi/180 in either mode; in degree mode an angle in degrees stays one.
     ("SIN(45 deg)", "SQRT(2)/2", None),
     ("SIN(45 deg)", "SQRT(2)/2", Context(angle=Angle.DEGREE)),
-    ("45 deg", "45", Context(angle=Angle.DEGREE)),
+    # `DEG` after an operand multiplies it by a degree, and binds to that operand.
+    ("SIN(45 DEG)", "SQRT(2)/2", None),
+    ("COS(60°)", "1/2", None),
+    ("a/1 DEG", "180*a/pi", None),
+    ("a/1 DEG", "a/deg", Context(angle=Angle.DEGREE)),
+    ("45 deg", "45 DEG", Context(angle=Angle.DEGREE)),
+    ("90 deg - pi/2", "0", Context(angle=Angle.DEGREE)),
+    ("ATAN(1)/(1 deg)", "45", Context(angle=Angle.DEGREE)),
+    ("pi/6", "pi/6", Context(angle=Angle.DEGREE)),
+    ("ATAN(2)", "ATAN(2)", Context(angle=Angle.DEGREE)),
     ("SIN(2*x)", "2*SIN(x)*COS(x)", Context(trigonometry=Direction.EXPAND)),
     ("SIN(x)*COS(x)", "SIN(2*x)/2", Context(trigonometry=Direction.COLLECT)),
     ("COS(x)^2", "1 - SIN(x)^2", Context(trigpower=TrigPower.SINES)),
@@ -1158,6 +1278,26 @@ def test_collect_writes_a_sine_and_a_cosine_as_one_phase_shifted_sine(text, expe
     assert simp(text, Context(trigonometry=Direction.COLLECT)) == expected
 
 
+def test_a_sine_a_multiple_of_a_quarter_turn_off_is_a_cosine_among_fractions():
+    # Put over one denominator, the sum would make the cosine, its coefficients spread
+    # over the terms again, no shorter, and it would stay a sine.
+    text = (
+        "29.17481610*SIN(pi/3*(t - 16.5)) + 209.0857058*SIN(pi/12*(t - 16.5))"
+        " + 168.0206041*SIN(pi/12*(t - 8.5))"
+    )
+    assert simp(text) == (
+        "291748161*COS(pi*t/3)/10000000 + 1045428529*SIN(pi*(t/12 - 11/8))/5000000"
+        " + 1680206041*SIN(pi*(t/12 - 17/24))/10000000"
+    )
+
+
+def test_collect_finds_a_sum_that_identities_make_zero():
+    # Written over multiple angles term by term, the sum would not show that it is 0.
+    context = Context(trigonometry=Direction.COLLECT, trigpower=TrigPower.SINES)
+    text = "8*COS(2*x)/SIN(2*x)^3 - 2/(SIN(x)^3*COS(x)) + 1/(SIN(x)^3*COS(x)^3)"
+    assert simp(text, context) == "0"
+
+
 #: Arctangents of numbers are summed via Gaussian integers: `ATAN(p/q)` is the
 #: argument of `q + p*#i`, and a sum is a rational multiple of pi exactly when the
 #: product lies on an axis or a diagonal.
@@ -1174,11 +1314,31 @@ ARC_TANGENT_SUMS = [
     ("2*ATAN(1/3) + ATAN(1/7)", "pi/4", None),
     ("5*ATAN(1/7) + 2*ATAN(3/79)", "pi/4", None),
     ("2*ATAN(2) + ATAN(4/3)", "pi", None),
+    # A long sum is reduced as a whole: the product is a positive rational and no
+    # factor wraps it around, so the sum is 0.
+    (
+        "ATAN(7) + ATAN(5) + ATAN(7/9) + ATAN(18/49) + ATAN(3/10) - ATAN(2/5)"
+        " - ATAN(23/41) - ATAN(19/17) - ATAN(27/11) - ATAN(5/2)",
+        "0",
+        None,
+    ),
+    (
+        "(ATAN(7) + ATAN(5) + ATAN(7/9) + ATAN(18/49) + ATAN(3/10) - ATAN(2/5)"
+        " - ATAN(23/41) - ATAN(19/17) - ATAN(27/11) - ATAN(5/2) - 2*pi)/(2*pi)",
+        "-1",
+        None,
+    ),
+    (
+        "x + ATAN(7) + ATAN(5) + ATAN(7/9) + ATAN(18/49) + ATAN(3/10) - ATAN(2/5)"
+        " - ATAN(23/41) - ATAN(19/17) - ATAN(27/11) - ATAN(1/3)",
+        "x + ATAN(13/11)",
+        None,
+    ),
     # The part that sums to a multiple of pi is reduced, the rest stays.
     ("ATAN(2) + ATAN(3) + ATAN(1/7)", "3*pi/4 + ATAN(1/7)", None),
     ("ATAN(1/2) + ATAN(1/3) + x", "x + pi/4", None),
     ("y*ATAN(1/2) + y*ATAN(1/3)", "pi*y/4", None),
-    ("ATAN(1/2) + ATAN(1/3)", "45", Context(angle=Angle.DEGREE)),
+    ("ATAN(1/2) + ATAN(1/3)", "pi/4", Context(angle=Angle.DEGREE)),
     # Otherwise a sum becomes one arctangent only if its argument is no larger than
     # the ones it replaces.
     ("ATAN(1/3) + ATAN(1/7)", "ATAN(1/2)", None),
@@ -1240,6 +1400,19 @@ ARC_MULTIPLES = [
     ("SIN(-2*ACOS(x))", "-2*x*SQRT(1 - x^2)"),
     # Above the multiple limit the call stays.
     ("SIN(5*ACOS(x))", "SIN(5*ACOS(x))"),
+    # An arc of a real rational number expands to a much larger multiple: the value is
+    # a power of `2 + 3*#i` over one of `SQRT(13)`.
+    ("SIN(5*ATAN(3/2))", "-597*SQRT(13)/2197"),
+    ("COS(5*ATAN(3/2))", "122*SQRT(13)/2197"),
+    ("TAN(5*ATAN(3/2))", "-597/122"),
+    ("SIN(5*ATAN(-3/2))", "597*SQRT(13)/2197"),
+    ("SIN(5*ATAN(1/2))", "41*SQRT(5)/125"),
+    ("COS(5*ACOS(1/3))", "241/243"),
+    ("SIN(5*ACOS(-1/3))", "-22*SQRT(2)/243"),
+    ("SIN(5*ASIN(1/3))", "241/243"),
+    ("COS(5*ASIN(1/3))", "-22*SQRT(2)/243"),
+    ("SIN(64*ATAN(1/2))", "-22940770664883067253376/23283064365386962890625"),
+    ("SIN(65*ATAN(1/2))", "SIN(65*ATAN(1/2))"),
 ]
 
 
@@ -1281,6 +1454,136 @@ def test_a_trigonometric_constant_of_high_degree_is_rejected_quickly():
     assert simp("(SIN(4*pi/25) + COS(4*pi/25))/2") == "COS(4*pi/25)/2 + SIN(4*pi/25)/2"
     assert simp("-SIN(4*pi/23)/2 - COS(4*pi/23)/2") == "-SIN(4*pi/23)/2 - COS(4*pi/23)/2"
     assert time.perf_counter() - start < 3
+
+
+#: A square root whose radicand holds fractions in a sum is written over one factored
+#: denominator, with its square factors taken out, where that is shorter: the Lagrange
+#: optimum of EXTREM_aus_Buch.DFW and the conic of CONICS.MTH.
+COMBINED_RADICANDS = [
+    (
+        "SQRT(100*pi + 100*(9*pi - 110)^2/(11*(220 - 7*pi)))",
+        "20*SQRT(11)*(pi + 55)/(11*SQRT(220 - 7*pi))",
+    ),
+    (
+        "5*SIN(ASIN(w/(4*w - 5)) - pi/2)/(4*COS(ASIN(w/(4*w - 5)) - pi/2) - 1)",
+        "-SQRT(15*w^2 - 40*w + 25)*SIGN(4*w - 5)",
+    ),
+    ("SQRT((x + 1)/y^2)", "SQRT(x + 1)/ABS(y)"),
+    ("SQRT(a/b + 1)", "SQRT(a/b + 1)"),
+    # An even power of a real factor is its own magnitude, below the line too.
+    ("ABS(x/y^4)", "ABS(x)/y^4"),
+]
+
+
+@pytest.mark.parametrize(("text", "expected"), COMBINED_RADICANDS, ids=str)
+def test_a_radicand_is_combined_over_one_denominator(text, expected):
+    assert simp(text) == expected
+
+
+#: Roots of one radicand spelled two ways, factored and multiplied out, are written with
+#: one spelling, so they cancel: the intersection of a ray and a circle in CONICS_1.DFW.
+ONE_SPELLING = [
+    ("SQRT((2*d - m + r)*(m + r))/SQRT(2*d*(m + r) - m^2 + r^2)", "1"),
+    (
+        "(m*SQRT(d*(2*m + 2*r) - m^2 + r^2) - r*SQRT((2*d - m + r)*(m + r))*(d - m)"
+        "/(d + r))/SQRT(d*(2*m + 2*r) - m^2 + r^2)",
+        "m - r + r*(m + r)/(d + r)",
+    ),
+    ("SQRT(x^2 - 1)*SQRT((x - 1)*(x + 1))", "x^2 - 1"),
+    # A positive multiple comes out of the root.
+    ("SQRT(3*x + 3)*SQRT(x + 1)", "SQRT(3)*(x + 1)"),
+    ("SQRT(4*x + 4)/SQRT(6*x + 6)", "SQRT(6)/3"),
+    # Different radicands stay apart.
+    ("SQRT(x^2 - 1)/SQRT(x^2 + 1)", "SQRT(x^2 - 1)/SQRT(x^2 + 1)"),
+]
+
+
+@pytest.mark.parametrize(("text", "expected"), ONE_SPELLING, ids=str)
+def test_a_radicand_spelled_two_ways_is_one(text, expected):
+    assert simp(text) == expected
+
+
+#: Two square roots whose radicands cancel are one root, where that holds for every real
+#: value. `SQRT(x)*SQRT(y)` is `-SQRT(x*y)` where both are negative, and
+#: `SQRT(x)/SQRT(y)` is `-SQRT(x/y)` where `x` is positive and `y` negative, so the
+#: roots stay apart where that can happen.
+JOINED_ROOTS = [
+    ("SQRT(s - 1)/SQRT((s - 1)/s)", "SQRT(s)"),
+    ("SQRT(s)*SQRT(1 - 1/s)", "SQRT(s - 1)"),
+    ("DIF(ASIN(1/SQRT(s)), s)", "-1/(2*s*SQRT(s - 1))"),
+    (
+        "DIF(-s*ATAN(SQRT(s - 1))/2 + s*ASIN(1/SQRT(s))/2 + SQRT(s - 1), s)",
+        "ASIN(1/SQRT(s))/2 - ATAN(SQRT(s - 1))/2",
+    ),
+    ("SQRT(x - 1)/SQRT(x^2 - x)", "SQRT(1/x)"),
+    # -SQRT(x) for -1 < x < 0.
+    ("SQRT(x + 1)/SQRT((x + 1)/x)", "SQRT(x + 1)/SQRT((x + 1)/x)"),
+    # -SQRT(b) for positive a and negative b.
+    ("SQRT(a)/SQRT(a/b)", "SQRT(a)/SQRT(a/b)"),
+    ("SQRT(a)*SQRT(b/a)", "SQRT(a)*SQRT(b/a)"),
+]
+
+
+@pytest.mark.parametrize(("text", "expected"), JOINED_ROOTS, ids=str)
+def test_roots_whose_radicands_cancel_are_joined_where_that_always_holds(
+    text, expected
+):
+    assert simp(text) == expected
+
+
+#: The perfect powers in the numeric content of a sum under a root come out of it, as
+#: they do from a product.
+RADICAND_CONTENTS = [
+    ("SQRT(768*x + 1280)", "16*SQRT(3*x + 5)"),
+    ("SQRT(4*x + 4*y)", "2*SQRT(x + y)"),
+    ("SQRT(-4*x - 8)", "2*SQRT(-x - 2)"),
+    ("1/SQRT(4*x + 8)", "1/(2*SQRT(x + 2))"),
+    ("(4*x + 8)^(3/2)", "8*(x + 2)^(3/2)"),
+    ("(27*x + 54)^(2/3)", "9*(x + 2)^(2/3)"),
+    ("(16*x + 32)^(1/3)", "2*(2*x + 4)^(1/3)"),
+    # A fraction in the content comes out by the rules for fractions in a radicand.
+    ("SQRT(x/4 + 1/2)", "SQRT(x + 2)/2"),
+    ("SQRT(x^2/9 + 1/3)", "SQRT(x^2 + 3)/3"),
+    ("SQRT(8*x^2 + 8)", "2*SQRT(2*x^2 + 2)"),
+    ("SQRT(4*x + 8) - 2*SQRT(x + 2)", "0"),
+]
+
+
+@pytest.mark.parametrize(("text", "expected"), RADICAND_CONTENTS, ids=str)
+def test_the_content_of_a_radicand_comes_out_of_the_root(text, expected):
+    assert simp(text) == expected
+
+
+#: A radicand, or any argument, is reduced by `SIN(z)^2 + COS(z)^2 = 1` as it would be
+#: on its own: the speed along a curve of VIVPROJ.dfw (Derive User Group Newsletter 28).
+REDUCED_ARGUMENTS = [
+    (
+        "SQRT(1024*COS(t)^6 + 1024*SIN(t)^6 - 3072*SIN(t)^4 + 2304*SIN(t)^2 + 1024)",
+        "16*SQRT(3*COS(t)^2 + 5)",
+    ),
+    (
+        "1/SQRT(1024*COS(t)^6 + 1024*SIN(t)^6 - 3072*SIN(t)^4 + 2304*SIN(t)^2 + 1024)",
+        "1/(16*SQRT(3*COS(t)^2 + 5))",
+    ),
+    (
+        "LN(1024*COS(t)^6 + 1024*SIN(t)^6 - 3072*SIN(t)^4 + 2304*SIN(t)^2 + 1024)",
+        "LN(768*COS(t)^2 + 1280)",
+    ),
+    (
+        "ABS(1024*COS(t)^6 + 1024*SIN(t)^6 - 3072*SIN(t)^4 + 2304*SIN(t)^2 + 1024)",
+        "768*COS(t)^2 + 1280",
+    ),
+    (
+        "ABS(CROSS(DIF([2 + 2*COS(2*t), 2*SIN(2*t), 4*SIN(t)], t),"
+        " DIF([2 + 2*COS(2*t), 2*SIN(2*t), 4*SIN(t)], t, 2)))",
+        "16*SQRT(3*COS(t)^2 + 5)",
+    ),
+]
+
+
+@pytest.mark.parametrize(("text", "expected"), REDUCED_ARGUMENTS, ids=str)
+def test_a_radicand_is_reduced_by_the_pythagorean_identity(text, expected):
+    assert simp(text) == expected
 
 
 #: A sine or cosine at a rational multiple of pi past the first octant is the cofunction
@@ -1392,7 +1695,15 @@ LOGARITHMS = [
     ("LN(x^4 + 2*x^2 + 1)", "2*LN(x^2 + 1)", None),
     ("LN(x^2 - 1)", "LN(x^2 - 1)", None),
     ("LN(4*x^2)", "LN(4*x^2)", COMPLEX_X),
-    ("LN(x^2 + 2*x + 1)", "LN(x^2 + 2*x + 1)", COMPLEX_X),
+    # A complex `x^2 + 2*x + 1` is not taken out of the logarithm, but its argument is
+    # factored to show the repeated factor.
+    ("LN(x^2 + 2*x + 1)", "LN((x + 1)^2)", COMPLEX_X),
+    # A sum of quotients is written over one denominator, as LIN_FRAC's substitutions
+    # and the integral of a logarithm of a quotient leave it.
+    ("LN((y - 2)/(x + 1) + 1)", "LN((x + y - 1)/(x + 1))", None),
+    ("LN(d/b + (c - a*d/b)/(b*x + a))", "LN((d*x + c)/(b*x + a))", None),
+    ("LN(SQRT((y - 2)/(x + 1) - 1))", "LN(-(x - y + 3)/(x + 1))/2", None),
+    ("LN(x + 1/x)", "LN(x + 1/x)", None),
     ("LN(1/x)", "LN(1/x)", None),
     ("LN(x^(-2))", "LN(1/x^2)", COMPLEX_X),
     # A real power of `#e` is a positive factor, so it leaves the logarithm, following
@@ -1463,9 +1774,9 @@ def test_a_line_through_logarithms_stays_a_line_when_approximated():
     the line was `LN(2.93615*16^(0.142857*x)*...)`, and on its six data points the fit
     ran away."""
     approximate = Context().with_precision(Precision.APPROXIMATE)
-    assert simp("LN(3)*x + LN(5)", approximate) == "1.09861*x + 1.60943"
+    assert simp("LN(3)*x + LN(5)", approximate) == "1.098612288*x + 1.609437912"
     fitted = "FIT([x, a*x + b], [[1, LN(1.5)], [2, LN(0.8)], [3, LN(0.4)]])"
-    assert simp(fitted, approximate) == "1.07709 - 0.660877*x"
+    assert simp(fitted, approximate) == "1.077099448 - 0.6608779199*x"
 
 
 def test_a_long_rational_coefficient_of_a_logarithm_stays_outside():
@@ -1473,7 +1784,7 @@ def test_a_long_rational_coefficient_of_a_logarithm_stays_outside():
     would take sympy minutes to raise a number to."""
     approximate = Context().with_precision(Precision.APPROXIMATE)
     k = "12345678901/98765432109"
-    assert simp(f"(LN(0.65) + 0.5772156649)*{k}", approximate) == "0.0183040"
+    assert simp(f"(LN(0.65) + 0.5772156649)*{k}", approximate) == "0.01830409343"
     assert simp(f"LN(2)*{k} + LN(3)") == "LN(3) + 12345678901*LN(2)/98765432109"
 
 
@@ -1673,6 +1984,32 @@ PERFECT_POWERS = [
     # A polynomial in a variable's root, the root nonnegative where the variable is.
     ("SQRT(x - 2*SQRT(x) + 1)", "ABS(SQRT(x) - 1)", POSITIVE_X),
     ("SQRT(4*x + 4*SQRT(x) + 1)", "2*SQRT(x) + 1", POSITIVE_X),
+    # Coefficients with roots of rationals in them, factored over the field the roots
+    # span (Derive User Group Newsletter 64, Morley.dfw).
+    ("SQRT(3*x^2 + 2*SQRT(3)*x*y + y^2)", "ABS(SQRT(3)*x + y)", None),
+    ("SQRT(2*x^2 + 2*SQRT(2)*x + 1)", "ABS(SQRT(2)*x + 1)", None),
+    ("SQRT(x^2 + 2*SQRT(2/3)*x + 2/3)", "ABS(x + SQRT(6)/3)", None),
+    ("SQRT(x^2 + 2*(SQRT(2) + SQRT(3))*x + 5 + 2*SQRT(6))", "ABS(x + SQRT(3) + SQRT(2))",
+     None),
+    ("SQRT(x^2 + 2*2^(1/4)*x + SQRT(2))", "ABS(x + 2^(1/4))", None),
+    ("(3*x^2 + 2*SQRT(3)*x + 1)^(3/2)", "(SQRT(3)*x + 1)^2*ABS(SQRT(3)*x + 1)", None),
+    ("SQRT(3*x^2 + 2*SQRT(3)*x + 1)", "SQRT(3)*x + 1", POSITIVE_X),
+    ("SQRT(-3*x^2 - 2*SQRT(3)*x - 1)", "SQRT(-3*x^2 - 2*SQRT(3)*x - 1)", None),
+    # A power that is a factor comes out of the root, which keeps the rest.
+    ("SQRT(x^3 + x^2)", "SQRT(x + 1)*ABS(x)", None),
+    ("SQRT((x^2 + 2*x*y + y^2)*(x + 1))", "SQRT(x + 1)*ABS(x + y)", None),
+    ("SQRT((3*x^2 + 2*SQRT(3)*x*y + y^2)*(x + 1))", "SQRT(x + 1)*ABS(SQRT(3)*x + y)",
+     None),
+    ("(x^3 + x^2)^(3/2)", "x^2*(x + 1)^(3/2)*ABS(x)", None),
+    ("SQRT(x^3 + x^2)", "x*SQRT(x + 1)", POSITIVE_X),
+    ("SQRT(x^3 + x^2)", "SQRT(x^3 + x^2)", COMPLEX_X),
+    (
+        "SQRT(21*x^4 + (14*SQRT(3) + 9)*x^3*y + (6*SQRT(3) + 1)*x^2*y^2 + 15*x^2"
+        " + (3 - 4*SQRT(3))*x*y^3 + 10*SQRT(3)*x*y - 2*y^4 + 5*y^2)"
+        " - ABS(SQRT(3)*x + y)*SQRT(7*x^2 + 3*x*y - 2*y^2 + 5)",
+        "0",
+        None,
+    ),
     # A symbolic exponent is taken over a root that is positive.
     ("(4*x + 4*SQRT(x) + 1)^(1/(2*SQRT(x) + 1))", "(2*SQRT(x) + 1)^(2/(2*SQRT(x) + 1))",
      POSITIVE_X),
@@ -1742,7 +2079,8 @@ INERT = [
     ("u := 2 + 3", "u := 5"),
     ("F(x, y) := x + x", "F(x, y) := 2*x"),
     ("F(x) :=", "F(x) :="),
-    ("u :==", "u :=="),
+    # `:==` is read as `:=`.
+    ("u :==", "u :="),
     ('"note"', '"note"'),
     ("?", "?"),
     ("2 + 3 =", "5"),
@@ -1820,7 +2158,7 @@ def test_a_bound_name_survives_an_assignment_wherever_the_head_binds_it():
 
 
 def test_a_defined_function_is_replaced_by_its_body():
-    context = Context(functions={"ACCELERATION": (("f", "m"), parse("f/m"))})
+    context = Context(functions={"ACCELERATION": Definition(("f", "m"), parse("f/m"))})
     assert simp("ACCELERATION(6, 2)", context) == "3"
     # Partial application: an unsupplied parameter stays as its name.
     assert simp("ACCELERATION(6)", context) == "6/m"
@@ -1839,7 +2177,10 @@ def test_a_counted_sum_is_written_out_for_the_recursion_under_it():
     )
     rows = parse("SUM(NONZERO(m SUB k, 1), k, 1, DIMENSION(m))", state)
     context = Context(
-        functions={"NONZERO": (("v", "i"), nonzero), "ROWS": (("m",), rows)}
+        functions={
+            "NONZERO": Definition(("v", "i"), nonzero),
+            "ROWS": Definition(("m",), rows),
+        }
     )
     assert simp("ROWS([[1, 0], [0, 0], [0, 3]])", context) == "2"
 
@@ -1849,7 +2190,9 @@ def defining(**definitions):
     state = declaring(*definitions)
     return Context(
         functions={
-            name: (tuple(p.strip() for p in params.split(",")), parse(body, state))
+            name: Definition(
+                tuple(p.strip() for p in params.split(",")), parse(body, state)
+            )
             for name, (params, body) in definitions.items()
         }
     )
@@ -1953,6 +2296,17 @@ def test_a_derivative_in_an_element_not_yet_known_stands():
 def test_a_definition_shows_a_binding_over_a_parameter_as_written(text):
     # Its variable is whatever a call supplies, which the other arguments may mention.
     assert simp(text) == text
+
+
+def test_a_definition_works_out_a_binding_over_a_parameter_nothing_else_mentions():
+    """No other parameter can bring the variable in, so the body is the derivative,
+    the integral or the sum, as simplified at the call."""
+    assert simp("g(x) := DIF(x^3, x)") == "g(x) := 3*x^2"
+    assert simp("H(x) := INT(x^2, x)") == "H(x) := x^3/3"
+    context = defining(f=("x", "80*x/(x^2 + k^2)"))
+    assert simp("fa(x) := DIF(f(x), x)", context) == (
+        "fa(x) := 80*(k^2 - x^2)/(x^2 + k^2)^2"
+    )
 
 
 def test_two_spellings_of_one_variable_are_one_variable():
@@ -2149,9 +2503,9 @@ DEMO_MATRICES = [
     # arbitrary, and the first row reads `x + 2*y = 3`.
     ("ROW_REDUCE([[2,4],[3,6]],[[6],[9]])", "[[1, 2, 3], [0, 0, 0]]"),
     ("CHARPOLY([[a,b],[b,a]],z)", "z^2 - 2*a*z + a^2 - b^2"),
-    # With no variable given, the answer uses `w`, the manual's default. Derive
-    # lists the two in the opposite order.
-    ("EIGENVALUES([[a,b],[b,a]])", "[w = a - b, w = a + b]"),
+    # With no variable given, the answer is the eigenvalues themselves. Derive lists
+    # the two in the opposite order.
+    ("EIGENVALUES([[a,b],[b,a]])", "[a - b, a + b]"),
     # The demo's vector calculus, in default Cartesian x, y, z. It ends with a
     # cross-check: the vector potential of the curl computed two lines above gives
     # back the original vector.
@@ -2210,11 +2564,14 @@ KINDS = [
     "p OR q",
     "p XOR q",
     "p IMP q",
+    "p IFF q",
+    "m ROW 2",
     "u := 5",
     "F(x, y) := x + y",
     "x :epsilon Real",
     "x :epsilon Real [0, inf)",
     "x + 1 =",
+    "'(x + 1)",
 ]
 
 
@@ -2318,7 +2675,7 @@ def test_a_heading_heads_its_column_only_while_it_is_a_heading():
     once = simplify(parse("TRUTH_TABLE(p, q, p XOR q)"), Context())
     assert once.text.startswith("[[p, q, p XOR q], ")
     again = simplify(once.node, Context())
-    assert again.text.startswith("[[p, q, NOT p AND q OR p AND NOT q], ")
+    assert again.text.startswith("[[p, q, (NOT p AND q) OR (p AND NOT q)], ")
 
 
 #: Corpus expressions that settle only on a second pass are listed in
@@ -2345,8 +2702,7 @@ def test_an_equation_with_an_infinite_side_and_a_variable_stands():
     """A variable is finite, and `inf - 1/x` is `inf`, but `x = inf` is no falsehood."""
     assert simp("x = inf") == "x = inf"
     assert simp("x = inf - 1/x") == "x = inf"
-    assert simp("2 = inf") == "false"
-    assert simp("inf = inf") == "true"
+    assert simp("[2 = inf, inf = inf]") == "[false, true]"
 
 
 @pytest.mark.parametrize(
@@ -2417,4 +2773,71 @@ def test_a_cancelling_square_and_a_reciprocal_tangent_are_written_as_derive_does
     """A Pythagorean rewrite that removes a term is a cancellation, which Auto applies
     though it is no shorter; TENSOR1's Christoffel symbols show it. A reciprocal
     tangent is the cotangent."""
+    assert simp(text) == expected
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        # `+-inf` is either infinity, which one unknown: what has no single value for
+        # either is undefined.
+        ('#e^(("+-"inf)*c)', "?"),
+        ('MIN(x, "+-"inf)', "?"),
+        ('MAX(["+-"inf, 2])', "?"),
+        ('"+-"inf*x + 3', "±inf*x + 3"),
+        # A test against `?` is undecided unless the other side is a value of its own.
+        ("IF(x = ?, 1, 2, 3)", "3"),
+        ("IF(3 = ?, 1, 2, 3)", "2"),
+        ("IF(? = ?, 1, 2, 3)", "1"),
+        # Exactly, an ordering with `?` is undecided.
+        ("IF(ABS(?) >= 0, 1, 2, 3)", "3"),
+        # A constant has no inverse.
+        ("ITERATE(0, y, 0, -1)", "?"),
+        ("ITERATES(5, y, 0, -2)", "[0, ?, ?]"),
+        # Without a single inverse, the equation is solved at each value and its first
+        # solution taken.
+        ("ITERATE(pi*u*(8 - 2*u^2/3), u, 0, -1)", "0"),
+        # A command's answer in a test compares as its value.
+        ("IF(SOLVE(2 = 2) = true, 1, 2, 3)", "1"),
+        ("SELECT(SOLVE(n = 2) /= true, n, 1, 3)", "[1, 3]"),
+        # The variable of a limit is a variable while the limit's body is worked out,
+        # so the terms are taken before the point is substituted.
+        ("LIM(TERMS(a*x^2*y + a*x*y), [x, y], [1, 1])", "[a, a]"),
+    ],
+    ids=str,
+)
+def test_undefined_and_command_answers_in_tests(text, expected):
+    assert simp(text) == expected
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        # Euler's formula where a wave of the same angle stands beside the exponential.
+        ("#e^(-#i*w*t) + #i*SIN(w*t)", "COS(t*w)"),
+        ("p*(#e^(#i*x) - #i*SIN(x))", "p*COS(x)"),
+        ("#e^x + SIN(x)", "#e^x + SIN(x)"),
+        # Powers of one positive unit are written over it.
+        ("(12*SQRT(2) + 17)^n - (SQRT(2) + 1)^(4*n)", "0"),
+        ("(12*SQRT(2) + 17)^n + (SQRT(2) + 1)^(4*n)", "2*(SQRT(2) + 1)^(4*n)"),
+        (
+            "(SQRT(2) - 1)^(4*n)*(3/4 - SQRT(2)/2) "
+            "+ (SQRT(2) + 1)^(-4*n)*(SQRT(2)/2 - 3/4)",
+            "0",
+        ),
+        # A line that is a convex combination of the others plus a constant of the right
+        # sign never decides MIN or MAX.
+        (
+            "MIN(-x - y + 1, -(x + 7*y - 19)/13, (5*x + y + 7)/3)",
+            "-ABS(8*x/3 + 4*y/3 + 4/3)/2 + x/3 - y/3 + 5/3",
+        ),
+        ("MIN(x, 2*x, 3*x)", "2*x - ABS(x)"),
+        # Orderings settled by the range of the difference over every real value.
+        ("4 - 3*COS(t)^2 > 0", "true"),
+        ("IF(2 + SIN(t) > 0, 1, 2)", "1"),
+        ("SIN(t) > 0", "SIN(t) > 0"),
+    ],
+    ids=str,
+)
+def test_identities_that_hold_for_every_value(text, expected):
     assert simp(text) == expected

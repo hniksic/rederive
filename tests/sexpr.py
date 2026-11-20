@@ -15,7 +15,7 @@ from rederive.model.expr import Kind, Node
 
 _BINOPS = {"/": "/", "^": "^", ".": "dot"}
 _UNOPS = {"-": "neg", "+": "pos", "+-": "pm"}
-_POSTOPS = {"!": "fact", "%": "pct", "`": "transpose"}
+_POSTOPS = {"!": "fact", "%": "pct", "`": "transpose", "DEG": "degrees"}
 _SETOPS = {"UNION": "union", "INTERSECTION": "intersection", "\\": "setminus"}
 
 
@@ -58,14 +58,17 @@ def to_sexpr(node: Node) -> str:
         case Kind.REL:
             # The operator is written between the two operands.
             return _form("rel", [children[0], str(node.value), children[1]])
-        case Kind.NOT | Kind.AND | Kind.OR | Kind.XOR | Kind.IMP:
+        case Kind.NOT | Kind.AND | Kind.OR | Kind.XOR | Kind.IMP | Kind.IFF:
             return _form(str(node.kind), children)
+        case Kind.INFIX:
+            # `ROW`, `COL`, `DOTPRODUCT`, ..., and `SUB SUB` as `subsub`.
+            return _form(str(node.value).lower().replace(" ", ""), children)
         case Kind.ASSIGN:
             return _form(str(node.value), children)
         case Kind.FUNDEF:
             return _form("fundef", [str(node.value), *children])
         case Kind.PARAMS:
-            return _form("params", children)
+            return _form("variadic" if node.value else "params", children)
         case Kind.DOMAIN:
             return _form("domain", [children[0], str(node.value), *children[1:]])
         case Kind.INTERVAL:
@@ -73,6 +76,8 @@ def to_sexpr(node: Node) -> str:
             return _form("ivl", [f'"{opening}"', *children, f'"{closing}"'])
         case Kind.SHOWVALUE:
             return _form("showvalue", children)
+        case Kind.QUOTE:
+            return _form("quote", children)
     raise AssertionError(f"unwritable node kind: {node.kind}")
 
 

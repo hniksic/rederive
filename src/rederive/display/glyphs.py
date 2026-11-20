@@ -7,7 +7,9 @@ has a spelling here. Unicode is assumed, so there are no ASCII fallbacks.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
+from fractions import Fraction
 
 from rederive.display.options import ASTERISK, DOT, IMPLICIT
 
@@ -18,6 +20,12 @@ TIMES: dict[str, str] = {ASTERISK: "*", DOT: "·", IMPLICIT: " "}
 #: space on each side in both display formats, since `[1, 2]∙[3, 4]` would read as one
 #: bracketed expression.
 DOT_PRODUCT = " ∙ "
+
+#: How the word operators of Derive 6 are drawn, where not as the word.
+INFIX: dict[str, str] = {"DOTPRODUCT": "•", "CROSSPRODUCT": "×", "SUB SUB": "↓↓"}
+
+#: The postfix degree sign.
+DEGREE = "°"
 
 #: The constants as Derive shows them. Those without a glyph print as their name.
 CONSTANTS: dict[str, str] = {
@@ -32,18 +40,55 @@ CONSTANTS: dict[str, str] = {
     "unit_circle": "unit_circle",
 }
 
-#: The pre-defined Greek variables, each as its own letter.
+#: The Greek letters by name, each as its own letter: the lower-case name for the small
+#: letter, the capitalized one for the capital.
 GREEK: dict[str, str] = {
     "alpha": "α",
+    "Alpha": "Α",
     "beta": "β",
+    "Beta": "Β",
+    "gamma": "γ",
+    "Gamma": "Γ",
     "delta": "δ",
+    "Delta": "Δ",
     "epsilon": "ε",
+    "Epsilon": "Ε",
+    "zeta": "ζ",
+    "Zeta": "Ζ",
+    "eta": "η",
+    "Eta": "Η",
     "theta": "θ",
+    "Theta": "Θ",
+    "iota": "ι",
+    "Iota": "Ι",
+    "kappa": "κ",
+    "Kappa": "Κ",
+    "lambda": "λ",
+    "Lambda": "Λ",
     "mu": "μ",
-    "phi": "φ",
+    "Mu": "Μ",
+    "nu": "ν",
+    "Nu": "Ν",
+    "xi": "ξ",
+    "Xi": "Ξ",
+    "omicron": "ο",
+    "Omicron": "Ο",
+    "rho": "ρ",
+    "Rho": "Ρ",
     "sigma": "σ",
+    "Sigma": "Σ",
     "tau": "τ",
+    "Tau": "Τ",
+    "upsilon": "υ",
+    "Upsilon": "Υ",
+    "phi": "φ",
+    "Phi": "Φ",
+    "chi": "χ",
+    "Chi": "Χ",
+    "psi": "ψ",
+    "Psi": "Ψ",
     "omega": "ω",
+    "Omega": "Ω",
 }
 
 NAMES: dict[str, str] = CONSTANTS | GREEK
@@ -111,13 +156,14 @@ def numeral(value: str, base: int, digits: int) -> str:
 
     Above base ten the digits run A to Z, and a numeral starting with a letter gets a
     leading zero so it can't be read as a variable: fourteen is `0E` in hexadecimal, not
-    `E`. A value with a radix point is cut to `digits` significant digits but not
-    converted, whatever the base, since that would be arithmetic and this layer does
-    none. A ratio (used for numerals with no finite decimal form) has each half
-    converted.
+    `E`. A value with a radix point is cut to `digits` significant digits, of the
+    output base: 24.5 is `18.8` in hexadecimal. A ratio (used for numerals with no
+    finite decimal form) has each half converted.
     """
     if "." in value:
-        return _fraction(value, digits)
+        if base == 10:
+            return _fraction(value, digits)
+        return _fraction_in_base(value, base, digits)
     if base == 10:
         return value
     return "/".join(_whole(part, base) for part in value.split("/"))
@@ -140,6 +186,39 @@ def _fraction(value: str, digits: int) -> str:
     else:
         keep = digits + len(fraction) - len(fraction.lstrip("0"))
     return integer + "." + fraction[:keep]
+
+
+def _fraction_in_base(value: str, base: int, digits: int) -> str:
+    """A decimal numeral with a radix point written in `base`, cut to `digits`
+    significant digits of that base, truncated as in `_fraction`, with at least one
+    digit after the point.
+
+    The decimal text may itself be cut, so no more digits are written than its decimal
+    digits determine: a third shown as `0.3333333333` is `0.55555555` in hexadecimal.
+    """
+    sign = "-" if value.startswith("-") else ""
+    integer, _, decimals = value.lstrip("-").partition(".")
+    significant = len((integer + decimals).lstrip("0")) or 1
+    justified = max(int(significant * math.log(10) / math.log(base)), 1)
+    exact = Fraction(int(integer + decimals), 10 ** len(decimals))
+    whole = exact.numerator // exact.denominator
+    rest = exact - whole
+    head = _whole(str(whole), base)
+    leading = len(head) if whole else 0
+    keep = max(min(digits, justified) - leading, 1)
+    written = ""
+    started = bool(whole)
+    while len(written) < keep or not started and rest and len(written) < 64:
+        rest *= base
+        digit = rest.numerator // rest.denominator
+        rest -= digit
+        written += _DIGITS[digit]
+        started = started or digit != 0
+        if not rest and started:
+            break
+        if not started:
+            keep += 1
+    return sign + head + "." + (written or "0")
 
 
 def _whole(value: str, base: int) -> str:

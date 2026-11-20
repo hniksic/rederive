@@ -77,12 +77,14 @@ class Closures:
     def keyed(self, plot: Plot, names: tuple[str, ...], reading: str) -> bytes:
         """Return the cache key for an expression.
 
-        The key covers the tree, its context, its variables and the reading wanted,
-        since one tree can yield different closures (`u - v` for an implicit curve,
-        the truth of `u > v` for a region). It hashes the pickle of these.
+        The key covers the tree, its context, its variables, the reading wanted and
+        whether it is evaluated point by point, since one tree can yield different
+        closures (`u - v` for an implicit curve, the truth of `u > v` for a region). It
+        hashes the pickle of these.
         """
         return hashlib.blake2b(
-            pickle.dumps((plot.node, plot.context, names, reading)), digest_size=16
+            pickle.dumps((plot.node, plot.context, names, reading, plot.pointwise)),
+            digest_size=16,
         ).digest()
 
     def get(self, key: bytes) -> Any:
@@ -624,12 +626,16 @@ def _ensured(held: Closures, model: Plot, degrees: bool) -> Riding:
     plot = _riding(held, model, degrees)
     if plot.kind is PlotKind.PARAMETRIC:
         if plot.pair is None:
-            plot.pair = evaluate.pair(plot.node, plot.context, _names(plot))
+            plot.pair = evaluate.pair(
+                plot.node, plot.context, _names(plot), plot.pointwise
+            )
             _remember(held, plot, None, plot.pair)
         return plot
     if plot.kind is PlotKind.DATA or plot.closure is not None:
         return plot
-    plot.closure = _maker(plot)(plot.node, plot.context, _names(plot))
+    plot.closure = _maker(plot)(
+        plot.node, plot.context, _names(plot), plot.pointwise
+    )
     _remember(held, plot, plot.closure)
     if plot.kind is PlotKind.POLAR:
         plot.pair = evaluate.polar_pair(plot.closure, degrees)

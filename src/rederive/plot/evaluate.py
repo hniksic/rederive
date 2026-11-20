@@ -34,10 +34,19 @@ same.
 
 `features` finds roots and extrema on the drawn samples and then refines them on the
 closure, so they are accurate to full precision rather than to a pixel.
+
+An expression that is no closed form (a function defined by a program whose flow
+depends on the variable, a built-in that only computes on numbers, a `RANDOM` draw; see
+`engine.plot_form`) has no closure to convert. It is evaluated anew at each point by
+the engine, programs running, at the cost of a fraction of a millisecond or more per
+point where numpy takes nanoseconds. The same samplers use it through the same calling
+convention, with a time limit per sampling (`POINTWISE_SECONDS`) and, on the desktop,
+an end as soon as the sampling is no longer wanted.
 """
 
 from __future__ import annotations
 
+import time
 import warnings
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
@@ -46,7 +55,7 @@ from typing import Any
 import numpy as np
 
 from rederive.engine.context import Context
-from rederive.model.expr import Node
+from rederive.model.expr import Kind, Node
 
 __all__ = [
     "CROSSING",
@@ -56,9 +65,11 @@ __all__ = [
     "MINIMUM",
     "ROOT",
     "Boundary",
+    "Cancelled",
     "Feature",
     "Sampled",
     "Unplottable",
+    "budgeted",
     "closure",
     "difference",
     "features",
@@ -112,6 +123,23 @@ MAX_POINTS = 20001
 #: settle it cheaply.
 PROBE_POINTS = 8
 
+#: Seconds one sampling of an expression evaluated point by point may take. Ordinary
+#: programs take well under a millisecond a point, so a curve takes a second at most;
+#: one that takes longer is stopped and said to be too slow, rather than keep the
+#: sampling busy for minutes.
+POINTWISE_SECONDS = 30.0
+
+#: How many points of a sampling evaluated point by point must all run past the step
+#: limit for the expression to be taken as one that ends nowhere.
+ENDLESS_POINTS = 8
+
+#: Why a sampling evaluated point by point was stopped.
+TOO_SLOW = (
+    "evaluating it point by point took over {seconds:g} s, so it was stopped"
+    " - try a narrower range"
+)
+ENDLESS = "its program ran past {steps} steps at every point tried"
+
 
 class Unplottable(Exception):
     """The expression can't be evaluated numerically.
@@ -123,7 +151,7 @@ class Unplottable(Exception):
 
 
 def closure(
-    node: Node, context: Context, variables: Sequence[str] = ()
+    node: Node, context: Context, variables: Sequence[str] = (), pointwise: bool = False
 ) -> Callable[..., np.ndarray]:
     """A numeric function of `variables` for the expression `node`.
 
@@ -134,18 +162,29 @@ def closure(
     and finite, NaN elsewhere. It never raises, since an exception mid-sampling would
     lose the whole curve: a failed vectorized call is retried point by point, a failed
     point is evaluated by sympy, and a point sympy can't evaluate is NaN.
+
+    With `pointwise`, `node` is evaluated anew at each point instead (see the module).
+    Such a function raises only when it is no longer wanted or out of time.
     """
+    if pointwise:
+        return _Pointwise(_batch([node], context, variables))
     return _lambdified(_converted(node, context), variables)
 
 
 def difference(
-    node: Node, context: Context, variables: Sequence[str] = ()
+    node: Node, context: Context, variables: Sequence[str] = (), pointwise: bool = False
 ) -> Callable[..., np.ndarray]:
     """`u - v` as a function, for the implicit plot of the equation `u = v`.
 
     An implicit curve is the zero contour of the difference, which gives marching
-    squares the scalar field it needs.
+    squares the scalar field it needs. Evaluated `pointwise`, the sides of an equation
+    written as one are evaluated in turn, since the equation itself would be decided.
     """
+    if pointwise:
+        if node.kind is Kind.REL and len(node.children) == 2:
+            batch = _batch(node.children, context, variables)
+            return _Pointwise(batch, lambda values: values[0] - values[1])
+        return _Pointwise(_batch([node], context, variables))
     expression = _converted(node, context)
     sides = (getattr(expression, "lhs", None), getattr(expression, "rhs", None))
     if sides[0] is not None and sides[1] is not None:
@@ -154,14 +193,17 @@ def difference(
 
 
 def mask(
-    node: Node, context: Context, variables: Sequence[str] = ()
+    node: Node, context: Context, variables: Sequence[str] = (), pointwise: bool = False
 ) -> Callable[..., np.ndarray]:
     """A boolean per point, for the shaded region of an inequality.
 
     Unlike everything else here, this is evaluated on real inputs, since `x > 0`
     raises for complex x. Points where the result isn't a truth value are false.
     """
-    inside = _lambdified(_converted(node, context), variables, real=True)
+    if pointwise:
+        inside: Callable[..., np.ndarray] = _Pointwise(_batch([node], context, variables))
+    else:
+        inside = _lambdified(_converted(node, context), variables, real=True)
 
     def truth(*arguments: np.ndarray) -> np.ndarray:
         values = inside(*arguments)
@@ -171,11 +213,22 @@ def mask(
 
 
 def pair(
-    node: Node, context: Context, variables: Sequence[str] = ()
+    node: Node, context: Context, variables: Sequence[str] = (), pointwise: bool = False
 ) -> tuple[Callable[..., np.ndarray], Callable[..., np.ndarray]]:
-    """The two closures of a parametric pair `[x(t), y(t)]`, converted together once."""
+    """The two closures of a parametric pair `[x(t), y(t)]`, converted together once.
+
+    Evaluated `pointwise`, the two are evaluated together at each point, once for both.
+    """
     from rederive.engine.vectors import Vector
 
+    if pointwise:
+        if node.kind is not Kind.VECTOR or len(node.children) != 2:
+            raise Unplottable("a parametric plot needs two expressions")
+        batch = _batch(node.children, context, variables)
+        return (
+            _Pointwise(batch, lambda values: values[0]),
+            _Pointwise(batch, lambda values: values[1]),
+        )
     expression = _converted(node, context)
     if not isinstance(expression, Vector):
         raise Unplottable("a parametric plot needs two expressions")
@@ -207,16 +260,27 @@ def polar_pair(
     return horizontal, vertical
 
 
-def points(node: Node, context: Context) -> tuple[np.ndarray, np.ndarray]:
+def points(
+    node: Node, context: Context, pointwise: bool = False
+) -> tuple[np.ndarray, np.ndarray]:
     """The two columns of a constant matrix, as a data plot's x and y.
 
     A single point like `[1, 2]` is read as a one-row matrix. Vectors of such matrices,
     nested to any depth, are several lines of points, as `ISOMETRICS` gives: each
     innermost matrix is its own line, and a NaN row between lines keeps them apart.
+
+    Evaluated `pointwise`, the matrix is evaluated once with its programs running, and
+    an element that doesn't come to a number leaves its point out.
     """
     from rederive.engine.vectors import Vector
 
-    expression = _converted(node, context)
+    if pointwise:
+        try:
+            expression: Any = _batch([node], context, ()).pointwise.value()
+        except Exception as error:
+            raise Unplottable(_said(error)) from None
+    else:
+        expression = _converted(node, context)
     lines: list[list[Any]] = []
 
     def gather(value: Any) -> None:
@@ -237,11 +301,24 @@ def points(node: Node, context: Context) -> tuple[np.ndarray, np.ndarray]:
         for index, line in enumerate(lines):
             if index:
                 rows.append(gap)
-            rows += [[complex(part.evalf()) for part in point.args] for point in line]
+            rows += [
+                [_element(part, pointwise) for part in point.args] for point in line
+            ]
     except Exception as error:
         raise Unplottable(_said(error)) from None
     table = np.array(rows, dtype=np.complex128)
     return _real_part(table[:, 0]), _real_part(table[:, 1])
+
+
+def _element(part: Any, pointwise: bool) -> complex:
+    """A coordinate of a data point as a number; evaluated `pointwise`, NaN for one
+    that isn't a number, which leaves the point out."""
+    if not pointwise:
+        return complex(part.evalf())
+    from rederive.engine.plot_form import number_of
+
+    found = number_of(part)
+    return complex(np.nan) if found is None else found
 
 
 def _point(value: Any) -> bool:
@@ -504,6 +581,111 @@ def _at(
         except Exception:
             continue
     return None
+
+
+def budgeted(f: Callable[..., Any]) -> Callable[..., Any]:
+    """`f`, its time limit started anew if it is evaluated point by point (see
+    `POINTWISE_SECONDS`), as each sampling job does before it samples."""
+    if isinstance(f, _Pointwise):
+        f.batch.started = None
+    return f
+
+
+def _batch(
+    parts: Sequence[Node], context: Context, variables: Sequence[str]
+) -> _Batch:
+    from rederive.engine.plot_form import Pointwise
+
+    return _Batch(Pointwise(parts, context, variables))
+
+
+class Cancelled(Exception):
+    """A sampling evaluated point by point was stopped because it is no longer wanted:
+    the view moved on, or the window closed. Its result would be dropped anyway."""
+
+
+class _Batch:
+    """The engine's point evaluator (`engine.plot_form.Pointwise`) over arrays.
+
+    Several closures may share one: the two of a parametric pair are evaluated together
+    at each point, so a pair of arrays costs one evaluation per point, and each `RANDOM`
+    draws once for both coordinates. The last batch is kept for that.
+
+    Before each point, the sampling is stopped if it is no longer wanted (on the
+    desktop, where the sampler says so) or has run past its time (see `budgeted`). A
+    call for a single point, as tracing makes, is never stopped.
+    """
+
+    def __init__(self, pointwise: Any) -> None:
+        self.pointwise = pointwise
+        #: When the current sampling began, or None until its first point.
+        self.started: float | None = None
+        self._last: tuple[Any, list[np.ndarray]] | None = None
+
+    def __call__(self, inputs: list[np.ndarray]) -> list[np.ndarray]:
+        """The parts' values at the points `inputs` give, one complex array per part,
+        NaN where a part has no number."""
+        from rederive.plot.session import cancelled
+
+        shape = np.broadcast(*inputs).shape if inputs else ()
+        spreads = [np.broadcast_to(value, shape).ravel() for value in inputs]
+        key = (shape, tuple(spread.tobytes() for spread in spreads))
+        if self._last is not None and self._last[0] == key:
+            return self._last[1]
+        size = int(np.prod(shape)) if shape else 1
+        count = len(self.pointwise.parts)
+        answers = np.full((count, size), np.nan, dtype=np.complex128)
+        watched = size > 1
+        if watched and self.started is None:
+            self.started = time.monotonic()
+        for index in range(size):
+            if watched:
+                if cancelled():
+                    raise Cancelled("no longer wanted")
+                assert self.started is not None
+                if time.monotonic() - self.started > POINTWISE_SECONDS:
+                    raise Unplottable(TOO_SLOW.format(seconds=POINTWISE_SECONDS))
+            found = self.pointwise.at(*(float(spread[index]) for spread in spreads))
+            if (
+                watched
+                and self.pointwise.points == ENDLESS_POINTS
+                and self.pointwise.overrun == ENDLESS_POINTS
+            ):
+                from rederive.engine.plot_form import POINT_STEPS
+
+                raise Unplottable(ENDLESS.format(steps=POINT_STEPS))
+            for part, value in enumerate(found):
+                if value is not None:
+                    answers[part, index] = value
+        values = [answers[part].reshape(shape) for part in range(count)]
+        self._last = (key, values)
+        return values
+
+
+class _Pointwise:
+    """A closure whose expression is evaluated anew at each point by the engine.
+
+    `combined` makes one complex array of the parts' values (the first by default);
+    like any closure, the result is real where the value is real, and NaN elsewhere.
+    """
+
+    def __init__(
+        self,
+        batch: _Batch,
+        combined: Callable[[list[np.ndarray]], np.ndarray] | None = None,
+    ) -> None:
+        self.batch = batch
+        self._combined = combined or (lambda values: values[0])
+
+    def __call__(self, *arguments: np.ndarray) -> np.ndarray:
+        inputs = [
+            np.real(np.asarray(argument)).astype(np.float64) for argument in arguments
+        ]
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            with np.errstate(all="ignore"):
+                values = np.asarray(self._combined(self.batch(inputs)), np.complex128)
+                return _real_part(values)
 
 
 def _real_part(values: np.ndarray) -> np.ndarray:
@@ -991,6 +1173,8 @@ def features(
     """
     if len(xs) < 3:
         return ()
+    for closure in (f, *others):
+        budgeted(closure)
     found = list(_zeros(xs, ys, f, ROOT))
     found += _extrema(xs, ys, f)
     for index, other in enumerate(others):

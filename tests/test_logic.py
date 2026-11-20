@@ -2,8 +2,8 @@
 
 A relation is decided when arithmetic or declared domains settle it, and left alone
 otherwise: `x^2 >= 0` is `true`, but `x < x + 1` stays for complex `x` since only reals
-are ordered. Matrices are related element by element, so `[x, y] = [1, 2]` is
-`[x = 1, y = 2]`. Logic is simplified algebraically (`p AND (q OR p)` is `p`). A
+are ordered. Two vectors are equal when their elements are, so `[x, y] = [1, 2]` is
+`x = 1 AND y = 2`. Logic is simplified algebraically (`p AND (q OR p)` is `p`). A
 conditional takes the branch its test decides and is returned as written otherwise, so
 `IF(x > 0, 1, -1)` is `1` only when `x` is declared positive. Cases are written inline,
 as in `test_simplify.py`, so a failure shows the mathematics.
@@ -12,28 +12,130 @@ as in `test_simplify.py`, so a failure shows the mathematics.
 from __future__ import annotations
 
 import pytest
-from simplifying import COMPLEX_X, POSITIVE_X, declared, parse, simp
+from simplifying import COMPLEX_X, POSITIVE_X, declared, declaring, parse, simp
 
-from rederive.engine.computing import Context
+from rederive.engine.computing import Context, Definition
+from rederive.model.session import Session
 
 
 # -- relations and logic ------------------------------------------------------
 
 
+def element(text, context=None):
+    """What `text` simplifies to as the element of a vector, where an equation is
+    decided like any relation; the whole expression being an equation keeps its form."""
+    answer = simp(f"[{text}]", context)
+    assert answer.startswith("[") and answer.endswith("]"), answer
+    return answer[1:-1]
+
+
 def test_a_relation_that_decides_is_decided_and_one_that_does_not_stands():
-    """A definite relation simplifies to `true` or `false`, as the original answers all
-    six of these.
+    """A definite relation simplifies to `true` or `false`.
 
     The result is three-valued: `3*x = x^2 + c` is undecided, so it stays a relation
     with its sides simplified. That keeps conditional tests intact and leaves soLve
     something to solve."""
     assert simp("2 < 3") == "true"
-    assert simp("2 = 2") == "true"
-    assert simp("1 = 2") == "false"
-    assert simp("x = x") == "true"
+    assert element("2 = 2") == "true"
+    assert element("1 = 2") == "false"
+    assert element("x = x") == "true"
     assert simp("2 <= 2") == "true"
     assert simp("x < x + 1") == "true"
     assert simp("x + 2*x = c + x*x") == "3*x = x^2 + c"
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        # A top-level equation keeps its form, so that it can be worked on by hand.
+        ("2 = 2", "2 = 2"),
+        ("x = x + 1", "x = x + 1"),
+        ("e := 2 = 2", "e := 2 = 2"),
+        ("(x = x + 1) - x", "0 = 1"),
+        ("(2 = 2) + (3 = 3)", "5 = 5"),
+        ("EXP(LN(x) = 5)", "x = #e^5"),
+        ("a = a - x", "a = a - x"),
+        ("3 < x", "3 < x"),
+        # Anything else is decided where it can be: an inequation or inequality, an
+        # element, an argument, an operand of a logical operator, an `IF` test, and an
+        # equation a function returns.
+        ("x /= x", "false"),
+        ("x + 1 < x + SQRT(2)", "true"),
+        ("[x = x + 1, x + 1 = x + 1]", "[false, true]"),
+        ("VECTOR(x^2 - 8*x = -15, x, 1, 5)", "[false, false, true, false, true]"),
+        ("VECTOR(x^2 - 8*x < -15, x, 1, 5)", "[false, false, false, true, false]"),
+        ("2 = 2 AND x > 0", "x > 0"),
+        ("IF(2 = 2, 1, 0)", "1"),
+        ("SUBST(a*x + b = 0, x, -b/a)", "true"),
+        ("EXPAND((x + 1)^2 = x^2 + 2*x + 1)", "true"),
+        ("FACTOR(a = a - x)", "a = a - x"),
+        ("APPROX(2 = 2)", "true"),
+        # An equation of vectors is the conjunction of the element equations, unless
+        # its sides are the same, which stays whatever their kind, as `2 = 2` does.
+        ("[1, 2] = [1, 2]", "[1, 2] = [1, 2]"),
+        ("[[-3], [-3]] = [[-3], [-3]]", "[[-3], [-3]] = [[-3], [-3]]"),
+        ('"a" = "a"', '"a" = "a"'),
+        ("[1, 2] = [1, 3]", "false"),
+        ("[x, 2] = [1, 2]", "x = 1"),
+        # The sides of an equation are taken apart, never decided.
+        ("LHS(2*x + 3 = 5)", "2*x + 3"),
+        ("RHS(x = x + 1)", "x + 1"),
+        ("RHS(2*x + 3 < 5)", "5"),
+        # A relation in arithmetic is decided and stays a truth value there.
+        ("(2 < 3) - 2", "true - 2"),
+        ("(x^2 >= 0)*5", "5*true"),
+    ],
+    ids=str,
+)
+def test_a_top_level_equation_keeps_its_form(text, expected):
+    assert simp(text) == expected
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        # Set literals are compared by their elements, as simplified expressions.
+        ("{x} = {1}", "false"),
+        ("{x} = {y}", "false"),
+        ("[{x} = {1}]", "[false]"),
+        ("IF({x} = {1}, 1, 2)", "2"),
+        ("{x} SUBSET {1}", "false"),
+        ("{1, 2} = {2, 1, 2}", "{1, 2} = {1, 2}"),
+        ("{1} = {2}", "false"),
+        ("{1, 2} = {x}", "false"),
+        ("IF({1, 2} = {x}, 1, 2)", "2"),
+        ("{3} SUBSET {1, 2}", "false"),
+        ("{3} SUBSET {1, x}", "false"),
+        # A set that isn't a literal has unknown elements.
+        ("[{x} = s]", "[{x} = s]"),
+        # A statement equals true where it holds and false where it fails.
+        ("(x > 1) = true", "x > 1"),
+        ("(x > 1) = false", "x <= 1"),
+        ("(x = 1) = true", "x = 1"),
+        ("true = (x = 1)", "x = 1"),
+        ("(x > 1) /= true", "x <= 1"),
+        ("[(x > 1) = false]", "[x <= 1]"),
+        ("(2 > 1) = true", "true"),
+        # A variable may be a number, so its equation with a truth value stands.
+        ("a = true", "a = true"),
+    ],
+    ids=str,
+)
+def test_an_equation_of_sets_or_truth_values_is_decided_only_where_it_holds(
+    text, expected
+):
+    assert simp(text) == expected
+
+
+async def test_an_equation_assigned_or_referred_to_keeps_its_form_at_top_level():
+    session = Session()
+    for line in ("e := x = x + 1", "EVAL1(t) := t"):
+        await session.simplify(line)
+    answers = [
+        (await session.simplify(line)).text
+        for line in ("e", "e - x", "[e]", "EVAL1(2 = 2)", "EVAL1(a = a - x)")
+    ]
+    assert answers == ["x = x + 1", "0 = 1", "[false]", "true", "a = a - x"]
 
 
 def test_a_word_compared_with_a_relation_is_left_undecided_at_once():
@@ -69,53 +171,67 @@ def test_an_ordering_of_multiples_of_one_expression_is_a_comparison_with_zero():
     )
 
 
-def test_a_relation_between_two_matrices_is_stated_of_each_pair_of_elements():
-    """Same-shape matrices are related element by element, each relation judged
-    separately. Section 8.5 reads a solved system this way: `[[x], [y], [z]] = A^-1 . b`
-    is three equations. The result keeps the matrix shape, except that a single row is
-    written flat like any one-row matrix.
-
-    Differently shaped sides are compared as whole values: the original answers
-    `[1, 2] = [1, 2, 3]` false and leaves `[x, y] = [1, 2, 3]` standing."""
-    assert simp("[x, y] = [1, 2]") == "[x = 1, y = 2]"
-    assert simp("[[x], [y]] = [[1], [2]]") == "[[x = 1], [y = 2]]"
-    assert simp("[x, y] < [1, 2]") == "[x < 1, y < 2]"
+def test_an_equation_of_two_vectors_is_the_conjunction_of_their_elements():
+    """Same-length vectors are equal when each pair of elements is, so the equation is
+    the conjunction of the element equations, each judged separately, and a matrix is
+    compared element by element. The inequation is the disjunction of the element
+    inequations. Vectors of different lengths, at any depth, are different values.
+    Vectors are not ordered, so an ordering of vectors stands."""
+    assert simp("[x, y] = [1, 2]") == "x = 1 AND y = 2"
+    assert simp("[[x], [y]] = [[1], [2]]") == "x = 1 AND y = 2"
+    assert simp("[x, y] < [1, 2]") == "[x, y] < [1, 2]"
+    assert simp("[1, 2, 3] < [2, 3, 4]") == "[1, 2, 3] < [2, 3, 4]"
     spread = simp("[[a, b], [c, d]] = [[1, 2], [3, 4]]")
-    assert spread == "[[a = 1, b = 2], [c = 3, d = 4]]"
+    assert spread == "a = 1 AND b = 2 AND c = 3 AND d = 4"
+    assert simp("[a, b] = [c, d]") == "a = c AND b = d"
+    assert simp("[a, b] /= [c, d]") == "a /= c OR b /= d"
     assert simp("[1, 2] = [1, 2, 3]") == "false"
-    assert simp("[x, y] = [1, 2, 3]") == "[x, y] = [1, 2, 3]"
+    assert simp("[x, y] = [1, 2, 3]") == "false"
+    assert simp("[[x, y]] = [[1, 2, 3]]") == "false"
+    assert simp("[[] = []]") == "[true]"
+    assert simp("[x] = []") == "false"
 
 
-def test_an_equation_of_a_vector_and_a_scalar_stands():
-    """As in Derive, checked there. TENSOR.MTH's `NZEL_T` builds `[[1, 2, 3] = 1, ...]`,
-    pairing each element's indices with its value."""
-    assert simp("[1, 2, 2] = 7") == "[1, 2, 2] = 7"
-    assert simp("[[1, 2, 2] = 7]") == "[[1, 2, 2] = 7]"
+def test_a_vector_is_no_number_string_or_truth_value():
+    """A vector compared with a number, a string or a truth value is different from it;
+    compared with a variable, it stands."""
+    assert simp("[1, 2, 2] = 7") == "false"
+    assert simp("[1, 2] /= 3") == "true"
+    assert simp("[[1, 2, 2] = 7]") == "[false]"
+    assert simp('[1] = "a"') == "false"
+    assert simp("[1] = true") == "false"
+    assert simp("[a, b] = x") == "[a, b] = x"
+    # A relation as an element is compared with nothing.
+    assert simp("[x = 1, y = 2] = [1, 2]") == "[x = 1, y = 2] = [1, 2]"
 
 
 @pytest.mark.parametrize(
     ("text", "expected"),
     [
-        # Matrices are equal when every element pair is, and unequal when any pair
-        # differs; when the elements settle it, the answer is a single truth value.
-        ("[1, 2] = [1, 2]", "true"),
+        # Vectors are equal when every element pair is, and unequal when any pair
+        # differs; when the elements settle it, the answer is a single truth value. At
+        # top level, an equation whose sides are the same stays, as `2 = 2` does.
+        ("[1, 2] = [1, 2]", "[1, 2] = [1, 2]"),
+        ("[[1, 2] = [1, 2]]", "[true]"),
         ("[1, 2] = [1, 3]", "false"),
-        ("[[1, 2], [3, 4]] = [[1, 2], [3, 4]]", "true"),
+        ("[[[1, 2], [3, 4]] = [[1, 2], [3, 4]]]", "[true]"),
         ("[[1, 2], [3, 4]] = [[1, 2], [3, 5]]", "false"),
-        ("[SIN(x)^2 + COS(x)^2, 2] = [1, 2]", "true"),
+        ("[SIN(x)^2 + COS(x)^2, 2] = [1, 2]", "[1, 2] = [1, 2]"),
+        ("[[SIN(x)^2 + COS(x)^2, 2] = [1, 2]]", "[true]"),
+        ("[[true, false] = [true, false]]", "[true]"),
         # One differing pair is enough.
         ("[1, 2] = [x, 3]", "false"),
-        # If unsettled, the equation becomes the system of element equations.
-        ("[1, 2] = [x, 2]", "[1 = x, true]"),
-        # An inequation says some pair differs, which no single element relation says,
-        # so an unsettled one stays whole.
+        ("[1, x] = [2, x]", "false"),
+        # If unsettled, the equation is the conjunction of the open element equations.
+        ("[1, 2] = [x, 2]", "1 = x"),
         ("[1, 2] /= [1, 3]", "true"),
         ("[1, 2] /= [1, 2]", "false"),
         ("[1, 2] /= [x, 3]", "true"),
-        ("[1, 2] /= [x, 2]", "[1, 2] /= [x, 2]"),
-        ("[x, y] /= [1, 2]", "[x, y] /= [1, 2]"),
+        ("[1, 2] /= [x, 2]", "1 /= x"),
+        ("[x, y] /= [1, 2]", "x /= 1 OR y /= 2"),
         ("[1, 2] /= [1, 2, 3]", "true"),
         ("IF([1, 2] = [1, 2], a, b)", "a"),
+        ("IF([1, 2] = [1, 3], a, b)", "b"),
     ],
     ids=str,
 )
@@ -129,14 +245,44 @@ def test_the_system_of_section_eight_five_is_solved_by_inverting_its_matrix():
     solved = simp(
         "[[x], [y], [z]] = [[5, 3, -7], [2, -8, 1], [-1, 9, 4]]^-1 . [[4], [6], [5]]"
     )
-    assert solved == "[[x = 879/302], [y = 53/302], [z = 239/151]]"
+    assert solved == "x = 879/302 AND y = 53/302 AND z = 239/151"
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        # Strings are equal exactly when their texts are, case counting.
+        ('["Hallo" = "Hallo"]', "[true]"),
+        ('"Hallo" = "hallo"', "false"),
+        ('IF("Hallo" = "hallo", 1, 2)', "2"),
+        ('"a" /= "b"', "true"),
+        # A string is no vector, set or truth value. Beside a number it is an unknown,
+        # as in arithmetic.
+        ('"3" = 3', '"3" = 3'),
+        ('"a" = [1]', "false"),
+        ('"a" = {1}', "false"),
+        ('"a" /= true', "true"),
+        # Beside a variable it stands, and strings are not ordered.
+        ('"a" = x', '"a" = x'),
+        ('"a" < "b"', '"a" < "b"'),
+        # The unknown equals itself and no number, string or vector.
+        ("[? = ?]", "[true]"),
+        ("? = 3", "false"),
+        ('? /= "a"', "true"),
+        ("? = x", "? = x"),
+        ('IF(3 = "+-"3, 1, 2)', "1"),
+    ],
+    ids=str,
+)
+def test_strings_compare_by_their_text(text, expected):
+    assert simp(text) == expected
 
 
 def test_only_the_reals_are_ordered_so_a_complex_variable_decides_nothing():
     """`x < x + 1` holds for reals, but `<` is meaningless on complex numbers. Equality
     is meaningful in every domain, so it is still decided."""
     assert simp("x < x + 1", COMPLEX_X) == "x < x + 1"
-    assert simp("x = x", COMPLEX_X) == "true"
+    assert element("x = x", COMPLEX_X) == "true"
 
 
 def test_an_equation_is_answered_by_the_arithmetic_and_not_by_the_domains():
@@ -149,36 +295,36 @@ def test_an_equation_is_answered_by_the_arithmetic_and_not_by_the_domains():
     An equation is decided only when the difference of its sides is a number: zero
     means true, a nonzero real means false. A non-real difference decides nothing, as
     in the original: `#i = 1` and `2*#i = #i` stand."""
-    assert simp("x = #i") == "x = #i"
-    assert simp("x = SQRT(-1)") == "x = #i"
-    assert simp("x = #i", declared("x :epsilon Real")) == "x = #i"
-    assert simp("x = #i", COMPLEX_X) == "x = #i"
-    assert simp("x + #i = 0") == "x + #i = 0"
-    assert simp("x^2 + 1 = 0") == "x^2 + 1 = 0"
-    assert simp("x /= #i") == "x /= #i"
-    assert simp("ABS(x) + 1 = 0") == "ABS(x) + 1 = 0"
-    assert simp("#e^x = 0") == "#e^x = 0"
-    assert simp("n = 1/2", declared("n :epsilon Integer")) == "n = 1/2"
-    assert simp("p = -1", declared("p :epsilon Real (0, inf)")) == "p = -1"
-    assert simp("y = 5", declared("y :epsilon Real (0, 1)")) == "y = 5"
+    assert element("x = #i") == "x = #i"
+    assert element("x = SQRT(-1)") == "x = #i"
+    assert element("x = #i", declared("x :epsilon Real")) == "x = #i"
+    assert element("x = #i", COMPLEX_X) == "x = #i"
+    assert element("x + #i = 0") == "x + #i = 0"
+    assert element("x^2 + 1 = 0") == "x^2 + 1 = 0"
+    assert element("x /= #i") == "x /= #i"
+    assert element("ABS(x) + 1 = 0") == "ABS(x) + 1 = 0"
+    assert element("#e^x = 0") == "#e^x = 0"
+    assert element("n = 1/2", declared("n :epsilon Integer")) == "n = 1/2"
+    assert element("p = -1", declared("p :epsilon Real (0, inf)")) == "p = -1"
+    assert element("y = 5", declared("y :epsilon Real (0, 1)")) == "y = 5"
     # Arithmetic decides these; an assigned value counts as arithmetic.
-    assert simp("x + 1 = x") == "false"
-    assert simp("x /= x") == "false"
-    assert simp("1 = 2") == "false"
-    assert simp("SQRT(-4) = 2*#i") == "true"
-    assert simp("2*x = x + x") == "true"
-    assert simp("v = 5", Context(assignments={"v": parse("7")})) == "false"
+    assert element("x + 1 = x") == "false"
+    assert element("x /= x") == "false"
+    assert element("1 = 2") == "false"
+    assert element("SQRT(-4) = 2*#i") == "true"
+    assert element("2*x = x + x") == "true"
+    assert element("v = 5", Context(assignments={"v": parse("7")})) == "false"
     # A non-real difference leaves the equation alone.
-    assert simp("#i = 1") == "#i = 1"
-    assert simp("2*#i = #i") == "2*#i = #i"
-    assert simp("x + #i = x") == "x + #i = x"
+    assert element("#i = 1") == "#i = 1"
+    assert element("2*#i = #i") == "2*#i = #i"
+    assert element("x + #i = x") == "x + #i = x"
     # Identical sides are equal whatever they are; that alone decides cases where no
     # difference can be taken.
-    assert simp("INF = INF") == "true"
-    assert simp("-INF = INF") == "false"
-    assert simp("true = true") == "true"
-    assert simp('"no" = "no"') == "true"
-    assert simp('"no" = "yes"') == '"no" = "yes"'
+    assert element("INF = INF") == "true"
+    assert element("-INF = INF") == "false"
+    assert element("true = true") == "true"
+    assert element('"no" = "no"') == "true"
+    assert element('"no" = "yes"') == "false"
 
 
 def test_a_quadratic_whose_discriminant_turns_negative_is_answered_in_roots():
@@ -226,15 +372,18 @@ LOGIC = [
     ("p OR NOT p", "true"),
     ("p AND NOT p", "false"),
     ("p IMP q", "NOT p OR q"),
-    ("p XOR q", "NOT p AND q OR p AND NOT q"),
+    ("p XOR q", "(NOT p AND q) OR (p AND NOT q)"),
+    ("p IFF q", "(NOT p AND NOT q) OR (p AND q)"),
+    ("true IFF false", "false"),
+    ("p IFF p", "true"),
     ("NOT (p AND q)", "NOT p OR NOT q"),
     ("p AND (q OR r)", "p AND (q OR r)"),
     ("p AND r OR p AND q", "p AND (q OR r)"),
     # Operands are sorted by the order list, each term by its leading variable, with a
     # negated literal first on a tie.
-    ("s AND r OR q AND p", "p AND q OR r AND s"),
-    ("c OR b AND a", "a AND b OR c"),
-    ("p AND q OR NOT p AND r", "NOT p AND r OR p AND q"),
+    ("s AND r OR q AND p", "(p AND q) OR (r AND s)"),
+    ("c OR b AND a", "(a AND b) OR c"),
+    ("p AND q OR NOT p AND r", "(NOT p AND r) OR (p AND q)"),
     # With six variables the algebra isn't worth it: both normal forms come from a
     # truth table, and here they are longer than the input.
     ("a XOR b XOR c XOR d XOR e XOR f", "a XOR b XOR c XOR d XOR e XOR f"),
@@ -244,6 +393,12 @@ LOGIC = [
     ("12 AND 10", "8"),
     ("3 XOR 5", "6"),
     ("3 AND p", "3 AND p"),
+    # `IFF` on integers is the complement of `XOR`.
+    ("5 IFF 3", "-7"),
+    # A number beside a statement is no truth value.
+    ("p IFF 3", "p IFF 3"),
+    ("p IMP 3", "p IMP 3"),
+    ("p XOR 3", "p XOR 3"),
     # A truth value is not a number, so arithmetic on it is left alone, treating it
     # like an unknown.
     ("x*PRIME(4)", "false*x"),
@@ -272,6 +427,63 @@ def test_a_bitwise_operator_is_read_again_once_its_operands_are_numbers():
     assert simp("ITERATES(IF((12 AND d_) = 0, 2*d_, d_/2), d_, 1, 3)") == "[1, 2, 4, 2]"
 
 
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        # `n AND d` of variables may be a number once they are integers, so comparing
+        # it with a number decides nothing, wherever the relation is built.
+        ("IF((n AND d) = 0, 1, 2)", "IF((d AND n) = 0, 1, 2)"),
+        ("IF((n OR d) /= 3, 1, 2)", "IF((d OR n) /= 3, 1, 2)"),
+        ("IF((NOT n) = 0, 1, 2)", "IF((NOT n) = 0, 1, 2)"),
+        ("[SUBST(a = 0, a, n AND d)]", "[(d AND n) = 0]"),
+        ("IF((6 AND 3) = 2, 1, 2)", "1"),
+        # A conjunction of relations is a truth value, never a number.
+        ("IF((x > 1 AND y < 2) = 0, 1, 2)", "2"),
+        ("IF((p AND q) = (q AND p), 1, 2)", "1"),
+    ],
+    ids=str,
+)
+def test_a_logical_operator_on_variables_may_be_bitwise(text, expected):
+    assert simp(text) == expected
+
+
+async def test_a_bitwise_test_waits_for_its_operands_in_a_function():
+    session = Session()
+    session.author("F(n, d) := IF((n AND d) = 0, 1, 2)")
+    for call, expected in [("F(6, 3)", "2"), ("F(4, 3)", "1")]:
+        assert (await session.simplify(call)).text == expected
+    session.author("G(a) := IF(a = 0, 1, 2)")
+    assert (await session.simplify("G(n AND d)")).text == "IF(0 = (d AND n), 1, 2)"
+
+
+def test_variables_declared_vector_may_be_equal():
+    """Sympy takes a matrix symbol for unequal to any other matrix; a variable declared
+    Vector may hold any vector, so the test stands. A vector is still never a number."""
+    context = declared("v :epsilon Vector", "w :epsilon Vector")
+    assert simp("IF(v = w, 1, 2)", context) == "IF(v = w, 1, 2)"
+    assert simp("IF(v /= [1, 2], 1, 2)", context) == "IF(v /= [1, 2], 1, 2)"
+    assert simp("IF(v = v, 1, 2)", context) == "1"
+    assert simp("IF(v = 0, 1, 2)", context) == "2"
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        # An ordering of vectors as a test holds when it holds between each pair of
+        # elements, as Groebner basis programs test that one monomial divides another.
+        ("IF([1, 2] <= [2, 2], 1, 2)", "1"),
+        ("IF([1, 3] <= [2, 2], 1, 2)", "2"),
+        ("IF([4, 1, 0] >= [2, 1, 0], 1, 2)", "1"),
+        ("IF([a, 4] <= [2, 3], 1, 2)", "2"),
+        ("IF([a, 2] <= [2, 3], 1, 2)", "IF([a, 2] <= [2, 3], 1, 2)"),
+        ("IF([1, 2] <= [2, 3, 4], 1, 2)", "IF([1, 2] <= [2, 3, 4], 1, 2)"),
+    ],
+    ids=str,
+)
+def test_an_ordering_of_vectors_as_a_test_compares_their_elements(text, expected):
+    assert simp(text) == expected
+
+
 #: A truth table: a header row of the columns as written, then one row per assignment,
 #: the last variable changing fastest and `true` before `false`.
 TRUTH_TABLES = [
@@ -282,6 +494,11 @@ TRUTH_TABLES = [
         "[true, false, false, true, true, false], "
         "[false, true, false, true, true, true], "
         "[false, false, false, false, false, true]]",
+    ),
+    (
+        "TRUTH_TABLE(p, q, p IFF q)",
+        "[[p, q, p IFF q], [true, true, true], [true, false, false], "
+        "[false, true, false], [false, false, true]]",
     ),
     # With only variables, the table is just the assignments.
     ("TRUTH_TABLE(p)", "[[p], [true], [false]]"),
@@ -305,6 +522,9 @@ def test_truth_tables(text, expected):
 CONDITIONALS = [
     ("IF(2 = 2, 1, 2)", "1", None),
     ("IF(2 = 3, 1, 2)", "2", None),
+    # Values all the same are the value, whatever the test.
+    ("IF(? >= ?, ?, ?)", "?", None),
+    ("IF(? >= ?, a, a, a)", "a", None),
     # A conjunction of relations is decided term by term, as in `NUMBER.MTH`'s
     # whole-number guard in `FIBONACCI`.
     ("IF(2 >= 0 AND FLOOR(2) = 2, 1, 2)", "1", None),
@@ -314,6 +534,12 @@ CONDITIONALS = [
     ("IF(x > 0, 1, -1)", "1", POSITIVE_X),
     # Undecidable, with an unknown clause to fall back on.
     ("IF(x > 0, 1, -1, 0)", "0", None),
+    # A truth table's heading is a formula, true for some values and not others.
+    ("IF((TRUTH_TABLE(x, y, x AND y)) SUB 1 SUB 3 = true, 1, 0, 2)", "2", None),
+    # Beside a truth value, a number is a test, `u = 0`, as an `IF` test is.
+    ("IF(false OR 0, 1, 2)", "1", None),
+    ("false OR 2", "false", None),
+    ("IF(20 = 0 OR 2, 1, 2)", "2", None),
     # Undecidable, with no fallback: the whole expression comes back.
     ("IF(x > 0, 1, -1)", "IF(x > 0, 1, -1)", None),
     # A test is decided as Simplify would: an empty range is false, and sides that
@@ -419,8 +645,8 @@ def test_each_case_of_a_conditional_answer_is_simplified_where_it_applies():
         "IF(n = 0, 0, 2*p^2*(SIN(pi*n)/(pi*n) - COS(pi*n))/(pi*n))"
     )
     # Undefined at `a = 0`, the last case is not given a value there.
-    assert simp("INT(1/SQRT(a^2 - x^2), x, 0, a)") == (
-        "IF(a /= 0, ASIN(a/ABS(a)), -#i*LN(-2*a) + #i*LN(2*#i*ABS(a)))"
+    assert simp("INT(1/SQRT(a^2 - x^2), x, 0, ABS(a))") == (
+        "IF(a /= 0, pi/2, #i*LN(2*#i*ABS(a)) - #i*LN(-2*ABS(a)))"
     )
 
 
@@ -454,7 +680,7 @@ def test_a_name_assigned_in_a_test_is_assigned_again_in_a_nested_test():
     assignment is to `local` again, not to `fail`, the value the first gave it.
     """
     body = parse("IF(f = (a :== f), IF(f = (a :== w), 7, a, a))")
-    context = Context(functions={"G": (("w",), body)})
+    context = Context(functions={"G": Definition(("w",), body)})
     assert simp("G(5)", context) == "5"
     assert simp("f", context) == "f"
 
@@ -492,11 +718,35 @@ def test_truth_values(text, expected):
     assert simp(text) == expected
 
 
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("[(x + 1)^2 = x^2 + 2*x + 1]", "[true]"),
+        ("IF((x + 1)^2 = x^2 + 2*x + 1, 1, 2)", "1"),
+        ("[(a + b)^3 = a^3 + 3*a^2*b + 3*a*b^2 + b^3]", "[true]"),
+        ("[(SQRT(x) + 1)^2 = x + 2*SQRT(x) + 1]", "[true]"),
+        # Equal where both sides are defined, as `[(x^2 - 1)/(x - 1) = x + 1]` is.
+        ("[1/(x + 1) + 1/(x - 1) = 2*x/(x^2 - 1)]", "[true]"),
+        ("[(x + 1)^2 /= x^2 + 2*x + 1]", "[false]"),
+        # Sides that differ by a nonzero number are never equal.
+        ("[(x + 1)^2 = x^2 + 2*x + 2]", "[false]"),
+        # A difference still in `x` decides nothing: the equation holds for some `x`.
+        ("[(x + 1)^2 = x^2 + 1]", "[(x + 1)^2 = x^2 + 1]"),
+        ("IF((x + 1)^2 = x^2 + 1, 1, 2)", "IF((x + 1)^2 = x^2 + 1, 1, 2)"),
+        # A top-level equation is not decided, so it can still be worked on.
+        ("(x + 1)^2 = x^2 + 2*x + 1", "(x + 1)^2 = x^2 + 2*x + 1"),
+    ],
+    ids=str,
+)
+def test_an_equation_of_equal_expressions_in_different_forms_is_true(text, expected):
+    assert simp(text) == expected
+
+
 def test_a_predicate_awaiting_its_argument_is_a_test_as_written():
     """`IF(PRIME(m), 2, 3)` stays as typed, reading back as itself; comparing the
     predicate with zero would ask a different question.
     """
-    context = Context(functions={"H": (("n",), parse("IF(PRIME(n), 2, 3)"))})
+    context = Context(functions={"H": Definition(("n",), parse("IF(PRIME(n), 2, 3)"))})
     assert simp("H(m)", context) == "IF(PRIME(m), 2, 3)"
     assert simp("IF(PRIME(m), 2, 3)") == "IF(PRIME(m), 2, 3)"
     assert simp("H(5)", context) == "2"
@@ -517,5 +767,155 @@ def test_an_undecidable_conditional_shows_its_test_worked_out_and_its_arms_as_wr
     # As Derive 4.11 shows it (D).
     assert simp("IF(DIF(x^2, x) = 0, 1 + 1, 2 + 2)") == "IF(2*x = 0, 1 + 1, 2 + 2)"
     assert simp("IF(x = 0, 0, INT(t*x, t, 0, 1))") == "IF(x = 0, 0, INT(t*x, t, 0, 1))"
-    context = Context(functions={"F": (("x",), parse("IF(x=0,0,INT(t*x,t,0,1))"))})
+    body = parse("IF(x=0,0,INT(t*x,t,0,1))")
+    context = Context(functions={"F": Definition(("x",), body)})
     assert simp("F(y) + 1 + 1", context) == "IF(y = 0, 0, INT(t*y, t, 0, 1)) + 2"
+
+
+# -- Boolean simplification ---------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("p IFF p", "true"),
+        ("p IFF true", "p"),
+        ("true IFF false", "false"),
+        ("p IMP q IFF NOT q IMP NOT p", "true"),
+        ("p AND ((p AND q) OR r)", "p AND (q OR r)"),
+        ("NOT (x < 3)", "x >= 3"),
+        ("x < 3 AND x < 5", "x < 3"),
+        ("x > 3 OR x <= 3", "true"),
+        ("[3 OR 5, NOT 5, 3 AND 5, 3 XOR 5]", "[7, -6, 1, 6]"),
+        ("{1, 2} AND {2, 3}", "{2}"),
+        ("{1, 2} OR {2, 3}", "{1, 2, 3}"),
+        ("(2 < 3) UNION (3 < 2)", "true"),
+        # A solution is simplified with the statements it is combined with.
+        ("SOLVE(x^2 = 4, x) AND x > 0", "x = 2"),
+        ("(x = 1 OR x = 3) AND x > 2", "x = 3"),
+        ("SOLVE(x^2 = 4, x) OR x = 7", "x = -2 OR x = 2 OR x = 7"),
+    ],
+    ids=str,
+)
+def test_boolean_simplification(text, expected):
+    assert simp(text) == expected
+
+
+# -- domains ------------------------------------------------------------------------
+
+
+SETS = declared("a :epsilon Set", "b :epsilon Set")
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("a UNION a", "a"),
+        ("a``", "a"),
+        ("a INTERSECTION a`", "{}"),
+        ("[(a INTERSECTION b)` = a` UNION b`]", "[true]"),
+        ("[(a UNION b)` = a` INTERSECTION b`]", "[true]"),
+        ("a OR b", "a UNION b"),
+        ("NOT a", "a`"),
+        ("SET_TYPE?(a)", "true"),
+        ("a = b", "a = b"),
+    ],
+    ids=str,
+)
+def test_a_variable_declared_a_set_obeys_the_set_algebra(text, expected):
+    assert simp(text, SETS) == expected
+
+
+def test_the_complement_of_a_union_or_intersection_of_sets_is_taken_inside():
+    assert simp("(a UNION b)`", SETS) == "a` INTERSECTION b`"
+    assert simp("(a INTERSECTION b)`", SETS) == "a` UNION b`"
+    assert simp("(a UNION {1})`", SETS) == "a` INTERSECTION {1}`"
+
+
+def test_an_undeclared_variable_in_a_set_operation_is_a_set():
+    """There its transpose is its complement, while alone it is a scalar's, itself."""
+    assert simp("[(a UNION b)` = a` INTERSECTION b`]") == "[true]"
+    assert simp("[(a INTERSECTION b)` = a` UNION b`]") == "[true]"
+    assert simp("(a UNION b)`") == "a` INTERSECTION b`"
+    assert simp("a`") == "a"
+
+
+def test_products_of_variables_declared_vectors_do_not_commute():
+    vectors = declared("a :epsilon Vector", "b :epsilon Vector")
+    assert simp("a*b - b*a", vectors) == "a . b - b . a"
+    assert simp("VECTOR_TYPE?(a)", vectors) == "true"
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("IF(q, 1, 2)", "IF(q, 1, 2)"),
+        ("q AND NOT q", "false"),
+        ("q`", "NOT q"),
+        ("LOGICAL_TYPE?(q)", "true"),
+        ("NUMBER_TYPE?(q)", "false"),
+    ],
+    ids=str,
+)
+def test_a_variable_declared_logical_is_a_truth_value(text, expected):
+    assert simp(text, declared("q :epsilon Logical")) == expected
+
+
+# -- conditionals -------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        # An undecided test is shown simplified, its clauses as written.
+        (
+            "IF(t < -SQRT(1/2), t + SQRT(2), IF(t < SQRT(1/2), SQRT(1 - t^2), "
+            "SQRT(2) - t))",
+            "IF(t < -SQRT(2)/2, t + SQRT(2), IF(t < SQRT(1/2), SQRT(1 - t^2), "
+            "SQRT(2) - t))",
+        ),
+        ("IF(x + x > 3, 1 + 1, 3)", "IF(2*x > 3, 1 + 1, 3)"),
+        ("IF(1 < x, 1, 2)", "IF(1 < x, 1, 2)"),
+        ("v = IF(t <= 24, (t - 24)^2/4)", "v = IF(t <= 24, (t - 24)^2/4)"),
+        ("IF(ABS(x) <= 5, 3*x^2/25 - 3, ?)", "IF(ABS(x) <= 5, 3*x^2/25 - 3, ?)"),
+        ("IF(x^2 >= 0, 1, 2)", "1"),
+    ],
+    ids=str,
+)
+def test_an_undecided_test_is_shown_simplified(text, expected):
+    assert simp(text) == expected
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ('IF(F(a) = 4, "OK", "no")', 'IF(a^2 = 4, "OK", "no")'),
+        ("IF(F(a) < 4, 1 + 1, 3)", "IF(a^2 < 4, 1 + 1, 3)"),
+        ("IF(F(a) = 4 AND b > 0, 1, 2)", "IF(a^2 = 4 AND b > 0, 1, 2)"),
+        ("IF(NOT F(a) = 4, 1, 2)", "IF(a^2 /= 4, 1, 2)"),
+        ("IF(F(a) = 4)", "IF(a^2 = 4)"),
+        ("IF(INT(F(t), t, 0, a) = 1, 1, 2)", "IF(a^3/3 = 1, 1, 2)"),
+        # The clauses stay as written.
+        ("IF(a > 0, F(a), F(2))", "IF(a > 0, F(a), F(2))"),
+        ("IF(F(a) = 4, IF(F(b) = 1, 1, 2), 3)", "IF(a^2 = 4, IF(F(b) = 1, 1, 2), 3)"),
+        # A test in a called body is shown so too.
+        ("G(a)", "IF(a^2 = 4, 1, 2)"),
+        ("H(a)", "IF(a^2 = 4, 1, 2)"),
+    ],
+    ids=str,
+)
+def test_an_undecided_test_is_shown_with_its_calls_made(text, expected):
+    context = Context(
+        functions={
+            "F": Definition(("x",), parse("x^2")),
+            "G": Definition(("y",), parse("IF(F(y) = 4, 1, 2)", declaring("F"))),
+            "H": Definition(("y",), parse("PROG(IF(F(y) = 4, 1, 2))", declaring("F"))),
+        }
+    )
+    assert simp(text, context) == expected
+
+
+def test_a_declared_interval_decides_a_test():
+    below = declared("h :epsilon Real (-inf, 30)")
+    assert simp("IF(h <= 40, 10*h, 400 + 15*(h - 40))", below) == "10*h"
+    assert simp("IF(t > 1, 1, 0)", declared("t :epsilon Real (1, b)")) == "1"

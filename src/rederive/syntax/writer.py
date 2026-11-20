@@ -35,8 +35,19 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from rederive.model.expr import Kind, Node
-from rederive.syntax.names import GREEK_GLYPHS
+from rederive.model.expr import VARIADIC, Kind, Node, is_chain
+from rederive.syntax.names import (
+    CONSTANT_GLYPHS,
+    DOS_GREEK,
+    FUNCTION_GLYPHS,
+    GREEK_NAMES,
+)
+
+#: Greek letters that would read back as something else, so files spell them by name:
+#: `Γ` is the gamma function and `Ω` a small omega until declared otherwise.
+_MISREAD_LETTERS = frozenset(GREEK_NAMES) & (
+    frozenset(DOS_GREEK) | frozenset(FUNCTION_GLYPHS) | frozenset(CONSTANT_GLYPHS)
+)
 
 # The parser's precedence levels, loosest first. These differ from the display's levels,
 # which describe how a rendering reads.
@@ -46,6 +57,7 @@ from rederive.syntax.names import GREEK_GLYPHS
 # operators. The tight form writes it as the call `NOT(u)`, which needs no level.
 (
     ASSIGN,
+    IFF,
     IMP,
     XOR,
     OR,
@@ -56,13 +68,15 @@ from rederive.syntax.names import GREEK_GLYPHS
     INTERSECTION,
     DIFFERENCE,
     SUM,
+    DOT,
+    CROSS,
     NEG,
     PRODUCT,
     POW,
     POSTFIX,
     SUB,
     ATOM,
-) = range(17)
+) = range(20)
 
 _BINOP_PRECEDENCE = {"/": PRODUCT, ".": PRODUCT, "^": POW}
 
@@ -73,7 +87,16 @@ _SET_SPELLING = {"UNION": " UNION ", "INTERSECTION": " INTERSECTION ", "\\": "\\
 
 #: Operators spelled as words, which need a blank on each side to stay separate from
 #: adjacent names.
-_WORD_OPERATORS = {Kind.AND: "AND", Kind.OR: "OR", Kind.XOR: "XOR", Kind.IMP: "IMP"}
+_WORD_OPERATORS = {
+    Kind.AND: "AND",
+    Kind.OR: "OR",
+    Kind.XOR: "XOR",
+    Kind.IMP: "IMP",
+    Kind.IFF: "IFF",
+}
+
+#: Precedence of the word operators of `INFIX` other than the subscript links.
+_INFIX_PRECEDENCE = {"SUBSET": RELATION, "DOTPRODUCT": DOT, "CROSSPRODUCT": CROSS}
 
 #: Plus-or-minus is written as typed, with quotes, rather than as the displayed `±`
 #: glyph, as the original does. A bare `+-` would be a plus followed by a minus.
@@ -82,7 +105,16 @@ _SIGNS = {"+-": '"+-"'}
 #: Precedence of each logical operator. `AND`, `OR` and `XOR` are right-associative, so
 #: the same operator nested on the left needs parentheses; the original also adds them
 #: on the right.
-_LOGICAL_PRECEDENCE = {Kind.AND: AND, Kind.OR: OR, Kind.XOR: XOR, Kind.IMP: IMP}
+_LOGICAL_PRECEDENCE = {
+    Kind.AND: AND,
+    Kind.OR: OR,
+    Kind.XOR: XOR,
+    Kind.IMP: IMP,
+    Kind.IFF: IFF,
+}
+
+#: The logical operators that associate to the left.
+_FOLDING_LEFT = frozenset((Kind.IMP, Kind.IFF))
 
 
 def write_expression(node: Node, spaced: bool = False, greek_names: bool = False) -> str:
@@ -99,15 +131,20 @@ def write_expression(node: Node, spaced: bool = False, greek_names: bool = False
 
 def _greek_named(node: Node) -> Node:
     """`node` with each Greek letter named by its spelled-out name."""
-    if node.kind in (Kind.NAME, Kind.UNKNOWN) and str(node.value) in GREEK_GLYPHS:
-        return replace(node, value=GREEK_GLYPHS[str(node.value)])
+    if node.kind in (Kind.NAME, Kind.UNKNOWN) and str(node.value) in GREEK_NAMES:
+        return replace(node, value=GREEK_NAMES[str(node.value)])
     if not node.children:
         return node
     return replace(node, children=tuple(_greek_named(child) for child in node.children))
 
 
 def _operand(node: Node, required: int, gap: str) -> str:
-    """`node` as an operand that must bind at least as tightly as `required`."""
+    """`node` as an operand that must bind at least as tightly as `required`.
+
+    An operand that may bind as loosely as an assignment is one that nothing follows
+    but a closing bracket, a comma or the end."""
+    if required == ASSIGN and node.kind in _LOGICAL_PRECEDENCE:
+        return _logical(node, gap, closed=True)
     text = _spell(node, gap)
     return f"({text})" if precedence(node, gap) < required else text
 
@@ -117,8 +154,13 @@ def precedence(node: Node, gap: str = "") -> int:
     match node.kind:
         case Kind.ASSIGN | Kind.FUNDEF | Kind.SHOWVALUE:
             return ASSIGN
-        case Kind.IMP | Kind.XOR | Kind.OR | Kind.AND:
+        case Kind.CALL if is_return(node):
+            # `RETURN(u)` reads whatever follows into its operand, as `RETURN u` does.
+            return ASSIGN
+        case Kind.IFF | Kind.IMP | Kind.XOR | Kind.OR | Kind.AND:
             return _LOGICAL_PRECEDENCE[node.kind]
+        case Kind.INFIX:
+            return SUB if is_chain(node) else _INFIX_PRECEDENCE[str(node.value)]
         case Kind.NOT if gap:
             return NOT
         case Kind.REL | Kind.DOMAIN:
@@ -149,10 +191,12 @@ def _spell(node: Node, gap: str) -> str:
         case Kind.NUMBER:
             return str(node.surface or node.value)
         case Kind.NAME | Kind.UNKNOWN:
-            # Greek letters are stored as glyphs. Files get the glyph, result lines the
-            # name.
+            # Greek letters are stored as glyphs. Files get the glyph, unless it would
+            # read back as something else, result lines the name.
             name = str(node.value)
-            return GREEK_GLYPHS.get(name, name) if gap else name
+            if gap or name in _MISREAD_LETTERS:
+                return GREEK_NAMES.get(name, name)
+            return name
         case Kind.STRING:
             return f'"{node.value}"'
         case Kind.LABEL:
@@ -170,12 +214,16 @@ def _spell(node: Node, gap: str) -> str:
             sign = _SIGNS.get(str(node.value), str(node.value))
             return sign + _operand(node.children[0], NEG, gap)
         case Kind.POSTOP:
-            return _operand(node.children[0], POSTFIX, gap) + str(node.value)
+            operator = str(node.value)
+            if operator == "DEG":
+                operator = " DEG"
+            return _operand(node.children[0], POSTFIX, gap) + operator
         case Kind.SUB:
-            left = _operand(node.children[0], POSTFIX, gap)
-            # An index is one application, so anything larger, notably a postfix
-            # operator, needs parentheses to stay inside it.
-            return f"{left} SUB {_operand(node.children[1], ATOM, gap)}"
+            return _link(node, "SUB", gap)
+        case Kind.INFIX if is_chain(node):
+            return _link(node, str(node.value), gap)
+        case Kind.INFIX:
+            return _infix(node, gap)
         case Kind.ABS:
             # `|u|` is written as a call, as the original does.
             return f"ABS({_written(node.children[0], gap)})"
@@ -207,14 +255,18 @@ def _spell(node: Node, gap: str) -> str:
             if gap:
                 return f"NOT {_operand(node.children[0], RELATION, gap)}"
             return f"NOT({_written(node.children[0], gap)})"
-        case Kind.AND | Kind.OR | Kind.XOR | Kind.IMP:
+        case Kind.AND | Kind.OR | Kind.XOR | Kind.IMP | Kind.IFF:
             return _logical(node, gap)
         case Kind.ASSIGN:
             return _assignment(
                 node.children[0], node.children[1:], str(node.value), gap
             )
         case Kind.FUNDEF:
-            head = f"{node.value}({_arguments(node.children[0].children, gap)})"
+            parameters = node.children[0]
+            if parameters.value == VARIADIC:
+                head = f"{node.value} {_written(parameters.children[0], gap)}"
+            else:
+                head = f"{node.value}({_arguments(parameters.children, gap)})"
             return _assignment(head, node.children[1:], ":=", gap)
         case Kind.DOMAIN:
             return _domain(node, gap)
@@ -224,7 +276,38 @@ def _spell(node: Node, gap: str) -> str:
             return f"{opening}{low}, {high}{closing}"
         case Kind.SHOWVALUE:
             return f"{_written(node.children[0], gap)}="
+        case Kind.QUOTE:
+            return _quote(node.children[0], gap)
     raise AssertionError(f"unwritable node kind: {node.kind}")
+
+
+#: What a quote's operand may be without parentheses: the primaries that read back as the
+#: one operand of the quote.
+_QUOTABLE = frozenset(
+    (
+        Kind.NAME,
+        Kind.NUMBER,
+        Kind.STRING,
+        Kind.LABEL,
+        Kind.UNKNOWN,
+        Kind.VECTOR,
+        Kind.SET,
+        Kind.CALL,
+        Kind.APPLY,
+        Kind.FUNCPOW,
+        Kind.ABS,
+        Kind.QUOTE,
+    )
+)
+
+
+def _quote(operand: Node, gap: str) -> str:
+    """`'u`, the apostrophe directly before its operand, which is parenthesized unless
+    it is a name, a number, a string, a vector, a set, a call or another quote."""
+    text = _written(operand, gap)
+    if operand.kind not in _QUOTABLE or is_return(operand):
+        text = f"({text})"
+    return f"'{text}"
 
 
 def _written(node: Node, gap: str) -> str:
@@ -256,11 +339,26 @@ def _sum(node: Node, gap: str) -> str:
     signed terms are parenthesized, so the only sign between terms is the run's. A
     nested sum is always parenthesized, as with nested products.
     """
-    parts = [_operand(node.children[0], NEG, gap)]
+    parts = [_term(node.children[0], NEG, gap)]
     for index, child in enumerate(node.children[1:]):
         sign = str(node.value)[index]
-        parts += [f"{gap}{sign}{gap}", _operand(child, PRODUCT, gap)]
+        parts += [f"{gap}{sign}{gap}", _term(child, PRODUCT, gap)]
     return "".join(parts)
+
+
+def _term(node: Node, required: int, gap: str) -> str:
+    """A term of a sum. A vector product binds tighter than the sum, so it needs no
+    parentheses, unless a later term would start with a sign."""
+    if precedence(node) in (DOT, CROSS) and not (required > NEG and _signed(node)):
+        return _spell(node, gap)
+    return _operand(node, required, gap)
+
+
+def _signed(node: Node) -> bool:
+    """Whether `node` is written starting with a sign."""
+    while node.kind is Kind.INFIX and precedence(node) in (DOT, CROSS):
+        node = node.children[0]
+    return node.kind is Kind.UNOP
 
 
 def _binop(node: Node, gap: str) -> str:
@@ -282,25 +380,96 @@ def _binop(node: Node, gap: str) -> str:
     return f"{left}{operator}{_operand(node.children[1], POW, gap)}"
 
 
-def _logical(node: Node, gap: str) -> str:
+def _logical(node: Node, gap: str, closed: bool = False) -> str:
     """A word operator and its operands.
 
     The tight form parenthesizes the same operator nested on either side, as the
-    original does. The spaced form parenthesizes only what the grammar requires, on the
+    original does. The spaced form parenthesizes what the grammar requires, on the
     side the operator doesn't associate toward, so `a AND b AND c` and `(a IMP b) IMP c`
-    stay as written.
+    stay as written. Both parenthesize a conjunction inside a disjunction.
+
+    Where nothing follows the operator (`closed`), the tight form writes an assignment
+    on its right bare, as the original does: `(m:=v SUB 3) AND c:=v SUB 4`.
     """
     own = _LOGICAL_PRECEDENCE[node.kind]
     word = _WORD_OPERATORS[node.kind]
-    folds_left = node.kind is Kind.IMP
+    folds_left = node.kind in _FOLDING_LEFT
     if gap:
         left, right = own + 1, own + 1 if folds_left else own
     else:
         # `IMP` is left-associative, so its left operand may nest unparenthesized.
         left, right = own if folds_left else own + 1, own + 1
+    first, second = node.children
+    left = _conjunction_fenced(node, first, left)
+    right = _conjunction_fenced(node, second, right)
+    if closed and not gap and second.kind is Kind.ASSIGN:
+        # `a AND c:=u`: the assignment's value extends to the end, as it is read.
+        written = _written(second, gap)
+    else:
+        written = _operand(second, right, gap)
+    return f"{_operand(first, left, gap)} {word} {written}"
+
+
+def _conjunction_fenced(node: Node, operand: Node, required: int) -> int:
+    """The precedence `operand` of the logical `node` must have: a conjunction inside a
+    disjunction is parenthesized although `AND` binds more tightly, as the original
+    shows and writes a disjunction of solutions, `(x = -a AND y = -a) OR (x = a AND y =
+    a)`."""
+    if node.kind is Kind.OR and operand.kind is Kind.AND:
+        return max(required, AND + 1)
+    return required
+
+
+def _link(node: Node, word: str, gap: str) -> str:
+    """A subscript link, `u SUB i`, `A ROW i`, `A COL j` or `A SUB SUB j`.
+
+    The links and postfix operators apply left to right, so the left operand needs no
+    parentheses if it is one of them. An index is one primary, so anything larger,
+    notably a link or a postfix operator, and a signed number, needs parentheses to
+    stay inside it.
+    """
+    base = node.children[0]
+    left = _operand(base, POSTFIX, gap)
+    if not gap and base.kind not in _BARE_BASES and not is_chain(base):
+        left = f"({_written(base, gap)})"
+    if not gap:
+        # Files write the column subscript with two blanks between the words.
+        word = "  ".join(word.split())
+    return f"{left} {word} {_operand(node.children[1], ATOM, gap)}"
+
+
+#: The left operands of a subscript link that files write without parentheses; any
+#: other, a call included, is parenthesized: `(FIRST(t)) SUB 2`.
+_BARE_BASES = frozenset(
+    (
+        Kind.NAME,
+        Kind.NUMBER,
+        Kind.STRING,
+        Kind.VECTOR,
+        Kind.SET,
+        Kind.SUB,
+        Kind.POSTOP,
+        Kind.LABEL,
+        Kind.UNKNOWN,
+        Kind.QUOTE,
+    )
+)
+
+
+def _infix(node: Node, gap: str) -> str:
+    """`SUBSET`, `DOTPRODUCT` or `CROSSPRODUCT`, all left-associative."""
+    own = precedence(node)
+    left = _operand(node.children[0], own, gap)
+    right = _operand(node.children[1], own + 1, gap)
+    return f"{left} {node.value} {right}"
+
+
+def is_return(node: Node) -> bool:
+    """Whether `node` is `RETURN u`, which is written `RETURN(u)`."""
     return (
-        f"{_operand(node.children[0], left, gap)} {word} "
-        f"{_operand(node.children[1], right, gap)}"
+        node.kind is Kind.CALL
+        and len(node.children) == 2
+        and node.children[0].value == "RETURN"
     )
 
 

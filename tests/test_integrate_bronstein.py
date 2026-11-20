@@ -280,8 +280,7 @@ CASES = [
     (
         "33",
         "INT(x/((a*x + b)*(f*x + g)), x)",
-        "g*LN(x + g*(a*g/f + b)/(a*g + b*f))/(f*(a*g - b*f)) - b*LN(x + b*(b*f/a + "
-        "g)/(a*g + b*f))/(a*(a*g - b*f))",
+        "g*LN((f*x + g)/f)/(f*(a*g - b*f)) - b*LN((a*x + b)/a)/(a*(a*g - b*f))",
     ),
     (
         "34",
@@ -1048,9 +1047,9 @@ CASES = [
     (
         "147",
         "INT(x/SQRT((a*x + b)*(f*x + g)), x)",
-        "SQRT(a*f*x^2 + x*(a*g + b*f) + b*g)/(a*f) - (a*g + "
+        "(2*SQRT(a*f*x^2 + x*(a*g + b*f) + b*g) - (a*g + "
         "b*f)*LN(2*SQRT(a*f)*SQRT(a*f*x^2 + x*(a*g + b*f) + b*g) + 2*a*f*x + a*g + "
-        "b*f)/(2*a*f*SQRT(a*f))",
+        "b*f)/SQRT(a*f))/(2*a*f)",
     ),
     (
         "148",
@@ -1070,9 +1069,9 @@ CASES = [
     (
         "150",
         "INT(SQRT((a*x + b)*(f*x + g)), x)",
-        "x*SQRT(a*f*x^2 + x*(a*g + b*f) + b*g)/2 + (a*g + b*f)*SQRT(a*f*x^2 + x*(a*g "
-        "+ b*f) + b*g)/(4*a*f) - (a*g - b*f)^2*LN(2*SQRT(a*f)*SQRT(a*f*x^2 + x*(a*g + "
-        "b*f) + b*g) + 2*a*f*x + a*g + b*f)/(8*a*f*SQRT(a*f))",
+        "(4*a*f*x*SQRT(a*f*x^2 + x*(a*g + b*f) + b*g) + 2*(a*g + b*f)*SQRT(a*f*x^2 + "
+        "x*(a*g + b*f) + b*g) - (a*g - b*f)^2*LN(2*SQRT(a*f)*SQRT(a*f*x^2 + x*(a*g + "
+        "b*f) + b*g) + 2*a*f*x + a*g + b*f)/SQRT(a*f))/(8*a*f)",
     ),
     (
         "151",
@@ -1420,7 +1419,7 @@ CASES = [
     (
         "241c",
         "INT(1/SQRT(a*x^2 + b*x + b^2/(4*a)), x)",
-        "2*SQRT(a*x^2 + b*x + b^2/(4*a))*LN(2*a*x + b)/(2*a*x + b)",
+        "SQRT(1/a)*SIGN(2*a*x + b)*LN(2*a*x + b)",
     ),
     (
         "241d",
@@ -1565,7 +1564,7 @@ CASES = [
     (
         "258c",
         "INT(1/(x*SQRT(b^2/(4*c)*x^2 + b*x + c)), x)",
-        "2*(LN(x) - LN(x + 2*c/b))*SQRT(b^2*x^2/(4*c) + b*x + c)/(b*x + 2*c)",
+        "(LN(x) - LN(x + 2*c/b))*SQRT(1/c)*SIGN(b*x + 2*c)",
     ),
     (
         "258d",
@@ -2418,7 +2417,7 @@ CASES = [
     (
         "454",
         "INT(1/(b + c*#e^(a*x)), x)",
-        "-(LN(#e^(a*x) + b/c) - LN(b/c + 1) - a*x)/(a*b)",
+        "-(LN(#e^(a*x) + b/c) - LN((b + c)/c) - a*x)/(a*b)",
     ),
     (
         "455",
@@ -2513,8 +2512,8 @@ CASES = [
     (
         "489",
         "INT(x*ASIN(x/a), x)",
-        "x^2*ASIN(x/a)/2 + a^3*SQRT(-1/a^2)*LN(2*SQRT(-1/a^2)*SQRT(1 - x^2/a^2) - "
-        "2*x/a^2)/4 + a*x*SQRT(1 - x^2/a^2)/4",
+        "x^2*ASIN(x/a)/2 + a*x*SQRT(1 - x^2/a^2)/4 - a*LN(2*SQRT(-1/a^2)*SQRT(1 - "
+        "x^2/a^2) - 2*x/a^2)/(4*SQRT(-1/a^2))",
     ),
     (
         "490",
@@ -2526,8 +2525,8 @@ CASES = [
     (
         "494",
         "INT(x*ACOS(x/a), x)",
-        "-a^3*SQRT(-1/a^2)*LN(2*SQRT(-1/a^2)*SQRT(1 - x^2/a^2) - 2*x/a^2)/4 + "
-        "x^2*ACOS(x/a)/2 - a*x*SQRT(1 - x^2/a^2)/4",
+        "x^2*ACOS(x/a)/2 - a*x*SQRT(1 - x^2/a^2)/4 + a*LN(2*SQRT(-1/a^2)*SQRT(1 - "
+        "x^2/a^2) - 2*x/a^2)/(4*SQRT(-1/a^2))",
     ),
     (
         "495",
@@ -2587,12 +2586,12 @@ CASES = [
         "INT(ATANH(x/a), x)",
         "-x*LN(1 - x/a)/2 + x*LN(x/a + 1)/2 + a*LN(x^2 - a^2)/2",
     ),
-    ("515", "INT(ACOTH(x/a), x)", "x*LN(2/(x/a - 1) + 1)/2 + a*LN(x^2 - a^2)/2"),
+    ("515", "INT(ACOTH(x/a), x)", "x*LN(2*a/(x - a) + 1)/2 + a*LN(x^2 - a^2)/2"),
     # -- Substitution rule ---------------------------------------------------------------
     (
         "p454.1",
         "INT(SQRT(a^2 - x^2), x, 0, a)",
-        "IF(a /= 0, a^2*ASIN(a/ABS(a))/2, -#i*a^2*LN(-a)/2 + #i*a^2*LN(#i*ABS(a))/2)",
+        "pi*a*ABS(a)/4",
     ),
     ("p454.2", "INT(COS(z), z, 0, pi)", "0"),
     # -- Integration by parts ------------------------------------------------------------
@@ -2663,7 +2662,7 @@ CASES = [
     (
         "D45",
         "INT(1/(1 + 2*x*COS(a) + x^2), x, 0, inf)",
-        "-(2*ASIN(COS(a)) - pi)*ABS(SIN(a))/(2*SIN(a)^2)",
+        "-(2*ASIN(COS(a)) - pi)/(2*ABS(SIN(a)))",
     ),
 ]
 

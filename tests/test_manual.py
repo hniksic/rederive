@@ -61,18 +61,22 @@ from rederive.syntax import ParseState, parse_expression
 from sexpr import to_sexpr
 
 
+#: The manual's sessions run at its factory digits, six, where Derive 6's are ten.
+MANUAL = Context(precision_digits=6, notation_digits=6)
+
+
 def parse(text, state=None):
     return parse_expression(text, state or ParseState()).node
 
 
 def simp(text, context=None, state=None):
     """Simplify `text` and return it as the worksheet would show it."""
-    return simplify(parse(text, state), context or Context(), state).text
+    return simplify(parse(text, state), context or MANUAL, state).text
 
 
 def apx(text, context=None, state=None):
     """Approximate `text` as the approX command would."""
-    return approx(parse(text, state), context or Context(), state).text
+    return approx(parse(text, state), context or MANUAL, state).text
 
 
 def declared(*declarations, **settings):
@@ -86,22 +90,29 @@ def declared(*declarations, **settings):
 
 def expanded(text, *variables, amount=Amount.RATIONAL, context=None):
     """Return what Expand would put on the worksheet."""
-    return expand(parse(text), context or Context(), amount, variables).text
+    return expand(parse(text), context or MANUAL, amount, variables).text
 
 
 def factored(text, amount=Amount.RATIONAL, *variables, context=None):
     """Return what Factor would put on the worksheet at the given amount."""
-    return factor(parse(text), context or Context(), amount, variables).text
+    return factor(parse(text), context or MANUAL, amount, variables).text
 
 
 def solutions(text, *variables, context=None):
     """Return the lines soLve would append, in order."""
-    return [result.text for result in solve(parse(text), context or Context(), variables)]
+    return [result.text for result in solve(parse(text), context or MANUAL, variables)]
 
 
 @pytest.fixture
 def session():
-    return Session()
+    return manual_session()
+
+
+def manual_session():
+    """A session at the manual's six digits."""
+    session = Session()
+    session.settings.apply({"PrecisionDigits": 6})
+    return session
 
 
 async def answer(session, *lines):
@@ -186,15 +197,6 @@ NOT_YET_HELD = {
     # `w` to the order list won't do: COVARIANT_METRIC_TENSOR's `v^2 + w^2` on p.238
     # needs `v` before `w`, as alphabetical order for unlisted names gives.
     "test_the_characteristic_variable_defaults_to_w",
-    # `DSOLVE1` gives the manual's `x^2*y + y - 1 = 0`. What fails is the next line,
-    # substituting the initial condition, which the manual says "simplifies to 0=0".
-    # The engine answers `true`. Section 10.3 explains the manual's expectation: "when
-    # a relation is simplified, its two sides are simplified independently and DERIVE
-    # makes no attempt to determine the truth or falsehood of the relation", except in
-    # an `IF` test. But the original does decide a bare relation, as `test_simplify`'s
-    # `test_a_relation_that_decides_is_decided_and_one_that_does_not_stands` records
-    # and the engine follows. The page and the program disagree.
-    "test_the_first_order_equation_the_manual_solves",
     # Both conditions match the manual, the second up to a common factor:
     # `2*v*x^2 - 2*x*y - 2*v = 0` where the page has `2*(v*x^2 - x*y - v) = 0`. This is
     # the decision `test_the_manuals_mutual_recursion_written_with_accumulators` also
@@ -335,10 +337,10 @@ def test_an_exact_power_of_a_fraction_is_the_whole_ratio():
 
 # Setting the precision also sets the matching notation, as Options Precision does in
 # the program and as section 3.9 describes.
-APPROXIMATE_6 = Context().with_precision(Precision.APPROXIMATE)
-APPROXIMATE_10 = Context().with_precision(Precision.APPROXIMATE, 10)
-APPROXIMATE_100 = Context().with_precision(Precision.APPROXIMATE, 100)
-MIXED = Context().with_precision(Precision.MIXED)
+APPROXIMATE_6 = MANUAL.with_precision(Precision.APPROXIMATE)
+APPROXIMATE_10 = MANUAL.with_precision(Precision.APPROXIMATE, 10)
+APPROXIMATE_100 = MANUAL.with_precision(Precision.APPROXIMATE, 100)
+MIXED = MANUAL.with_precision(Precision.MIXED)
 
 
 def test_approximate_mode_gives_the_digits_the_precision_asks_for():
@@ -496,14 +498,15 @@ def test_trigonometry(text, expected):
 
 
 DEGREE_MODE = [
-    ("SIN(45)", "SQRT(2)/2"),
-    ("ASIN(1/2)", "30"),
+    ("SIN(45 deg)", "SQRT(2)/2"),
+    ("ASIN(1/2)", "30 DEG"),
 ]
 
 
 @pytest.mark.parametrize(("text", "expected"), DEGREE_MODE, ids=str)
-def test_degree_mode_reads_and_writes_degrees(text, expected):
-    # 6.3 p.107: the same two lines, in the other angular unit.
+def test_degree_mode_writes_degrees(text, expected):
+    # 6.3 p.107: the same two lines, in the other angular unit. In Derive 6 the unit
+    # affects only how an angle is shown, so the argument is written in degrees.
     assert simp(text, DEGREES) == expected
 
 
@@ -603,9 +606,10 @@ PIECEWISE = [
     ("FLOOR(5.73)", "5"),
     ("MOD(m, 0)", "m"),
     ("MODS(m, 0)", "m"),
-    # 6.7 p.112: a nonnumeric argument leaves the floor form behind.
-    ("MOD(m, n)", "m - n*FLOOR(m, n)"),
-    ("MODS(m, n)", "m - n*FLOOR(m + n/2, n)"),
+    # Derive 6 keeps a nonnumeric MOD as written, where the manual's DOS version left
+    # the floor form behind.
+    ("MOD(m, n)", "MOD(m, n)"),
+    ("MODS(m, n)", "MODS(m, n)"),
     # 6.7 p.111: the characteristic function of an interval.
     ("CHI(1, 2, 3)", "1"),
     ("CHI(2, 1, 3)", "0"),
@@ -752,8 +756,10 @@ DECOMPOSITION = [
     ("POLY_GCD(x^3 + 3*x^2 + 5*x + 6, x^3 + 2*x - 3)", "x^2 + x + 3"),
     ("LHS(2*x + 3 = 5)", "2*x + 3"),
     ("RHS(2*x + 3 = 5)", "5"),
-    # 6.14 p.128: RHS distributes over soLve's vector of solutions.
-    ("RHS(SOLVE(x^2 - 5*x + 6 = 0, x))", "[2, 3]"),
+    # 6.14 p.128 takes RHS of soLve's vector of solutions; SOLVE answers with a
+    # disjunction, and SOLUTIONS gives the vector of values.
+    ("SOLUTIONS(x^2 - 5*x + 6 = 0, x)", "[2, 3]"),
+    ("RHS(SOLVE([x^2 - 5*x + 6 = 0], x))", "[2, 3]"),
 ]
 
 
@@ -927,7 +933,9 @@ def test_a_vector_generated_over_a_step_is_approximated_elementwise():
 MANIPULATION = [
     ("[a, b, c] SUB 2", "b"),
     ("[[2, 3, 5], [7, 1, 4]] SUB 2 SUB 3", "4"),
-    ("[[2, 3, 5], [7, 1, 4]] SUB [2, 3]", "4"),
+    # The manual reads an index vector as a path, `SUB 2 SUB 3`. Derive 6 reads it as a
+    # selection of rows, which this follows, so with no third row the access stands.
+    ("[[2, 3, 5], [7, 1, 4]] SUB [2, 3]", "ELEMENT([[2, 3, 5], [7, 1, 4]], [2, 3])"),
     ("ELEMENT([a, b, c], 2)", "b"),
     ("ELEMENT([[2, 3, 5], [7, 1, 4]], 2, 3)", "4"),
     ("APPEND([a, b], [c, d], [e, f])", "[a, b, c, d, e, f]"),
@@ -1017,7 +1025,7 @@ def test_the_manuals_three_by_three_system_solved_by_inversion():
     solved = apx(
         "[[x], [y], [z]] = [[5, 3, -7], [2, -8, 1], [-1, 9, 4]]^-1 . [[4], [6], [5]]"
     )
-    assert solved == "[[x = 2.91059], [y = 0.175496], [z = 1.58278]]"
+    assert solved == "x = 2.91059 AND y = 0.175496 AND z = 1.58278"
 
 
 def test_the_characteristic_variable_defaults_to_w():
@@ -1025,7 +1033,8 @@ def test_the_characteristic_variable_defaults_to_w():
     # prints the polynomial only for an explicit variable; the default call leaves the
     # determinant factored.
     assert simp("CHARPOLY([[2, 3], [a, b]])") == "(2 - w)*(b - w) - 3*a"
-    assert simp("EIGENVALUES([[2, 3], [0, b]])") == "[w = 2, w = b]"
+    # Without a variable, EIGENVALUES gives the eigenvalues themselves.
+    assert simp("EIGENVALUES([[2, 3], [0, b]])") == "[2, b]"
 
 
 NONSCALAR = declared(
@@ -1609,9 +1618,9 @@ def test_an_equation_factors_as_a_whole():
 
 # -- 4.14 solving -------------------------------------------------------------
 
-def test_the_solve_function_answers_a_vector_of_solutions():
-    # 4.14 p.113: the function's answer is bracketed, unlike the command's.
-    assert simp("SOLVE(-2*x + 3*y <= 7, x)") == "[x >= (3*y - 7)/2]"
+def test_the_solve_function_answers_with_the_relation_it_solves_to():
+    # 4.14 p.113 brackets the function's answer; Derive 6 answers with the relation.
+    assert simp("SOLVE(-2*x + 3*y <= 7, x)") == "x >= (3*y - 7)/2"
 
 
 def test_the_manuals_quadratic_is_solved_as_two_equations():
@@ -1645,7 +1654,7 @@ def test_a_degenerate_equation_is_solved_by_an_arbitrary_value():
 def test_the_manuals_linear_system():
     # 4.15 p.119: linear in x and y, whatever a is.
     assert solutions("[2*a^2*x + 3*y = 7, x - 5*y = 0]", "x", "y") == [
-        "[x = 35/(10*a^2 + 3), y = 7/(10*a^2 + 3)]"
+        "x = 35/(10*a^2 + 3) AND y = 7/(10*a^2 + 3)"
     ]
 
 
@@ -1658,7 +1667,7 @@ def test_the_pair_of_the_manuals_nonlinear_system_that_solve_can_take():
     # 4.15 p.124: the first two equations, solved for z and w.
     system = "[x^2 - z + w + 1 = 0, y^2 - z - w + 3 = 0]"
     assert solutions(system, "z", "w") == [
-        "[z = (x^2 + y^2 + 4)/2, w = -(x^2 - y^2 - 2)/2]"
+        "z = (x^2 + y^2 + 4)/2 AND w = -(x^2 - y^2 - 2)/2"
     ]
 
 
@@ -1680,7 +1689,7 @@ BOOLEAN = [
     ("false IMP true", "true"),
     # 4.16 p.128: the forms for symbolic operands. The page parenthesizes the XOR form;
     # the program doesn't, since AND binds tighter than OR, and that is asserted.
-    ("p XOR q", "NOT p AND q OR p AND NOT q"),
+    ("p XOR q", "(NOT p AND q) OR (p AND NOT q)"),
     ("p IMP q", "NOT p OR q"),
     ("NOT NOT p", "p"),
     ("p AND (p AND q OR r)", "p AND (q OR r)"),
@@ -1852,7 +1861,7 @@ def loaded(tmp_path):
     Load Utility."""
 
     def load(*names, word_input=False):
-        session = Session()
+        session = manual_session()
         if word_input:
             session.author("InputMode := Word")
         for name in names:
@@ -1909,6 +1918,7 @@ VECTOR_MTH = [
     ("SWAP_ELEMENTS([a, b, c], 1, 2)", "[b, a, c]"),
     ("SCALE_ELEMENT([a, b, c], 2, 3)", "[a, 3*b, c]"),
     ("ADJOINT([[2, x], [1, 3]])", "[[3, -x], [-1, 2]]"),
+    # RANK is a Derive 6 built-in, so the file's definition is refused and it serves.
     ("RANK([[2, 3, 5], [4, 6, 10], [1, 2, 3]])", "2"),
     ("JACOBIAN([(w^2 - v^2)/2, w*v], [w, v])", "[[w, -v], [v, w]]"),
     (
@@ -2034,6 +2044,8 @@ async def test_the_clairaut_difference_equation_the_manual_solves(loaded):
 # -- 9.20 NUMBER.MTH ----------------------------------------------------------
 
 NUMBER_MTH = [
+    # POWER_MOD is a Derive 6 built-in, so the file's definition is refused and the
+    # built-in answers.
     ("POWER_MOD(2, 500, 100)", "76"),
     ("NTH_PRIME(3)", "5"),
     ("CATALAN(10)", "16796"),

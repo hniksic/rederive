@@ -221,6 +221,10 @@ class Add:
     `demonstrating` marks a demonstration step rather than a user command. The window
     is cleared of other plots first, and shown without taking keyboard focus, because
     the program is waiting for a key to continue.
+
+    `pointwise` says that `node` is no closed form and is evaluated anew at each point,
+    programs running (see `engine.plot_form`); otherwise it is converted once and
+    evaluated with numpy.
     """
 
     worksheet: int
@@ -233,6 +237,7 @@ class Add:
     options: Options = field(default_factory=Options)
     state: ParseState = field(default_factory=ParseState)
     demonstrating: bool = False
+    pointwise: bool = False
 
 
 @dataclass(frozen=True)

@@ -21,18 +21,19 @@ __all__ = ["attempt", "distributed"]
 Leaf = Callable[[sp.Basic], sp.Basic]
 
 
-def distributed(expression: sp.Basic, leaf: Leaf) -> sp.Basic:
+def distributed(
+    expression: sp.Basic, leaf: Leaf, logical: Leaf | None = None
+) -> sp.Basic:
     """Apply `leaf` to every scalar in `expression`.
 
     A relation is rewritten side by side, a vector or matrix element-wise, and a
-    definition on its value only.
-
-    Other booleans are returned untouched. Derive rewrites those into its own normal
-    forms, which are different operations not yet implemented.
+    definition on its value only. A logical formula has its relations rewritten, then
+    the whole is passed to `logical`, which puts it in a normal form (Expand gives the
+    disjunctive one, Factor the conjunctive one); without `logical` it is left as it is.
     """
 
     def again(part: sp.Basic) -> sp.Basic:
-        return distributed(part, leaf)
+        return distributed(part, leaf, logical)
 
     if isinstance(expression, Relational):
         left, right = again(expression.lhs), again(expression.rhs)
@@ -47,9 +48,16 @@ def distributed(expression: sp.Basic, leaf: Leaf) -> sp.Basic:
         return expression.func(head, operator, *(again(part) for part in value))
     if isinstance(expression, (Vector, Logical)):
         return expression.func(*(again(argument) for argument in expression.args))
+    if isinstance(expression, _CONNECTIVES):
+        rebuilt = expression.func(*(again(argument) for argument in expression.args))
+        return rebuilt if logical is None else logical(rebuilt)
     if isinstance(expression, Boolean):
         return expression
     return leaf(expression)
+
+
+#: The logical operators a normal form is taken of.
+_CONNECTIVES = (sp.And, sp.Or, sp.Not, sp.Xor, sp.Implies, sp.Equivalent)
 
 
 def attempt(expression: sp.Expr, rewrite: Callable[[sp.Expr], sp.Basic]) -> sp.Expr:
