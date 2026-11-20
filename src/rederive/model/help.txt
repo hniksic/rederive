@@ -1,74 +1,58 @@
 The help document. Each subject starts with a %topic line carrying, between
 bars, the option the HELP menu line shows, the line the Help Menu lists, and
 the title every page of the subject is headed with. Everything after it is the
-text, in blocks separated by blank lines; a block is kept whole on a page
-wherever it fits on one. Lines are written for eighty columns and wrapped to
-whatever the window turns out to be, so a table row that has to break keeps
-its own indent. The one subject whose body is the %settings directive is
-generated from the settings themselves and is written nowhere.
+text, in blocks separated by blank lines. A block is kept whole on a page
+unless that would leave much of the page empty; it is then divided between
+two of its entries, an entry being a line indented like the block's second
+and whatever follows it up to the next such line. Lines are written for eighty
+columns and wrapped to whatever the window turns out to be, so a table row
+that has to break keeps its own indent. The one subject whose body is the
+%settings directive is generated from the settings themselves and is written
+nowhere.
 
 %topic Basics | the Basics of Rederive | Rederive Basics
 
-Rederive is a worksheet rather than a calculator. An expression is entered
-with the Author command and numbered as it arrives, and nothing at all is
-worked out until a command is aimed at it. Every answer becomes a new numbered
-expression of its own, so a session reads down the screen as a record of what
-was asked and what came of it.
+Enter an expression with Author. It is displayed as typed and stays
+unevaluated until a command works on it, most often Simplify.
+
+A first session:
+  press A, type 1/2 + 2/3, press Enter      #1 shows 1/2 + 2/3
+  press S, then Enter                       #2 shows 7/6
+  press A, type x^3 - x, press Enter        #3 shows x^3 - x
+  press F, then Enter at each question      #4 shows it factored
+
+Each answer is added as a new numbered expression.
 
 Driving a menu:
   Space, Tab            move the highlight to the next option
   Backspace, Shift-Tab  move it back
   Enter                 run the highlighted option
-  a capital letter      run the option that letter names, from anywhere
-  Esc                   leave a submenu, or abandon the command being answered
+  a letter              run the option that shows it as a capital: l for soLve
+  Esc                   leave a submenu, or abandon a command
 
-Every option has one capital letter, usually the first: A authors, S
-simplifies, Q quits. When the first letter is already taken, a later one is
-capitalized instead: soLve, moVe, approX.
+Choosing an expression:
+  Up, Down     move the highlight to the previous or next expression
+  Jump         move the highlight to a numbered expression
+  #3           on a command's line, refers to expression 3
 
-A first session:
-  press A, type x^3 - x, press Enter
-  press F for Factor, then Enter at each question it asks
-  press S for Simplify, then Enter
+A command works on the highlighted expression unless another is named.
 
-Every question comes with a default answer filled in, so a command is usually
-completed by pressing Enter at each question.
+Using the mouse:
+  click         run a menu option, or highlight an expression
+  click again   highlight a part of the expression, one level deeper
+  wheel         scroll the worksheet; with Shift, sideways
+  drag          select text, for Ctrl-C to copy
 
-Naming an expression:
-  the arrow keys   move the highlight from one expression to the next
-  #3               expression 3, named by its number
-  Jump             move the highlight to a numbered expression at once
-
-A command that asks for an expression starts with the label of the highlighted
-one already on its line, so Enter alone answers it. Moving the highlight
-updates the label. A label like #3 keeps meaning the same expression even
-after Remove or moVe has moved things around on the screen.
-
-The mouse works everywhere: menu options, Options screens, windows and
-expressions can all be clicked. Clicking an expression highlights it, and each
-further click goes one part deeper into it. The wheel scrolls the history;
-with Shift held, sideways over an expression too wide for the pane.
-
-Every gesture stands for a key, so nothing here needs the mouse and nothing is
-reachable only with it. Dragging selects text, not expressions: Ctrl-C copies
-the selection, and on the line being typed Ctrl-X cuts it.
-
-Exact before approximate:
-  Simplify   work an expression out exactly, however long the answer
-  approX     work it out as a number, to the precision now set
-  Options Precision   whether Simplify answers exactly or numerically
-
-An answer is kept exact wherever it can be, so Simplify of 1/3 + 1/6 is 1/2
-and not 0.5, and the square root of 2 stays a square root. approX is how a
-number is asked for.
+Exact and approximate answers:
+  Simplify            exact: SQRT(2) stays as it is
+  approX              a decimal approximation: SQRT(2) gives 1.414213562
+  Options Precision   whether Simplify answers exactly or approximately
 
 Declarations:
   Declare Variable   give a variable a value, or a domain to simplify over
   Declare Function   define a function of your own
 
-A simplification that is only right for some values of a variable waits for a
-declaration: LN(x^2 - x) - LN(x) becomes LN(x - 1) only once x is declared
-positive. Until then the expression is left as it is.
+SQRT(x^2) simplifies to ABS(x), or to x once x is declared positive.
 
 Files, screen and settings:
   Transfer Save    write the worksheet out
@@ -177,424 +161,521 @@ be entered with an Alt key. If Alt-minus does not work in your terminal, type
 
 %topic Functions | Functions and constants | Functions, Constants, and Operators
 
-A name is a function where it is followed by an argument list and a variable
-where it is not. Case is ignored unless Options Input Case says otherwise, so
-SIN, Sin and sin are one function. Entering SIN(0.5) computes nothing;
-Simplify or approX works it out.
+Names ignore case: SIN, Sin and sin are the same function. The examples show
+what Simplify gives.
+
+Variables and functions of your own:
+  a := 3                        a^2 + 1 is now 10
+  F(x) := x^2 + 1               F(3) is 10, F(t + 1) is t^2 + 2t + 2
 
 Constants:
-  pi                 the ratio of a circle's circumference to its diameter
-  #e                 the base of the natural logarithms
-  #i                 the square root of -1
-  inf                infinity; -inf is negative infinity
-  deg                one degree, so 90 deg is a right angle
+  pi, #e, #i                    #e is the base of LN, #i the square root of -1
+  inf                           infinity
+  deg                           one degree: SIN(30 deg) is 1/2
+
+Common functions:
+  SQRT(z), ABS(z)               square root, absolute value
+  EXP(z), LN(z), LOG(z, b)      #e^z, natural logarithm, logarithm to base b
+  SIN(z), COS(z), TAN(z)        of an angle in radians
+  ASIN(z), ACOS(z), ATAN(z)     their inverses
+  n!, COMB(n, k)                factorial, binomial coefficient
+  FLOOR(u), MOD(u, v)           integer part, remainder
+  MAX(u, v, ...), MIN(u, v, ...)
+  IF(test, u, v)                u where the test holds, v where it does not
+
+Calculus:
+  DIF(SIN(x)^2, x)              SIN(2x)
+  INT(x #e^x, x)                (x - 1) #e^x
+  INT(#e^(-x^2), x, -inf, inf)  SQRT(pi)
+  LIM(SIN(x)/x, x, 0)           1
+  SUM(1/k^2, k, 1, inf)         pi^2/6
+  TAYLOR(#e^x, x, 0, 3)         x^3/6 + x^2/2 + x + 1
+
+Solving:
+  SOLVE(x^2 = 4, x)             x = -2 OR x = 2
+  SOLUTIONS(x^2 = 4, x)         [2, -2]
+  NSOLVE(COS(x) = x, x)         x = 0.7390851332
+
+Vectors and matrices:
+  [1, 2, 3]                     a vector
+  [1, 2; 3, 4]                  a matrix; a semicolon ends each row
+  VECTOR(k^2, k, 1, 5)          [1, 4, 9, 16, 25]
+  [a, b, c] SUB 2               b
+  [1, 2, 3] . [4, 5, 6]         32
+  DET([1, 2; 3, 4])             -2
+
+The Language subject covers defining functions and writing programs. The
+Catalog subject lists every built-in.
+
+%topic Language | the programming Language | The Programming Language
+
+A program is a function you define. This subject goes from a first definition
+to loops; the examples show what Simplify gives.
+
+Variables:
+  a := 3                        a^2 + 1 is now 10
+  a :=                          a has no value again
+
+Defining a function:
+  F(x) := x^2 + 1               F(3) is 10, F(t + 1) is t^2 + 2t + 2
+  G(x, y := 1) := x + y         y is 1 when left out: G(5) is 6
+  CNT v := DIM(v)               v takes all the arguments of a call, as a
+                                vector: CNT(a, b, c) is 3
+
+A function's body is one expression. IF chooses between values, and a
+function can call itself:
+  FIB(n) := IF(n < 2, n, FIB(n - 1) + FIB(n - 2))
+FIB(10) is 55.
+
+The test of an IF is a relation such as n < 2, relations joined by AND, OR and
+NOT, or one of the functions whose names end in a question mark: EVEN?(n),
+PRIME?(n), VECTOR?(v).
+
+PROG runs statements in order and gives the value of the last:
+  ROOTS(a, b, c, d) := PROG(d := b^2 - 4 a c,
+                            [(-b + SQRT(d))/(2 a), (-b - SQRT(d))/(2 a)])
+ROOTS(1, -3, 2) is [2, 1].
+
+LOOP repeats its statements until RETURN or exit:
+  COLLATZ(n, k := 0) := LOOP(IF(n = 1, RETURN k),
+                             n := IF(EVEN?(n), n/2, 3n + 1),
+                             k :+ 1)
+COLLATZ(27) is 111.
+
+  RETURN u           end the function, with the value u
+  exit               leave the innermost LOOP or PROG
+  k :+ 1             k := k + 1; likewise :-, :* and :/
+
+Only parameters are local; every other variable is global. For a local, add a
+parameter that calls leave out, like d and k above.
+
+Looping over an index:
+  SQUARES(n) := VECTOR(k^2, k, 1, n)          SQUARES(5) is [1, 4, 9, 16, 25]
+  PRIMES(n) := SELECT(PRIME?(k), k, 1, n)     PRIMES(12) is [2, 3, 5, 7, 11]
+  SUM(k^2, k, 1, 4)                           30
+  EVERY(PRIME?(k), k, [2, 3, 5])              true; SOME likewise
+
+ITERATES applies an expression to its own result:
+  ITERATES(x/2, x, 16, 4)                     [16, 8, 4, 2, 1]
+
+Assigning to a setting changes it: Precision := Approximate.
+
+The Catalog subject describes every statement and test, under Programs.
+
+%topic Catalog | Catalog of built-ins | Catalog of Built-In Functions
+
+This subject describes every built-in constant, operator and function. A
+function listed without a description, such as SIN, is the usual one of that
+name.
+
+Contents, in order:
+  Notation               constants, operators, relations and logic
+  Elementary functions   exponentials, trigonometry, rounding, complex numbers
+  Algebra                transforming expressions, solving
+  Calculus               derivatives, integrals, limits, sums, vector calculus
+  Collections            vectors, matrices, sets, strings
+  Other mathematics      number theory, statistics, finance, special functions
+  Programs               definitions, statements, tests
+  Answers                functions that appear in answers
+
+Constants:
+  pi, #e, #i, inf    as under Functions; -inf is negative infinity
+  deg                one degree, pi/180
   euler_gamma        Euler's constant
-  true, false        the two truth values
-  unit_circle        an unspecified point on the unit circle of the complex
-                     plane
+  true, false        the truth values
+  unit_circle        an unspecified point on the complex unit circle
   ?                  an unknown value, written in answers that have none
 
 Operators:
-  u + v, u - v       sum and difference
-  u*v, u v           product; x y and 3x multiply too
-  u/v                quotient
-  u^v                power
-  u!                 factorial
-  u%                 u divided by a hundred
-  u DEG              u degrees, u*deg; also written u°
-  -u                 negation
-  u.v                dot product of two vectors, or product of two matrices
-  u`                 transpose of a matrix
+  u + v, u - v, -u
+  u*v, u v, u/v      x y and 3x multiply too
+  u^v, u!
+  u%                 u/100
+  u DEG, u°          u degrees
+  u +- v             both u + v and u - v
+  u.v                dot product of vectors, product of matrices
+  u`                 transpose of a matrix, complement of a set
   u SUB v            element v of the vector u, or a subscripted name
-  u SUB SUB v        element v of each element of u: a matrix's column v
-  u +- v             both u + v and u - v at once
-  x := u             give the variable x the value u; x := takes it away
-  x :+ u             x := x + u when simplified; likewise :-, :* and :/
-  v SUB i := u       replace element i of the vector v when simplified
+  u SUB SUB v        column v of a matrix
+  x := u, x :+ u     assignment; see Definitions and assignment
+  x :epsilon Real    declare what x ranges over; also typed :∈
+  'u                 u kept as written: '(2 + 3) stays 2 + 3
+
+Relations and logic:
+  u = v, u /= v, u < v, u <= v, u > v, u >= v
+  NOT u, u AND v, u OR v, u XOR v
+  u IMP v, u IFF v   implication, equivalence
+  TRUTH_TABLE(p, q, ..., u, ...)
+                     truth table of the expressions u over the variables
+                     p, q, ...
+
+Two vectors are equal if they have the same length and equal elements. Two
+strings are equal if they have the same characters; upper and lower case are
+different, so "a" = "A" is false. Vectors and strings cannot be compared with
+<, <=, > or >=.
+
+Exponentials and logarithms:
+  EXP(z), LN(z), SQRT(z)
+  LOG(z), LOG(z, w)  natural logarithm; logarithm to base w
+
+Trigonometric and hyperbolic functions:
+  SIN, COS, TAN, COT, SEC, CSC
+  ASIN, ACOS, ATAN, ACOT, ASEC, ACSC              inverses, in radians
+  ARCSIN, ARCCOS, ARCTAN, ARCCOT, ARCSEC, ARCCSC  inverses, in degrees
+  ATAN(y, x), ACOT(x, y)                          angle of the point (x, y)
+  ARCTAN(y, x), ARCCOT(x, y)                      the same, in degrees
+  SINH, COSH, TANH, COTH, SECH, CSCH
+  ASINH, ACOSH, ATANH, ACOTH, ASECH, ACSCH
+
+Angles are in radians; write degrees with deg, as in SIN(30 deg). Manage
+Trigonometry Angle changes only how angles in answers are shown.
+
+Magnitude, sign and choice:
+  ABS(z)             magnitude
+  SIGN(z)            -1, 0 or 1 by the sign of z; SIGN(0) is +-1
+  STEP(z)            0 below zero, 1 above
+  CHI(a, z, b)       1 between a and b, 0 outside
+  CHI(a, z, b, c, d)
+                     the same, with the value c at a and d at b; without d,
+                     1 - c at b
+  IF(test, u, v)     u where the test holds, v where it does not
+  MAX(...), MIN(...)
+                     of the arguments, or of a vector's or set's elements
+
+Rounding and remainders:
+  FLOOR(u), FLOOR(u, v)
+                     greatest integer not above u, or not above u/v
+  CEILING(u), CEILING(u, v)
+                     least integer not below u, or not below u/v
+  ROUND(u), ROUND(u, v)
+                     integer nearest u, or nearest u/v; a half rounds up
+  MOD(u, v)          remainder of u divided by v; MOD(u) is the fractional
+                     part
+  MODS(u, v)         the same, symmetric about zero
+
+Complex numbers:
+  RE(z), IM(z), CONJ(z)
+  ABS(z), PHASE(z)   magnitude, angle with the positive real axis
+
+Transforming expressions:
+  FACTOR(u), FACTOR(u, x, ...)
+                     the Factor command, over all variables or those named
+  FACTOR(u, amount, x, ...)
+                     as far as the amount says: Trivial, Squarefree, Rational,
+                     raDical or Complex
+  FACTOR(A, Turing)  the matrix A as P . L . D . U . R: permutation, unit
+                     lower triangular, pivots, unit upper triangular,
+                     reduced echelon form
+  FACTOR(A, Schmidt)
+                     A as Q . R by Gram-Schmidt
+  EXPAND(u), EXPAND(u, x, ...)
+                     the Expand command
+  EXPAND(u, amount, x, ...)
+                     with any amount but Complex
+  APPROX(u), APPROX(u, n)
+                     the approX command, at the set precision or at n digits
+  TERMS(u), FACTORS(u)
+                     the terms of a sum, the factors as [base, exponent] pairs,
+                     as a vector; of a logical u, the disjuncts and the
+                     conjuncts of its normal forms
+  TERMS(u, a, x, ...), FACTORS(u, a, x, ...)
+                     after expanding or factoring by the amount a in the
+                     variables x, ...
+  NUMERATOR(u), DENOMINATOR(u)
+  VARIABLES(u)       the free variables, the main one first
+  SUBST(u, v, w)     u with w in place of each v
+  SUBST(u, v1, w1, v2, w2, ...)
+                     one pair after the other
+  SUBST(u, [v1, v2, ...], [w1, w2, ...])
+                     all at once
+
+Solving:
+  SOLVE(u, x)        solutions of u for x: x = -1 OR x = 1; true if every x
+                     solves u, false if none does
+  SOLVE(v, [x, y])   a system: [x = 2 AND y = 1]
+  SOLVE(u, x, Real)  real solutions only
+  SOLVE(u, x, a, b)  real solutions between a and b
+  SOLVE(u)           for all of u's variables
+  SOLUTIONS(u, x)    solutions as a vector of values: [1, -1]; for a system,
+                     a matrix with a row per solution
+  NSOLVE(u, x), NSOLUTIONS(u, x)
+                     numerically: every root of a polynomial, one real root
+                     of anything else
+  NSOLVE(u, x, a, b), NSOLUTIONS(u, x, a, b)
+                     a root between a and b
+  LHS(u), RHS(u)     sides of a relation, or of each relation in a vector
+
+Calculus:
+  DIF(u, x), DIF(u, x, n)
+                     derivative, of the first or the nth order
+  INT(u, x)          indefinite integral
+  INT(u, x, c)       the same, plus the constant c
+  INT(u, x, a, b)    definite integral from a to b
+  LIM(u, x, a)       limit at a
+  LIM(u, x, a, d)    from the right if d > 0, from the left if d < 0
+  SUM(u, k, a, b), SUM(u, k, a, b, s)
+                     sum over k from a to b, in steps of s
+  SUM(u, k, c), SUM(v)
+                     sum over the elements of a vector or set
+  PRODUCT(u, k, a, b)
+                     product, with the same forms as SUM
+  TAYLOR(u, x, a, n)
+                     Taylor polynomial of degree n about a
+  TAYLOR(u, x, n)    about 0
+  SUBST_DIFF(u, x, a, b)
+                     u at x = b minus u at x = a, by limits where u is undefined
+
+Vector calculus:
+  GRAD(u), DIV(v), CURL(v), LAPLACIAN(u)
+  POTENTIAL(v), POTENTIAL(v, p)
+                     a scalar whose gradient is v
+  VECTOR_POTENTIAL(v), VECTOR_POTENTIAL(v, p)
+                     a vector whose curl is v
+
+GRAD, DIV, CURL and LAPLACIAN take a vector of coordinates as an optional
+second argument, for cylindrical or spherical coordinates.
+
+Generating vectors:
+  VECTOR(u, k, ...)  u at each value of k
+  MAP_LIST(u, k, ...)
+                     the same; over a set, gives a set
+  SELECT(u, k, ...)  the values of k for which the test u holds
+  TABLE(u, k, ...)   the rows [k, u] at each value of k
+  ITERATES(u, x, a, n)
+                     a, u(a), u(u(a)), ... as a vector; without n, until the
+                     value repeats
+  ITERATE(u, x, a, n)
+                     the last element of that vector
+  IDENTITY_MATRIX(n)
+  [a, b, ..., c]     a, b and on in steps of b - a, up to c
+
+Ways of giving the values of k:
+  VECTOR(u, k, n)    k from 1 to n
+  VECTOR(u, k, a, b)
+                     k from a to b
+  VECTOR(u, k, a, b, s)
+                     k from a to b in steps of s
+  VECTOR(u, k, v)    k over the elements of the vector or set v
+  VECTOR(u, [x, y], [a, c], [b, d])
+                     a matrix: x from a to b, and y from c to d
+
+Vector functions:
+  DIM(v)             number of elements
+  v SUB i, ELEMENT(v, i)
+                     element i, counted from the right if i is negative; for a
+                     vector of indices, those elements
+  ELEMENT(m, i, j)   element j of row i of a matrix
+  FIRST(v)           the first element
+  REST(v), REST(v, n)
+                     all but the first element, or the first n; for a negative
+                     n, all but the last -n
+  ADJOIN(u, v)       u put before the elements of v
+  APPEND(v, w, ...)  the elements of each, as one vector
+  REVERSE(v)
+  INSERT(u, v, n)    v with u before its nth element
+  DELETE(v, n), DELETE(v, w)
+                     v without its nth element, or without those at the indices
+                     in w
+  REPLACE(u, v, n)   v with u as its nth element
+  POSITION(u, v), POSITION(u, v, n)
+                     index of the first u in v, from the nth element on; false
+                     if none
+  SORT(v)            ascending: numbers, then variables and strings by name,
+                     then other expressions
+  SORT(v, p, x, y)   ordered by the test p: x goes before y where p holds
+
+A matrix is a vector of its rows. These functions also work on a string, as a
+vector of characters, and on an integer, as a vector of digits: REVERSE(123)
+is 321.
+
+The Derive 3 names of these functions also work: DIMENSION, REVERSE_VECTOR,
+INSERT_ELEMENT, DELETE_ELEMENT and REPLACE_ELEMENT.
+
+Matrices:
+  [a, b; c, d]       the matrix [[a, b], [c, d]]
+  u.v                matrix product, or dot product
+  u DOTPRODUCT v     dot product with the elements of v conjugated
+  CROSS(u, v), u CROSSPRODUCT v
+                     cross product of three-element vectors
+  m ROW i, m COL j   row i, column j; for a vector of indices, the matrix of
+                     those rows or columns
+  DET(m), TRACE(m), RANK(m)
+  ROW_REDUCE(m), ROW_REDUCE(m, b)
+                     reduced echelon form
+  CHARPOLY(m, z)     characteristic polynomial in z
+  EIGENVALUES(m)     the eigenvalues
+  EIGENVALUES(m, z)  as equations in z
+
+Sets:
+  {u, v, ...}        a set; {} is the empty set
+  {a, b, ..., c}     a, b and on in steps of b - a, up to c; without b, the
+                     step is 1
+  s UNION t, s INTERSECTION t
+  s\t                the elements of s not in t
+  s`                 complement
+  s SUBSET t         whether every element of s is in t
+  MEMBER?(u, s)      whether u is an element of s
+  s*t, s^n           Cartesian product, as a set of vectors
+  POWER_SET(s), POWER_SET(s, n)
+                     all subsets, or those of n elements
+  DIM(s), FIRST(s), REST(s), ADJOIN(u, s)
+                     as for vectors
+
+Elements are compared after simplifying, so x + x and 2x are one element.
+AND, OR and NOT on sets are the intersection, union and complement.
+
+Strings:
+  "Rederive" SUB 3   "d"; the vector functions work on strings too
+  STRING(u)          a name or number as text; otherwise the vector of u's
+                     top operator and its operands: STRING(x + y) is
+                     ["+", x, y]
+  NAME_TO_CODES(s)   the character codes: NAME_TO_CODES("ab") is [97, 98]
+  CODES_TO_NAME(v)   the string with the codes in v
+
+Number theory and polynomials:
+  GCD(...), LCM(...)
+  PRIME?(n)          whether n is prime; PRIME is the old name
+  NEXT_PRIME(n), PREVIOUS_PRIME(n)
+  INVERSE_MOD(a, m)  the x below m with MOD(a x, m) = 1, or ? if none
+  POWER_MOD(a, n, m)
+                     MOD(a^n, m), without computing a^n
+  SHIFT(n, k)        n shifted left k bits, right if k is negative
+  QUOTIENT(u, v), QUOTIENT(u, v, x)
+                     polynomial quotient of u by v, in x
+  REMAINDER(u, v), REMAINDER(u, v, x)
+                     the remainder
+  POLY_GCD(u, v)     greatest common divisor of two polynomials
+  POLY_MOD(u, m), POLY_MODS(u, m)
+                     u with its coefficients reduced by MOD or MODS
+  GROEBNER_BASIS(v, [x, y, ...])
+                     reduced Groebner basis of the polynomials in v,
+                     lexicographic with x > y > ...
+
+Probability and statistics:
+  COMB(n, k), PERM(n, k)
+                     combinations, permutations of n things k at a time
+  AVERAGE(...), RMS(...)
+                     mean, root mean square of the arguments or of a vector's
+                     elements
+  VARIANCE(...), STDEV(...)
+                     variance, standard deviation; VAR is the old name of
+                     VARIANCE
+  NORMAL(z), NORMAL(z, m, s)
+                     cumulative normal distribution
+  FIT(v, A)          least squares fit to the rows of the data matrix A; v
+                     lists the data variables, then the expression to fit,
+                     whose other variables are solved for
+  FIT(A)             the same, with v as the first row of A
+  RANDOM(n)          for n above 1, a random integer from 0 to n - 1
+  RANDOM(1)          a random number from 0 up to, not including, 1
+  RANDOM(-n)         restart the random sequence from the seed n
+  RANDOM(0)          restart it from the clock
+
+Financial functions:
+  PVAL(i, n, p, f, t)        present value
+  FVAL(i, n, p, v, t)        future value
+  PMT(i, n, v, f, t)         payment per period
+  NPER(i, p, v, f, t)        number of periods
+  RATE(n, p, v, f, t)        interest rate per period, sought between 0 and 1
+  RATE(n, p, v, f, t, a, b)  the same, sought between a and b
+
+Arguments of the financial functions:
+  i                          interest rate per period
+  n                          number of periods
+  p                          payment per period
+  v, f                       present value, future value
+  t                          1 if payments are made at the start of each
+                             period, 0 if at the end
+Money received and money paid have opposite signs. Arguments left out at the
+end count as zero. RATE works only on numbers.
+
+Special functions:
+  ERF(z), ERFC(z)    error function and its complement
+  ERFI(z)            imaginary error function, -#i ERF(#i z)
+  GAMMA(z), DIGAMMA(z)
+                     gamma function and its logarithmic derivative
+  POLYGAMMA(n, z)    nth derivative of DIGAMMA(z)
+  ZETA(z)            Riemann zeta function
+  ZETA(s, z)         Hurwitz zeta function, the sum of 1/(k + z)^s from k = 0
+  DILOG(z)           dilogarithm, POLYLOG(2, 1 - z)
+  POLYLOG(s, z)      polylogarithm, the sum of z^k/k^s from k = 1
+  POLYLOG(s, z, m)   the same sum to k = m
+  EI(z)              exponential integral, of EXP(t)/t
+  EI(z, m)           the series of EI(z) to m terms
+  SI(z), CI(z)       sine and cosine integrals, of SIN(t)/t and COS(t)/t
+  SINH_INT(z), COSH_INT(z)
+                     hyperbolic sine and cosine integrals
+  LAMBERTW(z)        the w with w EXP(w) = z
+
+Definitions and assignment:
   f(x) := u          define a function
   f(x, y := 0) := u  y is 0 where a call leaves it out
   f v := u           v takes all the arguments of a call, as a vector
-  x :epsilon Real    declare what x ranges over; :epsilon is typed as
-                     written, or as :∈
-  'u                 u as written, not simplified: '(x + x) keeps its two terms
+  x := u             assign u to x; without u, x has no value again
+  x :+ u             x := x + u; likewise :-, :* and :/
+  v SUB i := u       replace element i of the vector v
+  ASSIGN(v, u)       assign u to the variable that v holds: after v := z,
+                     ASSIGN(v, 7) sets z
+  setting := value   change a setting: Precision := Approximate
 
-Relational operators:
-  u = v, u /= v      equal, not equal
-  u < v, u <= v      less than, less than or equal
-  u > v, u >= v      greater than, greater than or equal
+Program statements:
+  PROG(s, t, ...)    run the statements in order; the value is the last one's
+  LOOP(s, t, ...)    run them repeatedly, until exit or RETURN
+  exit               leave the innermost LOOP or PROG, with the value of the
+                     statement that ran last
+  RETURN u           end the function being called, with the value u
+  MAP(u, k, ...)     run u at each value of k, given as for VECTOR; the value
+                     is true
+  EVERY(u, k, ...), SOME(u, k, ...)
+                     whether the test u holds at every value of k, or at one of
+                     them
+  DISPLAY(u)         add u to the worksheet as a line of text
+  WRITE(u)           show u on the message line while the program runs
+  LOAD("file")       read a file of definitions, as Transfer Load Utility does
+The Language subject shows these in use.
 
-Two vectors are equal when their elements are: [a, b] = [c, d] is
-a = c AND b = d, and vectors of different lengths are different. Two strings
-are equal when their texts are, case counting. A vector or string is never
-equal to a number, a truth value or a value of the other kind. Vectors and
-strings are not ordered.
-
-Boolean operators and functions:
-  NOT u              negation
-  u AND v, u OR v    conjunction, disjunction
-  u XOR v            exclusive disjunction
-  u IMP v            implication
-  u IFF v            equivalence
-  TRUTH_TABLE(p, q, ..., u, ...)  the truth table of the expressions u over
-                                  the variables named before them
-
-Solving equations and relations:
-  SOLVE(u, x)        the solutions of u for x: x = -1 OR x = 1; true when
-                     every x solves u, false when none does
-  SOLVE(v, [x, y])   a system solved for its variables: [x = 2 AND y = 1]
-  SOLVE(u, x, Real)  only the real solutions
-  SOLVE(u, x, a, b)  only the real solutions between a and b
-  SOLVE(u)           u solved for its variable, a system for all of them
-  SOLUTIONS(u, x)    the solutions as a vector of values: [1, -1]; for a
-                     system, a matrix with a row per solution
-  NSOLVE(u, x), NSOLUTIONS(u, x)
-                     the same, numerically: every root of a polynomial, one
-                     real root of anything else
-  NSOLVE(u, x, a, b) a root between a and b; NSOLUTIONS likewise
-  LHS(u), RHS(u)     the sides of a relation, or of each relation in a vector
-
-Exponential and logarithmic functions:
-  EXP(z)             #e raised to z
-  LN(z)              the natural logarithm
-  LOG(z), LOG(z, w)  the natural logarithm, and the logarithm to base w
-  SQRT(z)            the square root
-
-Trigonometric functions:
-  SIN(z), COS(z), TAN(z)     sine, cosine, tangent
-  COT(z), SEC(z), CSC(z)     cotangent, secant, cosecant
-
-Inverse trigonometric functions:
-  ASIN(z), ACOS(z), ATAN(z)  the inverses of the first three
-  ATAN(y, x)                 the angle of the point (x, y), quadrant included
-  ACOT(z), ASEC(z), ACSC(z)  the inverses of the other three
-  ACOT(x, y)                 the angle of the point (x, y), as ATAN(y, x)
-  ARCSIN(z), ARCCOS(z), ARCTAN(z), ARCCOT(z), ARCSEC(z), ARCCSC(z)
-                             the same inverses as a number of degrees;
-                             ARCTAN(y, x) and ARCCOT(x, y) take a point too
-
-Trigonometric functions take radians: an angle in degrees is written with deg,
-SIN(30 deg). The angle mode set by Manage Trigonometry Angle says only how an
-angle is shown: under Degree, an inverse function whose answer is a rational
-multiple of pi answers in degrees, ASIN(1/2) is 30 deg.
-
-Hyperbolic functions:
-  SINH(z), COSH(z), TANH(z)  hyperbolic sine, cosine, tangent
-  COTH(z), SECH(z), CSCH(z)  hyperbolic cotangent, secant, cosecant
-
-Inverse hyperbolic functions:
-  ASINH(z), ACOSH(z), ATANH(z), ACOTH(z), ASECH(z), ACSCH(z)
-
-Piecewise continuous functions:
-  SIGN(z)            -1, 0 or 1 by the sign of z; SIGN(0) is +-1
-  STEP(z)            0 below zero and 1 above it
-  CHI(a, z, b)       1 between a and b, 0 outside them
-  CHI(a, z, b, c, d) the same, with the value c at a and d at b; without d,
-                     1 - c at b
-  IF(test, u, v)     u where the test holds, v where it does not
-  FLOOR(u), FLOOR(u, v)  the greatest integer not above u, or not above u/v
-  CEILING(u), CEILING(u, v)  the least integer not below u, or not below u/v
-  ROUND(u), ROUND(u, v)  the integer nearest u, or nearest u/v; a half rounds up
-  MOD(u, v)          the remainder of u on division by v; MOD(u) is u's
-                     fractional part
-  MODS(u, v)         the same, taken symmetrically about zero
-  MAX(...), MIN(...) the largest, the smallest of the arguments, or of a
-                     vector's or a set's elements
-
-Complex variable functions:
-  RE(z), IM(z)       the real and the imaginary part
-  ABS(z)             the magnitude, and so the absolute value of a real z
-  CONJ(z)            the complex conjugate
-  PHASE(z)           the angle z makes with the positive real axis
-
-Probability and statistical functions:
-  COMB(n, k)         the number of combinations of n things taken k at a time
-  PERM(n, k)         the number of permutations
-  AVERAGE(...)       the mean of the arguments, or of a vector's elements
-  RMS(...)           the root mean square
-  VARIANCE(...)      the variance; VAR(...) is the old name
-  STDEV(...)         the standard deviation
-  NORMAL(z), NORMAL(z, m, s)  the cumulative normal distribution
-  FIT(v, A)          the least squares fit to the rows of the data matrix A;
-                     v lists the data variables and then the expression to
-                     fit, whose other variables are solved for
-  FIT(A)             the same, with v as the first row of A
-  RANDOM(n)          for n above 1, a random integer from 0 up to n - 1
-  RANDOM(1)          a random number from 0 up to, but not including, 1
-  RANDOM(-n)         start the random sequence again from the seed n
-  RANDOM(0)          start it from the clock
-
-The random sequence is Derive's, so a worksheet seeded with RANDOM(-n) draws
-the numbers it drew in Derive. A session starts from the seed 0.
-
-Financial functions:
-  PVAL(i, n, p, f, t)  the present value
-  FVAL(i, n, p, v, t)  the future value
-  PMT(i, n, v, f, t)   the payment made each period
-  NPER(i, p, v, f, t)  the number of periods
-  RATE(n, p, v, f, t)  the interest rate, sought between 0 and 1
-  RATE(n, p, v, f, t, a, b)  the interest rate, sought between a and b
-
-All five describe one contract: n periods at the rate i per period, a payment
-p each period, a present value v and a future value f. Money received and
-money paid out have opposite signs. Payments fall at the end of each period
-when t is 0 and at the start when it is 1. Arguments left off the end are
-zero. RATE searches numerically, so it wants numbers for all its arguments.
-
-Error and special functions:
-  ERF(z), ERFC(z)    the error function and its complement
-  GAMMA(z)           the gamma function
-  ZETA(z)            the Riemann zeta function
-  ZETA(s, z)         the Hurwitz zeta function, the sum of 1/(k + z)^s from
-                     k = 0
-  DILOG(z)           the dilogarithm, the integral of LN(t)/(1 - t) from 1
-                     to z, POLYLOG(2, 1 - z)
-  ERFI(z)            the imaginary error function, -#i*ERF(#i*z)
-  EI(z)              the exponential integral, of EXP(t)/t
-  EI(z, m)           the series of EI(z) to m terms
-  SI(z), CI(z)       the sine and cosine integrals, of SIN(t)/t and COS(t)/t
-  SINH_INT(z), COSH_INT(z)  the hyperbolic sine and cosine integrals
-  DIGAMMA(z)         the logarithmic derivative of the gamma function
-  POLYGAMMA(n, z)    the nth derivative of DIGAMMA(z)
-  POLYLOG(s, z)      the polylogarithm, the sum of z^k/k^s from k = 1
-  POLYLOG(s, z, m)   the same sum to k = m
-  LAMBERTW(z)        the Lambert W function, the w with w*EXP(w) = z
-
-Number theory functions:
-  GCD(...), LCM(...) the greatest common divisor, the least common multiple
-  PRIME?(n)          whether n is prime; PRIME(n) is the old name
-  NEXT_PRIME(n)      the least prime above n
-  PREVIOUS_PRIME(n)  the greatest prime below n, or ? if there is none
-  INVERSE_MOD(a, m)  the inverse of a modulo m, the x below m with
-                     MOD(a*x, m) = 1, or ? if there is none
-  POWER_MOD(a, n, m) MOD(a^n, m), without computing a^n
-  POLY_MOD(u, m), POLY_MODS(u, m)  the polynomial u with its coefficients
-                     reduced by MOD or MODS
-  SHIFT(n, k)        the integer n shifted left k bits, right if k is negative
-  QUOTIENT(u, v), QUOTIENT(u, v, x)  the polynomial quotient of u by v, in x
-  REMAINDER(u, v), REMAINDER(u, v, x)  the remainder of u divided by v, in x
-  POLY_GCD(u, v)     the greatest common divisor of two polynomials
-  GROEBNER_BASIS(v, [x, y, ...])  the reduced Groebner basis of the
-                     polynomials in v, lexicographic with x > y > ...
-
-Expression decomposition functions:
-  NUMERATOR(u), DENOMINATOR(u)   the top and the bottom of a fraction
-  TERMS(u)           the terms of the sum u, as a vector; of a logical u, the
-                     disjuncts of its disjunctive normal form
-  FACTORS(u)         the factors of u as [base, exponent] pairs, a number's
-                     primes; of a logical u, the clauses of its conjunctive
-                     normal form
-  TERMS(u, a, x, ...), FACTORS(u, a, x, ...)  the same, after expanding or
-                     factoring u by the amount a in the variables x, ...
-  VARIABLES(u)       the free variables of u, the main one first
-  APPROX(u), APPROX(u, n)  u as a number, at the set precision or at n digits
-  SUBST(u, v, w)     u with each occurrence of the subexpression v replaced by
-                     w; SUBST(u, v1, w1, v2, w2, ...) replaces one pair after
-                     the other, SUBST(u, [v1, v2, ...], [w1, w2, ...]) all at
-                     once
-
-Recognizers, true or false according to the form of the simplified u:
-  INTEGER?(u), RATIONAL?(u)  an integer, a rational number
+Tests of form: whether u, once simplified, is
+  INTEGER?(u), RATIONAL?(u)
+                     an integer, a rational number
   EVEN?(u), ODD?(u)  an even or odd integer
-  NUMBER?(u)         a rational number or a + b*#i with a and b rational;
-                     also NUMBER(u)
-  VARIABLE?(u), STRING?(u)  a variable, a string
-  SUM?(u), PRODUCT?(u)  a sum, a product or a quotient
+  NUMBER?(u)         a rational number, or a + b #i with a and b rational;
+                     NUMBER is the old name
+  VARIABLE?(u), STRING?(u)
+                     a variable, a string
+  SUM?(u), PRODUCT?(u)
+                     a sum, a product or quotient
   POWER?(u)          a power with a numeric exponent
-  VECTOR?(u), MATRIX?(u)  a vector, a vector of rows of one length
-  SET?(u), LOGICAL?(u)  an explicit set, true or false
-  IDENTICAL?(u, v)   whether u and v simplify to the same expression
+  VECTOR?(u), MATRIX?(u)
+                     a vector, a vector of rows of one length
+  SET?(u), LOGICAL?(u)
+                     an explicit set, true or false
+  IDENTICAL?(u, v)   u and v simplify to the same expression
 
-Types, true or false according to what u is known to be for every value of
-its variables:
-  INTEGER_TYPE?(u), REAL_TYPE?(u)  an integer, a real number
+Tests of type: whether u, for every value of its variables, is
+  INTEGER_TYPE?(u), REAL_TYPE?(u)
+                     an integer, a real number
   NUMBER_TYPE?(u)    a number, not a vector, set, string or truth value
   VECTOR_TYPE?(u)    a vector, or a variable declared Vector
   SET_TYPE?(u)       a set, or a variable declared Set
-  LOGICAL_TYPE?(u)   a truth value, a relation, a logical operation, or a
+  LOGICAL_TYPE?(u)   a truth value, relation or logical operation, or a
                      variable declared Logical
+Two more tests are listed elsewhere: PRIME? under number theory, MEMBER? under
+sets.
 
-Strings:
-  STRING(u)          a name, a constant, an integer or a decimal as text;
-                     otherwise the vector of the operator or function at the
-                     top of u and its operands: STRING(x + y) is ["+", x, y]
-  NAME_TO_CODES(s)   the character codes of a string, of a name, or of an
-                     integer's digits: NAME_TO_CODES("ab") is [97, 98]
-  CODES_TO_NAME(v)   the string of the codes in v, or the integer it spells
-
-Commands written as functions:
-  FACTOR(u), FACTOR(u, x, ...)   u factored, over all its variables or over
-                                 the ones named; the Factor command
-  FACTOR(u, amount, x, ...)      the same, as far as the amount says: Trivial,
-                                 Squarefree, Rational, raDical or Complex
-  FACTOR(A, Turing)              the matrix A as P . L . D . U . R:
-                                 permutation, unit lower triangular, pivots,
-                                 unit upper triangular, reduced echelon form
-  FACTOR(A, Schmidt)             A as Q . R by Gram-Schmidt; FACTORS in place
-                                 of FACTOR gives the factors as a vector
-  EXPAND(u), EXPAND(u, x, ...)   u expanded; the Expand command
-  EXPAND(u, amount, x, ...)      the same, with any amount but Complex
-
-Written this way, a command can be part of a larger expression or of a
-function's definition. SOLVE and APPROX are the soLve and approX commands in
-the same form.
-
-Calculus functions:
-  DIF(u, x), DIF(u, x, n)      the derivative, to the first or the nth order
-  INT(u, x)                    the indefinite integral
-  INT(u, x, c)                 the indefinite integral plus the constant c
-  INT(u, x, a, b)              the definite integral between a and b
-  LIM(u, x, a), LIM(u, x, a, d)  the limit at a; d > 0 from the right,
-                                 d < 0 from the left
-  SUM(u, k, a, b)              the sum over k from a to b
-  SUM(u, k, a, b, s)           the same, k stepping by s
-  SUM(u, k, c), SUM(v)         the sum over the elements of a vector or set
-  PRODUCT(u, k, a, b)          the product, with the same forms as SUM
-  TAYLOR(u, x, a, n)           the Taylor polynomial of degree n about a;
-                                 TAYLOR(u, x, n) about 0
-  SUBST_DIFF(u, x, a, b)       u at x = b minus u at x = a, as a limit
-                                 where u is undefined there
-
-Generating vectors and matrices:
-  VECTOR(u, k, ...)  u at each value k takes, as a vector
-  SELECT(u, k, ...)  the values of k for which the test u holds
-  ITERATES(u, x, a), ITERATES(u, x, a, n)  a, u(a), u(u(a)), as a vector
-  ITERATE(u, x, a), ITERATE(u, x, a, n)    the last element of that sequence
-  TABLE(u, k, ...)   the vector of the rows [k, u] at each value k takes; a
-                     vector u gives the row of k and its elements
-  IDENTITY_MATRIX(n) the n by n identity matrix
-
-The values an index runs over can be given in four ways, and VECTOR, TABLE
-and SELECT all read them alike: a count on its own, a first and a last, a
-first and a last and a step, or a vector or set of the values themselves.
-SELECT over a set gives a set. VECTOR over a vector of variables, with vectors
-of firsts, lasts and steps, runs over the grid of their values, the first
-variable fastest: VECTOR([a, b], [a, b], [0, 0], [1, 1]) is
-[[[0, 0], [1, 0]], [[0, 1], [1, 1]]].
-
-Vector manipulation functions:
-  DIM(v)                     how many elements v has
-  v SUB i, ELEMENT(v, i)     element i, counting from one, or from the right
-                             if i is negative; for a vector of indices, the
-                             vector of those elements
-  ELEMENT(m, i, j)           element j of row i of a matrix, m SUB i SUB j
-  FIRST(v)                   the first element
-  REST(v), REST(v, n)        all but the first element, or the first n; for
-                             a negative n, all but the last -n
-  ADJOIN(u, v)               u put before the elements of v
-  APPEND(v, w, ...)          the elements of each, joined into one vector
-  REVERSE(v)                 the elements in the other order
-  INSERT(u, v, n)            v with u written in before its nth element
-  DELETE(v, n), DELETE(v, w) v with its nth element gone, or the elements at
-                             each index in the vector w
-  REPLACE(u, v, n)           v with u where its nth element was
-  POSITION(u, v), POSITION(u, v, n)  the index of the first element of v
-                             that is u, from the nth on; false if none is
-  SORT(v)                    the elements in ascending order: numbers, then
-                             variables and strings by name, then other
-                             expressions; vectors by their first elements
-  SORT(v, p, x, y)           the elements ordered by the test p, an x moved
-                             before a y where p holds
-
-A matrix is a vector of its rows, so every one of these takes a matrix and
-works on rows. A string is a sequence of characters and an integer one of
-digits, in the output base, so "Derive" SUB 3 is "r", REVERSE(123) is 321 and
-APPEND("a", 1) is "a1". The older names DIMENSION, REVERSE_VECTOR,
-INSERT_ELEMENT, DELETE_ELEMENT and REPLACE_ELEMENT are read as the names above.
-
-Vector and matrix operations:
-  [a, b; c, d]       the matrix [[a, b], [c, d]], a row between semicolons
-  u.v                the dot product, or the matrix product
-  u DOTPRODUCT v     the dot product with the elements of v conjugated
-  CROSS(u, v), u CROSSPRODUCT v  the cross product of two three-element
-                     vectors
-  m ROW i, m COL j   row i and column j of a matrix; for a vector of indices,
-                     the matrix of those rows or columns
-  DET(m)             the determinant
-  TRACE(m)           the trace
-  ROW_REDUCE(m), ROW_REDUCE(m, b)  the reduced echelon form
-  RANK(m)            the rank
-  CHARPOLY(m, z)     the characteristic polynomial in z
-  EIGENVALUES(m)     the eigenvalues of m
-  EIGENVALUES(m, z)  the eigenvalues of m, as equations in z
-
-Sets:
-  {u, v, ...}        the set of u, v, ...; {} is the empty set
-  [a, b, ..., c]     the vector of a, b and on in steps of b - a, up to c
-  {a, b, ..., c}     the same as a set; without b, the step is 1
-  s UNION t          the union
-  s INTERSECTION t   the intersection
-  s\t                the difference, the elements of s not in t
-  s SUBSET t         whether every element of s is one of t
-  MEMBER?(u, s)      whether u is an element of the set or vector s
-  s`                 the complement
-  s*t                the Cartesian product, a set of vectors; s^n is the
-                     product of n copies
-  POWER_SET(s)       the set of all the subsets of s
-  POWER_SET(s, n)    the subsets of n elements
-  DIM(s)             how many elements s has
-  FIRST(s), REST(s)  the first element, the others; ADJOIN(u, s) adds u
-
-A set keeps each element once and lists numbers first, in ascending order.
-Elements are compared as simplified expressions: x + x and 2*x are one
-element, while a and b are two, so {a, b} INTERSECTION {c} is {}. On truth
-values UNION and INTERSECTION are OR and AND, and on sets AND, OR and NOT are
-the intersection, the union and the complement.
-
-Vector calculus:
-  GRAD(u), GRAD(u, a)          the gradient of a scalar field
-  DIV(v), DIV(v, a)            the divergence of a vector field
-  CURL(v), CURL(v, a)          the curl
-  LAPLACIAN(u), LAPLACIAN(u, a)  the divergence of the gradient
-  POTENTIAL(v), POTENTIAL(v, p)  a scalar whose gradient is v
-  VECTOR_POTENTIAL(v), VECTOR_POTENTIAL(v, p)  a vector whose curl is v
-Each of the six takes an optional vector of coordinates, so the same function
-serves cartesian, cylindrical and spherical coordinates.
-
-Programs:
-  PROG(s, t, ...)    the statements in order; the value is the last one's
-  LOOP(s, t, ...)    the statements over and over, until exit or RETURN
-  exit               leave the innermost LOOP or PROG, with the value of
-                     the statement that ran last
-  RETURN u           end the function being called, its value u
-  ASSIGN(v, u)       give the value u to the variable that v holds: after
-                     v := z, ASSIGN(v, 7) sets z
-  MAP_LIST(u, k, ...)  u at each value k takes, as VECTOR gives it; over a
-                     set, a set
-  MAP(u, k, ...)     run u at each value k takes; the answer is true
-  EVERY(u, k, ...)   whether the test u holds at every value
-  SOME(u, k, ...)    whether it holds at some value
-  DISPLAY(u)         add u to the worksheet as a line of text, above the answer
-  WRITE(u)           show u on the message line while the program runs
-  LOAD("file")       read a file of definitions, as Transfer Load Utility does
-
-LOAD finds a file by its name next to the worksheet, in the current directory
-or in its Math directory, so a Windows path in an old worksheet works once a
-file of that name is there. A line that is only a LOAD loads when entered.
-
-A function's parameters are its local variables. One that a call leaves out
-has no value until the body gives it one. Any other variable the body assigns
-is global, and assigning a setting, as in Precision := Approximate, changes
-the setting. Programs run when an expression is simplified, never when it is
-only entered.
-
-Functions that turn up in answers. Each can be typed back in, but they are
-rarely written by hand:
+Functions that appear in answers:
   INTERVAL(a, b)     a value known only to lie between a and b, such as the
                      limit of SIN(1/x) at zero
   ROOT_OF(p, t, n)   root number n of the polynomial p in t, counted from
-                     zero with the real roots first; for roots that have no
-                     formula
+                     zero, real roots first
   ROOT_SUM(p, t, u)  the sum of u over every root t of the polynomial p
-  SUBS(u, [x, ...], [a, ...])  u with a in place of x, where the replacement
-                               has to wait: the derivative of an undefined
-                               function at a point
+  SUBS(u, [x, ...], [a, ...])
+                     u with a in place of x, where that has to wait: the
+                     derivative of an undefined function at a point
 
-The functions of Derive's utility files are defined in every new session, with
-no file to load: DIVISORS, EULER_PHI, STIRLING, NEWTON, DSOLVE1, DSOLVE2,
-LAPLACE, TANGENT, BESSEL_J, LEGENDRE_P and the others its help describes, with
-the helpers they call. They are ordinary definitions: a definition of your own
-under the same name replaces one, and clearing the functions removes them
-until the next session.
+The functions of Derive's utility files are defined in every session without
+loading anything: DIVISORS, EULER_PHI, STIRLING, NEWTON, DSOLVE1, DSOLVE2,
+LAPLACE, TANGENT, BESSEL_J, LEGENDRE_P and the rest. A definition of your own
+under the same name replaces one.
 
 %topic Algebra | Algebra window commands | Algebra Window Command Menu
 
@@ -604,15 +685,15 @@ command that has begun to ask questions.
 
 Author        enter an expression as the next numbered entry, unsimplified
 Build         put an expression together from ones already on the screen
-Calculus      write a calculus expression for Simplify to work out
-  Differentiate  the derivative, to any order; a negative order integrates
-  Integrate      the integral, definite between two limits or indefinite
-  Limit          the limit at a point, approached from the left, right or both
-  Product        the product of an expression over a range of an index
-  Sum            the sum over the same range
-  Taylor         the Taylor polynomial about a point, to a given degree
-  Vector         the vector of an expression over a range of an index
-  tAble          the table of an index and an expression over a range of it
+Calculus      build a calculus expression; Simplify works it out
+  Differentiate  derivative of any order; a negative order integrates
+  Integrate      definite or indefinite integral
+  Limit          limit at a point, from the left, right or both sides
+  Product        product over a range of an index
+  Sum            sum over a range of an index
+  Taylor         Taylor polynomial about a point, to a given degree
+  Vector         vector of values over a range of an index
+  tAble          table of an index and the values over its range
 
 Declare       give a name a meaning
   Function       define a function of any number of variables
@@ -678,41 +759,27 @@ Window        split the screen, and move between the pieces
 
 approX        work an expression out as a number, to the precision now set
 
-Transfer Load Utility reads a file of definitions without numbering what it
-reads; use it to bring a library of functions into a session. The utility
-files written for the original Derive can be read this way.
+Transfer Load and Merge also read Derive for Windows worksheets (.dfw),
+without their plots.
 
-Transfer Load and Merge also read the worksheets Derive for Windows saves
-(.dfw files): their expressions and text, without plots, and the definitions
-and settings saved with them. Such a worksheet is saved back as a math file.
+Transfer Save can also write the highlighted expression as C, Python, Rust
+or Julia source.
 
-Transfer Save writes a worksheet in this program's own format, and also writes
-a highlighted expression out as C, Python, Rust or Julia source.
-
-Transfer Demo lists the original Derive's own demonstrations. Those files are
-not Rederive's to ship, so the first viewing of one downloads it from the
-Internet Archive. The download is held for as long as the program is running,
-and nothing is written to disk; use Transfer Save to keep what a demonstration
-leaves in the worksheet. A file of that name in the working directory - one you
-saved, or the original's own - is read instead of anything being downloaded.
-
-Plot draws the highlighted expression in a window of its own; the Plotting
-subject of this help covers the plot windows.
+Transfer Demo lists Derive's demonstrations and downloads each from the
+Internet Archive when first run. A file of the same name in the working
+directory is used instead.
 
 Algebra window key commands:
   F1           switch to the next window; while typing a line, this help
   Shift-F1     switch to the previous window
   F2           show the next of the worksheets opened over this window
-  Shift-F2     the previous one
+  Shift-F2     show the previous of those worksheets
   F6           switch the Left and Right keys between the line and the
                highlight
   Ctrl-C       copy what is selected, or the highlighted expression
   Ctrl-X       cut what is selected on the line being typed
   Ctrl-V       paste the clipboard onto the line being typed
   Esc          abandon the question being asked; stop a running computation
-
-A long computation shows on the message line how long it has been running.
-Esc stops it and leaves the worksheet unchanged.
 
 %topic Plot | Plotting expressions | Plotting Expressions
 

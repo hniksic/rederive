@@ -53,9 +53,57 @@ def test_a_narrower_pane_wraps_and_takes_more_pages():
 
 
 def test_a_wrapped_line_keeps_its_own_indent():
-    rows = helps._wrapped(("  F1    " + "word " * 30,), 40)
+    rows = helps._wrap("  F1    " + "word " * 30, 40)
     assert len(rows) > 1
     assert all(row.startswith("  ") for row in rows[1:])
+
+
+def _table(entries):
+    """A block for `_paginate`: a heading, then `entries` two-line entries."""
+    lines = ["Heading:"]
+    for number in range(entries):
+        lines += [f"  ENTRY{number}(u)", f"      what entry {number} gives"]
+    return helps._laid(tuple(lines), 80)
+
+
+def test_a_block_that_fits_on_the_next_page_moves_there_if_little_is_left():
+    # Four free rows of twenty are not worth dividing the second block for.
+    pages = helps._paginate([_table(7), _table(4)], 20)
+    assert [len(page) for page in pages] == [15, 9]
+
+
+def test_a_block_is_divided_between_entries_rather_than_leave_a_page_half_empty():
+    pages = helps._paginate([_table(4), _table(8)], 20)
+    assert [len(page) for page in pages] == [19, 8]
+    # The second block's heading and four whole entries end the first page.
+    assert pages[0][10] == "Heading:"
+    assert pages[0][-1] == "      what entry 3 gives"
+    assert pages[1][0] == "  ENTRY4(u)"
+
+
+def test_a_page_never_ends_on_a_heading_or_starts_inside_an_entry():
+    for first in range(1, 10):
+        for page in helps._paginate([_table(first), _table(12)], 20):
+            assert page[-1] != "Heading:"
+            assert not page[0].startswith("      ")
+
+
+def test_a_note_under_a_table_stays_with_its_last_entry():
+    note = ("Heading:", "  A(u)  one", "  B(u)  two", "  C(u)  three", "Here u is", "any.")
+    rows, breaks = helps._laid(note, 80)
+    assert breaks == {2, 3}
+
+
+def test_the_catalog_fills_its_pages():
+    pages = helps.pages(helps.BY_WORD["Catalog"], Settings(), 22, 80)
+    body = 22 - helps.TITLE_ROWS
+    assert all(len(page) - helps.TITLE_ROWS >= body * 3 / 4 for page in pages[:-1])
+
+
+def test_no_help_line_is_wider_than_eighty_columns():
+    for topic in helps.TOPICS:
+        for block in topic.blocks:
+            assert max(len(line) for line in block) <= 80
 
 
 def test_the_menu_page_gives_up_its_blank_lines_before_its_items():
@@ -87,8 +135,8 @@ def test_the_state_subject_lays_out_in_one_column_where_two_would_not_fit():
     assert len(narrow) > len(wide)
 
 
-def test_the_functions_subject_documents_every_built_in_name():
-    blocks = helps.BY_WORD["Functions"].blocks
+def test_the_catalog_subject_documents_every_built_in_name():
+    blocks = helps.BY_WORD["Catalog"].blocks
     text = "\n".join(line for block in blocks for line in block)
     documented = set(re.findall(r"#?\w+\??", text))
     built_in = (
@@ -109,7 +157,7 @@ async def test_help_opens_over_the_worksheet(app):
         assert work_area(app) == ["#1:  x + 1"]
         await pilot.press("h")
         assert band(app) == [
-            " HELP: Basics Editing Functions Algebra Plot State Resume"
+            " HELP: Basics Editing Functions Language Catalog Algebra Plot State Resume"
         ]
         assert highlighted(app) == "Basics"
         assert message(app) == "Enter option"
@@ -202,8 +250,7 @@ async def test_reading_the_editing_subject_through_ends_at_the_line(app):
     async with app.run_test() as pilot:
         await pilot.press("a", *"x^2+1")
         await pilot.press("f1")
-        editing = helps.BY_WORD[helps.EDITING]
-        for _ in range(len(helps.pages(editing, app.settings, 18, 80))):
+        for _ in range(app.helping.pages):
             await pilot.press("n")
         assert app.helping is None
         assert prompt(app) == ("AUTHOR expression:", "x^2+1")

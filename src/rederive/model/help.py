@@ -49,6 +49,9 @@ TITLE_ROWS = 2
 #: wrapped fragments in narrow panes.
 NARROW = 60
 
+#: The part of a page that is not left empty for the sake of keeping a block whole.
+_SPARE = 0.25
+
 #: Source file directives: start of a topic, and placeholder for the settings dump.
 _TOPIC = "%topic"
 _SETTINGS = "%settings"
@@ -112,12 +115,12 @@ def pages(topic: Topic, settings: Settings, rows: int, width: int) -> list[list[
     if topic.settings:
         blocks = _settings_blocks(settings)
         laid = (
-            _paginate(blocks, body)
+            _paginate([(block, set()) for block in blocks], body)
             if width < NARROW
             else _columns(blocks, body, width)
         )
     else:
-        laid = _paginate([_wrapped(block, width) for block in topic.blocks], body)
+        laid = _paginate([_laid(block, width) for block in topic.blocks], body)
     title = _centred(topic.title, width)
     return [[title, "", *page] for page in laid]
 
@@ -126,16 +129,12 @@ def _centred(text: str, width: int) -> str:
     return " " * max(0, (width - len(text)) // 2) + text
 
 
-def _wrapped(block: tuple[str, ...], width: int) -> list[str]:
-    """A block's source lines, each wrapped to `width`.
-
-    Continuation lines keep the original line's indent, so wrapped table rows stay
-    in their column. (Derive wrapped to the margin, even mid-word.)
-    """
-    return [row for line in block for row in _wrap(line, width)]
-
-
 def _wrap(line: str, width: int) -> list[str]:
+    """A source line wrapped to `width`.
+
+    Continuation rows keep the line's indent, so wrapped table rows stay in their
+    column. (Derive wrapped to the margin, even mid-word.)
+    """
     if len(line) <= width:
         return [line]
     indent = " " * (len(line) - len(line.lstrip()))
@@ -148,24 +147,58 @@ def _wrap(line: str, width: int) -> list[str]:
     ) or [""]
 
 
-def _paginate(blocks: list[list[str]], rows: int) -> list[list[str]]:
-    """Lay out whole blocks on pages, separated by blank lines.
+def _laid(block: tuple[str, ...], width: int) -> tuple[list[str], set[int]]:
+    """A block wrapped to `width`, and the rows a page may start at inside it.
 
-    A block that doesn't fit on the current page starts a new one; a block taller
-    than a page is split across pages.
+    A page starts only at an entry: a source line indented like the block's second.
+    So a heading is not an entry of the table under it, the deeper lines that continue
+    an entry stay with it, as do the rows a line wraps into, and a note written under
+    a table without a blank line stays with the table's last entry. Neither side of a
+    break is left with a single line.
+    """
+    indents = [len(line) - len(line.lstrip()) for line in block]
+    base = indents[1] if len(block) > 1 else 0
+    rows: list[str] = []
+    breaks: set[int] = set()
+    for index, line in enumerate(block):
+        if 2 <= index <= len(block) - 2 and indents[index] == base:
+            breaks.add(len(rows))
+        rows.extend(_wrap(line, width))
+    return rows, breaks
+
+
+def _paginate(
+    blocks: list[tuple[list[str], set[int]]], rows: int
+) -> list[list[str]]:
+    """Lay out blocks on pages, separated by blank lines.
+
+    Each block is a pair of its rows and the rows a page may start at, as `_laid`
+    gives. A block that fits in what is left of the page goes there whole. One that
+    doesn't is divided at the last such row that fits, if keeping it whole would
+    leave `_SPARE` of the page or more empty; otherwise it starts the next page. A
+    block taller than a page is divided the same way, or mid-entry where an entry is
+    itself taller than a page.
     """
     pages: list[list[str]] = []
     page: list[str] = []
-    for block in blocks:
-        if page and len(page) + 1 + len(block) > rows:
+    for lines, breaks in blocks:
+        while True:
+            gap = [""] if page else []
+            free = rows - len(page) - len(gap)
+            if len(lines) <= free:
+                page.extend(gap + lines)
+                break
+            cut = None
+            if not page or free >= rows * _SPARE:
+                cut = max((row for row in breaks if row <= free), default=None)
+            if cut is None and not page:
+                cut = free
+            if cut is not None:
+                page.extend(gap + lines[:cut])
+                lines = lines[cut:]
+                breaks = {row - cut for row in breaks if row > cut}
             pages.append(page)
             page = []
-        if page:
-            page.append("")
-        page.extend(block)
-        while len(page) > rows:
-            pages.append(page[:rows])
-            page = page[rows:]
     if page:
         pages.append(page)
     return pages or [[]]
