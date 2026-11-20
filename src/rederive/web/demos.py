@@ -30,12 +30,13 @@ from rederive.ui.app import RederiveApp
 
 __all__ = ["Demos"]
 
-#: Shown when a demo script starts, naming the command that runs it again.
-RUNNING = "{name} is in this page now; Transfer Demo runs it again by that name"
-
-#: Shown when a gallery starts. A gallery has a worksheet extension, so Demo wouldn't
-#: find it and a different command is named.
-DRAWING = "{name} is in this page now; Transfer Load Derive reads it by that name"
+#: Shown when a demonstration starts. Its word on the Transfer Demo menu, like the
+#: page's own menu, finds the file in the page, a script or a gallery alike, so it runs
+#: again without a download.
+RUNNING = (
+    "{name} is kept in this page now; its word on the Transfer Demo menu runs it again"
+    " without a download"
+)
 
 #: Shown when a demo is chosen before the app is running. The window is brief, since the
 #: button appears before the program does, but a silently ignored click would look like
@@ -114,8 +115,7 @@ class Demos:
         # `None`.
         if data:
             self._storage.keep(Path(demo.file), worksheet.decoded(received(data)))
-        said = DRAWING if demo.plotting else RUNNING
-        self._page.said(said.format(name=demo.file))
+        self._page.said(RUNNING.format(name=demo.file))
         # Schedule on the loop: this runs in a DOM callback, and a demonstration started
         # from here would never be drawn.
         self._app.call_next(self._app.demonstrate, demo.file, demo.plotting)

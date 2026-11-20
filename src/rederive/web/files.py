@@ -2,9 +2,15 @@
 
 * **Save** is handled by `platform.web.WebStorage` in the command itself: the file is
   downloaded and also kept in page storage under its name.
-* **A file picked or dropped** on the page arrives at `arrived`, as bytes, and goes
-  into storage, where the Load prompt can find it. It isn't loaded on arrival, since
-  Load replaces the worksheet and a dropped file shouldn't discard the current one.
+* **A command that reads a file**, such as Transfer Load, opens the browser's file
+  dialog through `choose`. The file picked arrives at `picked`, as bytes, goes into
+  storage under its name, and the command goes on as if that name had been typed at its
+  prompt. Where the dialog can't open, the command asks for the name as on the desktop.
+* **A file added or dropped** on the page arrives at `arrived` and goes into storage,
+  where a worksheet's `LOAD` finds it: the files a worksheet loads are named inside it,
+  and no dialog asks for them. It isn't loaded on arrival, since Load replaces the
+  worksheet and a dropped file shouldn't discard the current one. `unfound` tells the
+  user which files a `LOAD` missed, and how to supply them.
 * **A link** carries the worksheet in the URL fragment, which is never sent to a server.
   `linked` writes it there and `shared` reads it back on the next visit. It carries
   what Save would write, so a worksheet read from a Derive for Windows file goes as a
@@ -24,6 +30,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -70,14 +77,25 @@ TOO_LONG = (
     " Transfer Save writes it to a file instead"
 )
 
-#: Shown when a file is picked or dropped, naming the command that loads it.
-ARRIVED = "{name} is in this page now; Transfer Load Derive reads it by that name"
+#: Shown when a file is added or dropped, saying what finds it there.
+ARRIVED = "{name} is in this page now, where a worksheet's LOAD finds it"
 
 #: The same for a file the store has no room for, which only this visit has.
 ARRIVED_UNREMEMBERED = (
     "{name} is in this page until it is closed, with no room to remember it longer;"
-    " Transfer Load Derive reads it by that name"
+    " a worksheet's LOAD finds it until then"
 )
+
+#: Page notice for the files a `LOAD` could not find, with the remedy: the message line
+#: has already said that they could not be found.
+UNFOUND = (
+    "{names} {verb} not in this page. Drop {pronoun} on the page or add {pronoun} with"
+    " File > Add file..., then load again"
+)
+
+#: What a file dialog accepts besides the extensions a command reads, as the page's
+#: own picker does: a worksheet is plain text whatever it is called.
+ALSO_ACCEPTED = "text/plain"
 
 #: Shown when the worksheet in the address can't be decoded, usually because the link
 #: was truncated.
@@ -108,6 +126,11 @@ class Files:
         self._proxies: list[Any] = []
         #: Whether `settings` changed anything, for `opening` to report.
         self._restored = False
+        #: The command waiting on the file dialog, as the callbacks `choose` was given,
+        #: or None.
+        self._choosing: (
+            tuple[Callable[[str], str | None], Callable[[], None]] | None
+        ) = None
 
     # -- before the screen -------------------------------------------------
 
@@ -184,7 +207,13 @@ class Files:
         import js
         from pyodide.ffi import create_proxy, to_js
 
-        table = {"arrived": self.arrived, "linked": self.linked, "reset": self.reset}
+        table = {
+            "arrived": self.arrived,
+            "picked": self.picked,
+            "dismissed": self.dismissed,
+            "linked": self.linked,
+            "reset": self.reset,
+        }
         proxies = {name: create_proxy(call) for name, call in table.items()}
         leaving = create_proxy(self.remember)
         self._proxies = [*proxies.values(), leaving]
@@ -195,7 +224,68 @@ class Files:
         js.document.addEventListener("visibilitychange", leaving)
 
     def arrived(self, name: str, data: Any) -> None:
-        """Store a file the user picked or dropped, and tell them its name.
+        """Store a file the user added or dropped, and tell them its name."""
+        self._said_arrived(name, self._kept(name, data))
+
+    def choose(
+        self,
+        suffixes: tuple[str, ...],
+        chosen: Callable[[str], str | None],
+        dismissed: Callable[[], None],
+    ) -> bool:
+        """Open the file dialog for a command that reads a file, as the app's
+        `chooser`, and return whether it opened.
+
+        It doesn't without the user activation a browser requires of a dialog, which
+        the key that chose the command normally grants, or in a browser that can't open
+        one on request; the command then asks for the name instead.
+        """
+        if not self._page.choose(",".join([*suffixes, ALSO_ACCEPTED])):
+            return False
+        self._choosing = (chosen, dismissed)
+        return True
+
+    def picked(self, name: str, data: Any) -> None:
+        """Give the name of the file picked in the dialog to the command, and store
+        the file under the name the command reads it by.
+
+        A command that no longer wants it leaves it stored under its own name, as an
+        added file.
+        """
+        choosing, self._choosing = self._choosing, None
+        named = None if choosing is None else choosing[0](name)
+        if named is None:
+            self._said_arrived(name, self._kept(name, data))
+        else:
+            self._kept(named, data)
+
+    def dismissed(self) -> None:
+        """Abandon the command whose dialog was dismissed."""
+        choosing, self._choosing = self._choosing, None
+        if choosing is not None:
+            choosing[1]()
+
+    def unfound(self, names: list[str]) -> None:
+        """Tell the user how to supply the files a `LOAD` could not find, as the
+        app's `unfound`.
+
+        The notice is kept until the user dismisses it or another takes its place, as
+        the one for a file supplied does: it is an instruction, followed while the user
+        goes to find the files.
+        """
+        several = len(names) > 1
+        listed = names[0] if not several else f"{', '.join(names[:-1])} and {names[-1]}"
+        self._page.said(
+            UNFOUND.format(
+                names=listed,
+                verb="are" if several else "is",
+                pronoun="them" if several else "it",
+            ),
+            True,
+        )
+
+    def _kept(self, name: str, data: Any) -> bool:
+        """Store a file the page handed over, and say whether it will be remembered.
 
         The page hands over the file's bytes. A Derive for Windows worksheet is kept as
         them; anything else is text, decoded as on the desktop, so a file in the DOS
@@ -203,7 +293,11 @@ class Files:
         """
         raw = received(data)
         contents = raw if dfw.is_worksheet(raw) else worksheet.decoded(raw)
-        if self._storage.keep(Path(name), contents):
+        return self._storage.keep(Path(name), contents)
+
+    def _said_arrived(self, name: str, remembered: bool) -> None:
+        """Tell the user a file is in the page, and what finds it there."""
+        if remembered:
             self._page.said(ARRIVED.format(name=name))
         else:
             self._page.said(ARRIVED_UNREMEMBERED.format(name=name))

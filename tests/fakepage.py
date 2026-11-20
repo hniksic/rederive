@@ -436,6 +436,13 @@ class FakeTab:
         self.archive = {}
         #: Every file the page was asked to fetch, in order.
         self.fetched = []
+        #: Whether each notice is kept until dismissed, rather than fading by itself.
+        self.kept = []
+        #: Whether a file dialog opens when asked: a browser refuses one without user
+        #: activation, or without `showPicker`.
+        self.opens = True
+        #: What each file dialog opened accepts, in order.
+        self.dialogs = []
 
     async def brought(self, file):
         """The download `demos.js` performs, as awaited from Python."""
@@ -450,8 +457,14 @@ class FakeTab:
     def download(self, name, text):
         self.downloads.append((name, text))
 
-    def said(self, text):
+    def said(self, text, kept=False):
         self.notices.append(text)
+        self.kept.append(kept)
+
+    def choose(self, accept):
+        if self.opens:
+            self.dialogs.append(accept)
+        return self.opens
 
     def address(self, fragment):
         self.fragment = fragment

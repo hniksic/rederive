@@ -8,10 +8,12 @@
 //
 // * **Save downloads.** A worksheet leaves the tab the only way anything
 //   leaves a tab, as a file the browser puts wherever the user keeps them.
-// * **A file comes in by being handed over**, picked with the button or
-//   dropped on the page. Neither can be asked for by the program: a picker
-//   opens on a click and on nothing else, which is why this is page furniture
-//   and not a command.
+// * **A file comes in by being handed over.** A command that reads a file
+//   opens the browser's file dialog, which a browser allows only for a few
+//   seconds after a key or a click: the keypress that chose the command is
+//   what lets it open, and where it cannot, the program asks for a name
+//   instead. The files a worksheet loads are named inside it, and are handed
+//   over beforehand, picked with the menu's button or dropped on the page.
 // * **A link is the address.** The worksheet goes in the fragment, which is
 //   the half of a URL no server is ever sent, so a shared link carries the
 //   mathematics and tells nobody about it.
@@ -36,6 +38,7 @@ let terminal = null;
 let handlers = null;
 let notice = null;
 let timer = null;
+let chooser = null;
 
 // Called by the page as it builds itself, and before Python knows anything
 // about any of this: the DOM is wired here, and what the controls *do* arrives
@@ -45,6 +48,10 @@ let timer = null;
 export function wire(term) {
   terminal = term;
   notice = document.getElementById('notice');
+  notice.addEventListener('click', () => {
+    unsaid();
+    focus();
+  });
   const menu = dropdown(term, named('page'), named('gestures'));
   // A choice closes the menu, whatever it was: the one that leaves the page
   // included, since the tab it opens takes the pointer with it.
@@ -59,6 +66,26 @@ export function wire(term) {
   picker.addEventListener('change', () => {
     take(picker.files);
     focus();
+  });
+  // The command's dialog has an input of its own, which takes one file and
+  // passes it to the command rather than to the store alone. `cancel` is a
+  // dismissed dialog, which abandons the command.
+  chooser = document.getElementById('chooser');
+  chooser.addEventListener('change', () => {
+    const file = chooser.files[0];
+    focus();
+    if (file === undefined || !ready()) return;
+    file
+      .arrayBuffer()
+      .then((buffer) => handlers.picked(file.name, new Uint8Array(buffer)))
+      .catch((error) => {
+        said(`${file.name} could not be read: ${error}`);
+        handlers.dismissed();
+      });
+  });
+  chooser.addEventListener('cancel', () => {
+    focus();
+    if (ready()) handlers.dismissed();
   });
   named('link').addEventListener('click', () => {
     if (ready()) handlers.linked();
@@ -79,9 +106,10 @@ export function wire(term) {
   });
 }
 
-// Python's side of the controls: what to do with a file that arrived, what to
-// put in the address, and what a reset of the settings is. Held rather than
-// called, since none of it happens until the user asks.
+// Python's side of the controls: what to do with a file that arrived or was
+// picked for a command, what to put in the address, and what a reset of the
+// settings is. Held rather than called, since none of it happens until the
+// user asks.
 export function attend(given) {
   handlers = given;
 }
@@ -121,16 +149,46 @@ export function written() {
   return wrote;
 }
 
+// The file dialog for a command that reads a file, accepting what `accept`
+// lists, and whether it opened. It does not without the user activation the
+// browser requires, which the key that chose the command grants for a few
+// seconds, nor in a browser without `showPicker`, where a `click` that the
+// browser ignores would leave the program waiting on a dialog nobody sees.
+export function choose(accept) {
+  if (chooser === null) return false;
+  if (typeof chooser.showPicker !== 'function') return false;
+  const activation = navigator.userActivation;
+  if (activation !== undefined && !activation.isActive) return false;
+  // Cleared for the same reason as the menu's picker.
+  chooser.value = '';
+  chooser.accept = accept;
+  try {
+    chooser.showPicker();
+  } catch {
+    return false;
+  }
+  return true;
+}
+
 // What this file has instead of the program's message line, for the things
 // that happen beside the program rather than inside it: a file dropped on the
-// page, a link made, a store with no room left. It fades by itself, because
-// nothing here is worth a dismissal.
-export function said(text) {
+// page, a link made, a store with no room left. A click on it dismisses it.
+// A remark fades by itself; an instruction to follow is `kept`, and stays
+// until it is dismissed or the next notice takes its place, since how long
+// following it takes is not the page's to guess. A kept notice shows a mark
+// to click, so that it does not look like something to be waited out.
+export function said(text, kept = false) {
   if (notice === null) return;
   notice.textContent = text;
+  notice.classList.toggle('kept', kept);
   notice.hidden = false;
   clearTimeout(timer);
-  timer = setTimeout(() => { notice.hidden = true; }, NOTICE_SECONDS * 1000);
+  if (!kept) timer = setTimeout(unsaid, NOTICE_SECONDS * 1000);
+}
+
+function unsaid() {
+  clearTimeout(timer);
+  notice.hidden = true;
 }
 
 // -- what the gestures produce ------------------------------------------------

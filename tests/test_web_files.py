@@ -1,4 +1,5 @@
-"""File handling in the browser, tested without one: the store, downloads, and links.
+"""File handling in the browser, tested without one: the store, downloads, links, and
+the file dialog of a command that reads a file.
 
 A browser has no filesystem, only the store, downloads and the link, so these tests
 check which of them a file went through and what the user was told. All the Python is
@@ -15,11 +16,13 @@ from pathlib import Path
 import pytest
 from dfwsheet import Sheet
 from fakepage import Clipboard, FakeTab, Store, browser
+from screen import band, message, prompt
 
 from rederive import platform
 from rederive.model import worksheet
 from rederive.model.session import Session
 from rederive.platform.web import CLIPBOARD_REFUSED, KEPT, Web, WebStorage
+from rederive.ui.app import CHOOSING_FILE, ENTER_OPTION, RederiveApp
 from rederive.web import files as gestures
 from rederive.web.files import Files
 
@@ -357,12 +360,11 @@ def test_a_reset_puts_the_settings_back_for_this_visit_and_the_next(page, storag
 # -- files arriving unrequested -----------------------------------------------
 
 
-def test_a_dropped_file_names_the_command_that_reads_it(page, storage):
-    """It arrived unrequested, so the notice says how to open it."""
+def test_a_dropped_file_says_what_finds_it(page, storage):
+    """It arrived unrequested, so the notice says what it is there for."""
     Files(page, Session(), storage).arrived("theirs.mth", b"x^3\n")
     assert storage.read(Path("theirs.mth")) == b"x^3\n"
-    assert "theirs.mth" in page.notices[-1]
-    assert "Transfer Load Derive" in page.notices[-1]
+    assert page.notices[-1] == gestures.ARRIVED.format(name="theirs.mth")
 
 
 # -- worksheets of Derive for Windows, which are binary -------------------------
@@ -382,7 +384,7 @@ def test_a_dropped_worksheet_is_kept_as_its_bytes_and_loads(page, storage):
     data = _worksheet("x^2", "#1+1")
     Files(page, Session(), storage).arrived(DFW.name, data)
     assert storage.read(DFW) == data
-    assert "Transfer Load Derive" in page.notices[-1]
+    assert page.notices[-1] == gestures.ARRIVED.format(name=DFW.name)
     session = Session()
     session.load(DFW)
     assert [entry.text for entry in session.entries] == ["x^2", "#1+1"]
@@ -455,3 +457,202 @@ def test_a_worksheet_is_linked_as_the_math_file_it_saves_as(page, storage):
     arrived = Session()
     Files(page, arrived, again(page, hash=page.fragment)).shared()
     assert [entry.text for entry in arrived.entries] == ["x^2"]
+
+
+# -- the file dialog of a command that reads a file -------------------------------
+
+
+def _app(page, storage):
+    """The app with the page's file operations attached, as `web.boot` does."""
+    app = RederiveApp()
+    files = Files(page, app.session, storage)
+    files.attend()
+    app.chooser = files.choose
+    app.unfound = files.unfound
+    return app
+
+
+def _prompted(app):
+    """Whether the file prompt is up."""
+    return app.query_one("#prompt-band").display
+
+
+async def test_load_opens_the_dialog_and_loads_the_file_picked(page, storage):
+    """The command asks the page for a file instead of a name, and the file picked is
+    stored under its name and loaded as if that name had been typed."""
+    app = _app(page, storage)
+    async with app.run_test() as pilot:
+        await pilot.press("t", "l", "d")
+        assert page.dialogs == [".mth,.dfw,text/plain"]
+        assert not _prompted(app)
+        assert message(app) == CHOOSING_FILE
+        page.handlers["picked"]("theirs.mth", b"x^2\n#1 + 1\n")
+        await pilot.pause()
+        assert [entry.text for entry in app.session.entries] == ["x^2", "#1+1"]
+        assert app.session.file == Path("theirs.mth")
+        assert storage.read(Path("theirs.mth")) == b"x^2\n#1 + 1\n"
+        assert not _prompted(app)
+        assert band(app)[0].startswith(" COMMAND:")
+        assert message(app) == ENTER_OPTION
+        # Loading tells the user nothing about the page: the file is already loaded.
+        assert page.notices == []
+
+
+async def test_a_picked_worksheet_of_derive_for_windows_loads_as_its_bytes(page, storage):
+    app = _app(page, storage)
+    async with app.run_test() as pilot:
+        await pilot.press("t", "l", "d")
+        page.handlers["picked"](DFW.name, _worksheet("x^3"))
+        await pilot.pause()
+        assert [entry.text for entry in app.session.entries] == ["x^3"]
+
+
+async def test_a_picked_file_without_an_extension_loads(page, storage):
+    """At the prompt a name without an extension gets the command's, so the file is
+    read, and stored, under that name, rather than not found under its own."""
+    app = _app(page, storage)
+    async with app.run_test() as pilot:
+        await pilot.press("t", "l", "d")
+        page.handlers["picked"]("notes", b"x + 2\n")
+        await pilot.pause()
+        assert [entry.text for entry in app.session.entries] == ["x+2"]
+        assert not _prompted(app)
+        assert message(app) == ENTER_OPTION
+        assert storage.read(Path("notes.mth")) == b"x + 2\n"
+
+
+@pytest.mark.parametrize(
+    ("keys", "accepted"),
+    [
+        (("t", "m"), ".mth,.dfw,text/plain"),
+        (("t", "l", "s"), ".ini,text/plain"),
+        (("t", "l", "t"), ".dat,text/plain"),
+        (("t", "l", "u"), ".mth,.dfw,text/plain"),
+        (("t", "d", "o"), ".dmo,text/plain"),
+    ],
+)
+async def test_every_command_that_reads_a_file_opens_the_dialog(
+    page, storage, keys, accepted
+):
+    app = _app(page, storage)
+    async with app.run_test() as pilot:
+        await pilot.press(*keys)
+        assert page.dialogs == [accepted]
+        assert not _prompted(app)
+
+
+async def test_a_command_that_writes_a_file_still_asks_for_its_name(page, storage):
+    """A save goes out as a download, which the name typed names."""
+    app = _app(page, storage)
+    async with app.run_test() as pilot:
+        authored = app.session
+        authored.author("x")
+        await pilot.press("t", "s", "d")
+        assert page.dialogs == []
+        assert prompt(app)[0] == "TRANSFER SAVE DERIVE file:"
+
+
+async def test_a_dismissed_dialog_lands_where_esc_at_the_prompt_does(page, storage):
+    app = _app(page, storage)
+    async with app.run_test() as pilot:
+        page.opens = False
+        await pilot.press("t", "l", "d", "escape")
+        typed = (band(app), message(app))
+        await pilot.press("escape", "escape")
+        page.opens = True
+        await pilot.press("t", "l", "d")
+        page.handlers["dismissed"]()
+        await pilot.pause()
+        assert (band(app), message(app)) == typed
+        assert not _prompted(app)
+        assert app.session.entries == []
+
+
+async def test_a_dialog_that_will_not_open_leaves_the_name_prompt(page, storage):
+    """Without user activation, or `showPicker`, the page refuses, and the command asks
+    for the name as on the desktop, finding a file added to the page by it."""
+    Files(page, Session(), storage).arrived("theirs.mth", b"y\n")
+    page.opens = False
+    app = _app(page, storage)
+    async with app.run_test() as pilot:
+        await pilot.press("t", "l", "d")
+        assert prompt(app)[0] == "TRANSFER LOAD DERIVE file:"
+        await pilot.press(*"theirs", "enter")
+        assert [entry.text for entry in app.session.entries] == ["y"]
+
+
+async def test_a_file_picked_after_the_program_moved_on_is_only_kept(page, storage):
+    """A dialog that never said it was dismissed leaves no command waiting on it."""
+    app = _app(page, storage)
+    async with app.run_test() as pilot:
+        await pilot.press("t", "l", "d", "escape", "escape", "a")
+        page.handlers["picked"]("late.mth", b"z\n")
+        await pilot.pause()
+        assert app.session.entries == []
+        assert storage.read(Path("late.mth")) == b"z\n"
+        assert page.notices == [gestures.ARRIVED.format(name="late.mth")]
+
+
+async def test_a_picked_file_that_cannot_be_read_leaves_its_name_up(page, storage):
+    """As a typed name does, for correction."""
+    app = _app(page, storage)
+    async with app.run_test() as pilot:
+        await pilot.press("t", "l", "u")
+        page.handlers["picked"]("bad.mth", b"x\n")
+        storage.read = lambda path: (_ for _ in ()).throw(PermissionError(path))
+        await pilot.pause()
+        assert prompt(app) == ("TRANSFER LOAD UTILITY file:", "bad.mth")
+        assert message(app) == "Cannot read file"
+
+
+# -- the files a worksheet loads ------------------------------------------------
+
+
+async def test_a_worksheet_whose_load_misses_a_file_says_how_to_supply_it(page, storage):
+    """The message line says what could not be found, and the page says how to add
+    it, for long enough to follow."""
+    app = _app(page, storage)
+    async with app.run_test() as pilot:
+        await pilot.press("t", "l", "d")
+        page.handlers["picked"]("main.mth", b'LOAD("other.mth")\nx\n')
+        await pilot.pause()
+        assert message(app) == "other.mth could not be found"
+        assert page.notices == [
+            "other.mth is not in this page. Drop it on the page or add it with"
+            " File > Add file..., then load again"
+        ]
+        assert page.kept == [True]
+        # Supplied, the same worksheet loads it.
+        Files(page, app.session, storage).arrived("other.mth", b"f(x) := x^2\n")
+        await pilot.press("t", "l", "d")
+        page.handlers["picked"]("main.mth", b'LOAD("other.mth")\nx\n')
+        await pilot.pause()
+        assert message(app) == ENTER_OPTION
+        assert len(page.notices) == 2
+
+
+async def test_a_load_typed_at_the_author_line_says_how_to_supply_its_file(
+    page, storage
+):
+    app = _app(page, storage)
+    async with app.run_test() as pilot:
+        await pilot.press("a", *'LOAD("a.mth")', "enter")
+        assert message(app) == "a.mth could not be found"
+        assert page.notices == [
+            "a.mth is not in this page. Drop it on the page or add it with"
+            " File > Add file..., then load again"
+        ]
+
+
+async def test_every_file_a_load_missed_is_named_once(page, storage):
+    app = _app(page, storage)
+    async with app.run_test() as pilot:
+        await pilot.press("t", "l", "d")
+        page.handlers["picked"](
+            "main.mth", b'LOAD("a.mth")\nLOAD("b.mth")\nLOAD("a.mth")\n'
+        )
+        await pilot.pause()
+        assert page.notices == [
+            "a.mth and b.mth are not in this page. Drop them on the page or add them"
+            " with File > Add file..., then load again"
+        ]

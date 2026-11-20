@@ -254,11 +254,12 @@ def test_a_name_that_is_on_no_list_runs_nothing(demos, page, app):
 def test_the_notice_names_the_command_that_runs_it_again(demos, page):
     chose(page, "ALGEBRA.DMO", SCRIPT)
     chose(page, "PLOT2D.MTH", GALLERY)
-    # Demo reads a script and Load reads a worksheet, and a gallery is a worksheet, so
-    # each notice must name the right command.
+    # Transfer Demo's menu finds a gallery in the page as it finds a script.
     assert page.notices == [
-        "ALGEBRA.DMO is in this page now; Transfer Demo runs it again by that name",
-        "PLOT2D.MTH is in this page now; Transfer Load Derive reads it by that name",
+        "ALGEBRA.DMO is kept in this page now; its word on the Transfer Demo menu runs"
+        " it again without a download",
+        "PLOT2D.MTH is kept in this page now; its word on the Transfer Demo menu runs"
+        " it again without a download",
     ]
 
 

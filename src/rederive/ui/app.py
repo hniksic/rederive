@@ -450,6 +450,8 @@ SAVE_SOURCE_PROMPT = " TRANSFER SAVE {word} file: "
 SAVE_STATE_PROMPT = " TRANSFER SAVE STATE file: "
 DEMO_PROMPT = " TRANSFER DEMO OTHER file: "
 ENTER_FILE = "Enter filename (TAB completes, opens the list)"
+#: Shown while a file dialog is open for a command that reads a file; see `Chooser`.
+CHOOSING_FILE = "Choose the file in the dialog"
 #: Message line text while the completion list is open, listing its keys.
 BROWSING_FILES = "↑↓ choose   ENTER open   ESC close"
 FILE_NOT_FOUND = "File not found"
@@ -720,6 +722,17 @@ CALCULUS_COMMANDS: dict[str, Calculus] = {
         lambda values: _needed(values, "TableEnd", "TableStart", "TableStep"),
     ),
 }
+
+
+#: A file dialog for a command that reads a file, as `RederiveApp.chooser`. It is
+#: called with the extensions the command reads, a callback for the name of the file
+#: picked, and one for a dismissed dialog, and returns whether a dialog opened; where
+#: none did, the command asks for the name at its prompt. The name callback returns the
+#: name the command reads the file by, which the chooser stores it under, or None if the
+#: command no longer wants it. Either callback may be called from outside the app's loop.
+Chooser = Callable[
+    [tuple[str, ...], Callable[[str], str | None], Callable[[], None]], bool
+]
 
 
 @dataclass
@@ -1247,6 +1260,18 @@ class RederiveApp(App[None]):
         #: Fetches one of Derive's demos. Uses sockets by default; in a browser tab,
         #: `rederive.web.demos` replaces it with a browser-based fetch.
         self.fetcher: Callable[[catalogue.Demo], Awaitable[bytes]] = self._downloaded
+        #: Opens a file dialog for a command that reads a file, or None where the name
+        #: prompt is the only way to name one. In a browser tab, which can't name a file
+        #: on disk, only have one picked, `rederive.web.files` supplies it; see
+        #: `Chooser`.
+        self.chooser: Chooser | None = None
+        #: The command whose file dialog is open, as `_ask_name` partially applied,
+        #: or None.
+        self.choosing: Callable[[str], None] | None = None
+        #: Told the files a `LOAD` could not find, once the command that looked for them
+        #: is done. The message line names them everywhere; a browser tab also says how
+        #: to supply them.
+        self.unfound: Callable[[list[str]], None] | None = None
         #: Demos downloaded in this run, by Derive's file name. They are kept in memory
         #: and not written to disk, so a repeat viewing is instant but the next run
         #: downloads again.
@@ -1520,6 +1545,12 @@ class RederiveApp(App[None]):
             self._flags(),
             f"{self.TITLE} {self.windows.kind}",
         )
+        # A command is done once the screen is drawn outside a computation, which may
+        # perform several `LOAD`s between the redraws it makes while it runs.
+        if self.mode != MODE_COMPUTE:
+            unfound = self.session.take_unfound()
+            if unfound and self.unfound is not None:
+                self.unfound(unfound)
 
     def _flags(self) -> str:
         """The mode indicators for the status line, where Derive shows them.
@@ -3836,16 +3867,16 @@ class RederiveApp(App[None]):
         )
 
     def _command_load(self) -> None:
-        self._ask_file(LOAD_PROMPT, self._load, worksheet.READABLE)
+        self._read_file(LOAD_PROMPT, self._load, worksheet.READABLE)
 
     def _command_merge(self) -> None:
-        self._ask_file(MERGE_PROMPT, self._merge, worksheet.READABLE)
+        self._read_file(MERGE_PROMPT, self._merge, worksheet.READABLE)
 
     def _command_load_data(self) -> None:
-        self._ask_file(LOAD_DATA_PROMPT, self._load_data, worksheet.DATA_SUFFIX)
+        self._read_file(LOAD_DATA_PROMPT, self._load_data, worksheet.DATA_SUFFIX)
 
     def _command_load_utility(self) -> None:
-        self._ask_file(LOAD_UTILITY_PROMPT, self._load_utility, worksheet.READABLE)
+        self._read_file(LOAD_UTILITY_PROMPT, self._load_utility, worksheet.READABLE)
 
     def _command_save_state(self) -> None:
         self._ask_file(
@@ -3853,9 +3884,80 @@ class RederiveApp(App[None]):
         )
 
     def _command_load_state(self) -> None:
-        self._ask_file(
+        self._read_file(
             LOAD_STATE_PROMPT, self._load_state, state.SUFFIX, offered=self.state_file
         )
+
+    def _read_file(
+        self,
+        label: str,
+        command: Callable[[str], None],
+        suffix: str | tuple[str, ...] = worksheet.SUFFIX,
+        offered: str | None = None,
+    ) -> None:
+        """Ask for the file a command reads: in the `chooser`'s dialog if there is one
+        and it opens, else at the name prompt, as `_ask_file`.
+
+        A file picked runs the command as if its name had been typed at the prompt, and
+        a dismissed dialog abandons the command as Esc at the prompt does. Only the name
+        of the file picked comes back, and the chooser stores the file where that name
+        finds it.
+        """
+        if self.chooser is not None:
+            choosing = partial(self._ask_name, label, command, suffix)
+            suffixes = (suffix,) if isinstance(suffix, str) else suffix
+            self.choosing = choosing
+            if self.chooser(
+                suffixes,
+                partial(self._chose_file, choosing, suffixes[0]),
+                partial(self._dismissed_file, choosing),
+            ):
+                self._set_message(CHOOSING_FILE)
+                return
+            self.choosing = None
+        self._ask_file(label, command, suffix, offered)
+
+    def _chose_file(
+        self, choosing: Callable[[str], None], suffix: str, name: str
+    ) -> str | None:
+        """Take the name of the file picked in the dialog, returning the name the
+        command reads it by, or None if the command no longer wants it.
+
+        It doesn't once the program has moved on, which a dialog that never reported
+        its dismissal allows. The chooser calls this from outside the app's loop, so the
+        command is scheduled on the loop rather than run here.
+
+        The name read by is the one picked, except that a name without an extension
+        gets `suffix`: at the prompt such a name is one with the command's extension, so
+        a file picked without one would otherwise not be found under its own name.
+        """
+        if self.choosing is not choosing or self.mode != MODE_MENU:
+            return None
+        self.choosing = None
+        named = str(worksheet.path_of(name, suffix))
+        self.call_next(self._picked, choosing, named)
+        return named
+
+    def _picked(self, choosing: Callable[[str], None], name: str) -> None:
+        """Put the name of the file picked on the command's prompt, and enter it.
+
+        A file that can't be read leaves the prompt up with its name, as a typed one
+        does. Enter comes once the line has taken the focus, which it does after this
+        returns, and which would otherwise outlast a command that hid the line.
+        """
+        choosing(name)
+        self.call_later(self._enter_picked, name)
+
+    def _enter_picked(self, name: str) -> None:
+        if self.mode == MODE_FILE:
+            self._named(name)
+
+    def _dismissed_file(self, choosing: Callable[[str], None]) -> None:
+        """Abandon the command whose dialog was dismissed, as Esc at its prompt does."""
+        if self.choosing is not choosing:
+            return
+        self.choosing = None
+        self.call_next(partial(self._end_prompt, done=False))
 
     def _ask_file(
         self,
@@ -3872,11 +3974,21 @@ class RederiveApp(App[None]):
         The line completes files ending in `suffix`, or in any of several, and
         directories.
         """
+        if offered is None:
+            offered = "" if self.session.file is None else str(self.session.file)
+        self._ask_name(label, command, suffix, offered)
+
+    def _ask_name(
+        self,
+        label: str,
+        command: Callable[[str], None],
+        suffix: str | tuple[str, ...],
+        offered: str,
+    ) -> None:
+        """Show the file prompt with `offered` on the line; see `_ask_file`."""
         self.file_command = command
         self.file_suffix = suffix
         self._close_list()
-        if offered is None:
-            offered = "" if self.session.file is None else str(self.session.file)
         self._prompt(MODE_FILE, label, offered, ENTER_FILE)
         self.query_one("#prompt-input", Input).suggester = FileNames(suffix)
 
@@ -4123,7 +4235,7 @@ class RederiveApp(App[None]):
     # -- Transfer Demo -----------------------------------------------------
 
     def _command_demo(self) -> None:
-        self._ask_file(DEMO_PROMPT, self._demo, worksheet.DEMO_SUFFIX)
+        self._read_file(DEMO_PROMPT, self._demo, worksheet.DEMO_SUFFIX)
 
     def _command_demonstration(self, demo: catalogue.Demo) -> None:
         """Run one of Derive's demos, downloading it if needed.

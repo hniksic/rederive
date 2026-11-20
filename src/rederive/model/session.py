@@ -465,6 +465,9 @@ class Session:
         #: last text a program's `WRITE` wrote, or what a `LOAD` could not find or
         #: take. The app takes it with `take_notice`.
         self.notice: str | None = None
+        #: The files a `LOAD` could not find, since the app last took them with
+        #: `take_unfound`; a browser tab says how to supply them.
+        self.unfound: list[str] = []
         self.settings.watch(self._settings_changed)
         self._settings_changed(PARSING_SETTINGS)
 
@@ -1400,6 +1403,12 @@ class Session:
         if hasattr(self.runner, "progress"):
             self.runner.progress = listener
 
+    def take_unfound(self) -> list[str]:
+        """The files a `LOAD` could not find since this was last asked (see
+        `unfound`), each named once."""
+        unfound, self.unfound = self.unfound, []
+        return unfound
+
     def take_notice(self) -> str | None:
         """What the last command has to say beyond its answer, if anything (see
         `notice`); it is said once."""
@@ -2071,16 +2080,22 @@ class Session:
         path = worksheet.located(written, near)
         report = LoadReport()
         if path is None:
-            report.missing.append(worksheet.file_name(written))
-            return False, report
+            return False, self._unfound(report, written)
         if any(worksheet.same_file(path, other) for other in self._loading):
             return True, report
         try:
             report.extend(self.load_utility(path))
         except OSError:
-            report.missing.append(worksheet.file_name(written))
-            return False, report
+            return False, self._unfound(report, written)
         return True, report
+
+    def _unfound(self, report: LoadReport, written: str) -> LoadReport:
+        """Add the file `LOAD(written)` could not find to `report`, and to `unfound`."""
+        name = worksheet.file_name(written)
+        report.missing.append(name)
+        if name not in self.unfound:
+            self.unfound.append(name)
+        return report
 
     @contextmanager
     def reading_file(self, path: Path | None = None) -> Iterator[None]:

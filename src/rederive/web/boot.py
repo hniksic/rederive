@@ -150,6 +150,10 @@ async def start(
         files.welcome,
     )
     files.attend()
+    # A command that reads a file asks the page's file dialog for it, and a `LOAD` that
+    # misses a file is told to the page, which says how to supply it.
+    app.chooser = files.choose
+    app.unfound = files.unfound
     # Kept alive while the program runs, since it holds the proxies the menu calls;
     # otherwise JS would call freed callbacks.
     demonstrations = Demos(demos, app, platform.current().storage())

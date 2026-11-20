@@ -35,8 +35,8 @@
   .xterm-viewport { overflow: hidden !important; }
 
   /* The page's own controls: two buttons in a corner, each with a menu under
-     it - under one the gestures a tab has that a terminal cannot ask for,
-     opening a file and making a link out of the address, with the page's
+     it - under one the gestures a tab has that a terminal does not, bringing
+     files in and making a link out of the address, with the page's
      housekeeping beside them, and the original's demonstrations under the
      other. They stay faded until pointed at, since the program owns the screen
      and these are the page around it. */
@@ -143,12 +143,14 @@
     #chrome .menu-item { padding: 8px; }
   }
   /* What the page says for itself, about the things that happen beside the
-     program rather than inside it. The message line belongs to Rederive. */
+     program rather than inside it. The message line belongs to Rederive. It is
+     under the page's menus, which open where it stands: a notice that names a
+     menu item must not cover it. */
   #notice {
     position: fixed;
     top: 38px;
     right: 10px;
-    z-index: 20;
+    z-index: 19;
     max-width: min(46ch, 80vw);
     padding: 6px 10px;
     background: rgba(17, 17, 23, 0.94);
@@ -157,7 +159,16 @@
     color: #dde3ec;
     font: 12px "DejaVu Sans", "Liberation Sans", system-ui, sans-serif;
     line-height: 1.35;
+    cursor: pointer;
   }
+  /* A notice that stays until it is dismissed shows what dismisses it. */
+  #notice.kept::after {
+    content: "\00d7";
+    margin-left: 10px;
+    font-size: 14px;
+    opacity: 0.7;
+  }
+  #notice.kept:hover::after { opacity: 1; }
 
   /* The plot panes are the desktop's plot windows, in the one place a page has
      for a window: a layer over everything, which lets the pointer through
@@ -441,7 +452,7 @@
     </button>
     <div id="gestures" class="menu" hidden>
       <button id="pick" type="button" class="menu-item" data-program
-              title="Bring a file into this page, for Transfer Load to read">
+              title="Bring files into this page, for a worksheet's LOAD to find">
         Add file...
       </button>
       <button id="link" type="button" class="menu-item" data-program
@@ -472,12 +483,14 @@
     <div id="gallery" class="menu" hidden></div>
   </div>
 </div>
-<!-- A file picker opens on a click and on nothing a program can do, which is
-     why the input is here rather than made when it is wanted. `.mth` and its
-     neighbours are what the Transfer commands read; anything else can still be
-     chosen, since a worksheet is plain text whatever it is called. -->
+<!-- The menu's picker, for the files a worksheet loads, and the dialog of a
+     command that reads a file, which takes one and whose extensions the command
+     sets. `.mth` and its neighbours are what the Transfer commands read;
+     anything else can still be chosen, since a worksheet is plain text whatever
+     it is called. -->
 <input id="picker" type="file" accept=".mth,.dmo,.dat,.ini,text/plain" multiple hidden>
-<div id="notice" hidden></div>
+<input id="chooser" type="file" hidden>
+<div id="notice" title="Click to dismiss" hidden></div>
 <!-- The UMD builds, which is what xterm ships for a plain script tag: each
      leaves one global behind, and `main.js` is the only thing that reads
      them. Everything here is served from beside this file - the build names no
