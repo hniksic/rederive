@@ -28,6 +28,7 @@ from screen import (
 
 from rederive import fetch
 from rederive.model import worksheet
+from rederive.model.markdown import escaped
 from rederive.model.session import Session
 from rederive.platform.desktop import DesktopStorage
 from rederive.syntax import LANGUAGES
@@ -853,7 +854,7 @@ async def test_the_save_targets_are_languages_of_this_century(app):
     """
     async with app.run_test() as pilot:
         await pilot.press("t", "s")
-        assert band(app) == [" TRANSFER SAVE: Derive C Python Rust Julia Options State"]
+        assert band(app) == [" TRANSFER SAVE: Derive C Python Julia Markdown Options State"]
         letters = [mnemonic(word) for word in menus.TRANSFER_SAVE.words]
         assert len(set(letters)) == len(letters)
 
@@ -1360,7 +1361,6 @@ async def test_saving_a_language_writes_it_under_that_language_suffix(app, tmp_p
     [
         ("c", "work.c", "pow(x, 2)\n"),
         ("p", "work.py", "x ** 2\n"),
-        ("r", "work.rs", "x.powi(2)\n"),
         ("j", "work.jl", "x ^ 2\n"),
     ],
 )
@@ -1396,7 +1396,7 @@ async def test_a_language_save_writes_the_block_the_range_option_asked_for(
 
 
 def test_a_language_save_does_not_break_long_lines(session, tmp_path):
-    """The line length only applies to math files; none of the four languages need it."""
+    """The line length only applies to math files; none of the languages need it."""
     session.author("(a+b)^3 (c+d)^3 (e+f)^3")
     session.settings.apply({"SaveLength": 20})
     julia = next(l for l in LANGUAGES if l.word == "Julia")
@@ -1404,6 +1404,86 @@ def test_a_language_save_does_not_break_long_lines(session, tmp_path):
     assert (tmp_path / "work.jl").read_text().splitlines() == [
         "(a + b) ^ 3 * (c + d) ^ 3 * (e + f) ^ 3"
     ]
+
+
+# -- saving a Markdown document --------------------------------------------
+
+
+def markdown(session, path, *block):
+    session.save_markdown(path, *block)
+    return path.read_text(encoding="utf-8")
+
+
+def test_a_markdown_entry_is_its_number_and_a_display_block(session, tmp_path):
+    """Each a paragraph of its own, so that every renderer takes the block as math."""
+    session.author("x/3 + 1/3")
+    session.author("SQRT(x)")
+    assert markdown(session, tmp_path / "work.md") == (
+        "**\\#1:**\n\n$$\n\\frac{x}{3} + \\frac{1}{3}\n$$\n\n"
+        "**\\#2:**\n\n$$\n\\sqrt{x}\n$$\n"
+    )
+
+
+async def test_a_markdown_annotation_is_a_line_of_text_above_the_block(
+    session, tmp_path
+):
+    session.author("SIN(x)/2")
+    await session.simplify("#1")
+    assert markdown(session, tmp_path / "work.md").split("\n\n")[2:] == [
+        "**\\#2:**",
+        "Simp(\\#1)",
+        "$$\n\\frac{\\sin(x)}{2}\n$$\n",
+    ]
+
+
+async def test_the_annotation_option_leaves_markdown_annotations_out(session, tmp_path):
+    session.author("SIN(x)/2")
+    await session.simplify("#1")
+    session.settings.apply({"SaveAnnotation": "Omit"})
+    assert "Simp" not in markdown(session, tmp_path / "work.md")
+
+
+def test_a_markdown_save_writes_the_block_the_range_option_asked_for(
+    session, tmp_path
+):
+    for text in ("a", "b", "c", "d"):
+        session.author(text)
+    assert markdown(session, tmp_path / "work.md", 2, 3) == (
+        "**\\#2:**\n\n$$\nb\n$$\n\n**\\#3:**\n\n$$\nc\n$$\n"
+    )
+
+
+def test_a_markdown_save_shows_numbers_as_the_screen_does(session, tmp_path):
+    session.author("255")
+    session.settings.apply({"OutputBase": "Hexadecimal"})
+    assert "\\mathrm{0FF}" in markdown(session, tmp_path / "work.md")
+
+
+def test_a_string_standing_alone_is_a_paragraph_of_text(session, tmp_path):
+    """The text of a Derive for Windows worksheet loads as such strings."""
+    session.author('"The *roots* of x^2 - 1, #1"')
+    assert markdown(session, tmp_path / "work.md") == (
+        "**\\#1:**\n\nThe \\*roots\\* of x^2 - 1, \\#1\n"
+    )
+
+
+def test_markdown_text_is_escaped():
+    assert escaped("a_b [c] <d> `e` $f$ | & ~ \\") == (
+        "a\\_b \\[c\\] \\<d\\> \\`e\\` \\$f\\$ \\| \\& \\~ \\\\"
+    )
+    assert escaped("- not a list") == "\\- not a list"
+    assert escaped("1. not a list") == "1\\. not a list"
+    assert escaped("2+3 stays") == "2+3 stays"
+
+
+async def test_saving_markdown_writes_it_under_its_suffix(app, tmp_path):
+    async with app.run_test() as pilot:
+        await pilot.press("a", *"x^2", "enter")
+        await pilot.press("t", "s", "m")
+        assert prompt(app) == ("TRANSFER SAVE MARKDOWN file:", "")
+        await pilot.press(*"work", "enter")
+        assert (tmp_path / "work.md").read_text() == "**\\#1:**\n\n$$\nx^{2}\n$$\n"
+        assert band(app)[0].startswith(" COMMAND:")
 
 
 # -- the state file through the app ------------------------------------------

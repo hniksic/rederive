@@ -44,7 +44,7 @@ _WORD_OPERATORS = {
 }
 
 #: Beyond this level a script is written flat, `^` as `a^b` and `SUB` as `a↓b`.
-_LINEAR_SCRIPTS = 2
+LINEAR_SCRIPTS = 2
 
 #: The tallest box whose parentheses are still single characters, `fenced`'s default.
 _SHORT_FENCE = 2
@@ -112,19 +112,9 @@ class Engine:
         before them is `ALONE`.
         """
         box = self.box(node, level, budget)
-        if self._needs_fences(node, required, after):
+        if forms.needs_fences(node, required, after):
             return self.fence(box)
         return box
-
-    @staticmethod
-    def _needs_fences(node: Node, required: int, after: int) -> bool:
-        body = forms.body_precedence(node)
-        if body is None:
-            return forms.precedence(node) < required
-        # A form ending in a body needs fences if something would be read into the
-        # body: an operator to the right binding at least as tightly, or a prefix as
-        # tight as `√`. Looser prefixes, such as unary minus or `2·`, are fine.
-        return after >= body or required >= forms.POW
 
     def fence(self, box: Box) -> Box:
         return fenced(box, glyphs.PARENS)
@@ -369,7 +359,7 @@ class Engine:
                 parts.append(text(gaps[index - 1]))
             after = own if index < len(gaps) else ALONE
             box = self.operand(child, level, budget, own, after)
-            if self._fenced_in_run(node, child):
+            if forms.fenced_in_run(node, child):
                 box = self.fence(box)
             operands.append(box)
             parts.append(box)
@@ -384,19 +374,6 @@ class Engine:
         if node.kind is Kind.PRODUCT:
             return glyphs.TIMES[self.options.times]
         return self._spaced(str(node.value)[index])
-
-    @staticmethod
-    def _fenced_in_run(node: Node, child: Node) -> bool:
-        """Whether a term needs fences that its precedence alone wouldn't require.
-
-        A run nested in a run of the same kind keeps its parentheses, as in Derive, to
-        distinguish `a+(b+c)` from `a+b+c`. A sign inside a product is fenced, `a·(-b)`,
-        because a drawn sign extends over the rest of the product. In a sum, `a + -b` is
-        unambiguous.
-        """
-        if child.kind is node.kind:
-            return True
-        return node.kind is Kind.PRODUCT and child.kind is Kind.UNOP
 
     def _sign(
         self, node: Node, level: int, budget: int | None, detached: bool = False
@@ -447,7 +424,7 @@ class Engine:
     def _power(self, node: Node, level: int, budget: int | None) -> Box:
         base, exponent = node.children
         under = self.operand(base, level, budget, forms.POSTFIX, forms.POW)
-        if level >= _LINEAR_SCRIPTS:
+        if level >= LINEAR_SCRIPTS:
             script = self.operand(exponent, level, budget, forms.NEG)
             return row([under, text("^"), script], node, (under, script))
         # A raised exponent never needs fences.
@@ -456,7 +433,7 @@ class Engine:
 
     def _subscript(self, node: Node, level: int, budget: int | None) -> Box:
         base, script = node.children
-        if level >= _LINEAR_SCRIPTS:
+        if level >= LINEAR_SCRIPTS:
             # Flat `a↓b`: the arrow replaces lowering, just as `a^b` replaces raising.
             flat = self.operand(base, level, budget, forms.POSTFIX, forms.POSTFIX)
             deeper = self.operand(script, level, budget, forms.SCRIPT)
@@ -468,7 +445,7 @@ class Engine:
             )
         # A lowered script is written flat, whatever it holds: `x SUB (y^z)` lowers
         # `y^z`, and `x SUB (y SUB z)` lowers `y↓z`.
-        lowered = self.box(script, _LINEAR_SCRIPTS, budget)
+        lowered = self.box(script, LINEAR_SCRIPTS, budget)
         under = self.operand(base, level, budget, forms.POSTFIX, forms.POSTFIX)
         if self._bare_call(base, level, budget):
             # Without its parentheses the call would seem to subscript its argument.
@@ -610,7 +587,7 @@ class Engine:
     # -- vectors ------------------------------------------------------------
 
     def _vector(self, node: Node, level: int, budget: int | None) -> Box:
-        if _is_matrix(node) and self.built_up(node, level, budget):
+        if forms.is_matrix(node) and self.built_up(node, level, budget):
             return self._matrix(node, level, budget)
         # A single row needs no bracket padding, but the brackets are built up as soon as
         # an element is taller than one row.
@@ -704,7 +681,7 @@ class Engine:
         where scripts go flat, which also makes fractions linear.
         """
         opening, closing = str(node.value)
-        level = max(level, _LINEAR_SCRIPTS)
+        level = max(level, LINEAR_SCRIPTS)
         low = self.box(node.children[0], level, budget)
         high = self.box(node.children[1], level, budget)
         return row(
@@ -733,11 +710,3 @@ def _stacked(
 
 def _is_quotient(node: Node) -> bool:
     return node.kind is Kind.BINOP and node.value == "/"
-
-
-def _is_matrix(node: Node) -> bool:
-    """A vector of vectors of equal, non-zero length."""
-    lines = node.children
-    if not lines or not all(line.kind is Kind.VECTOR for line in lines):
-        return False
-    return len({len(line.children) for line in lines}) == 1 and bool(lines[0].children)

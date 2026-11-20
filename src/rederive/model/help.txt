@@ -738,7 +738,7 @@ Simplify      work an expression out, exactly unless Precision says otherwise
 
 Transfer      reading and writing files, and starting over
   Load           read a worksheet, settings, data or a utility file back in
-  Save           write a worksheet, settings or source code out
+  Save           write a worksheet, settings, source code or a document out
   Merge          read a worksheet in after the expressions already there
   Clear          throw expressions, functions or variables away
   Demo           run one of the original's demonstrations, or one of your own
@@ -762,8 +762,8 @@ approX        work an expression out as a number, to the precision now set
 Transfer Load and Merge also read Derive for Windows worksheets (.dfw),
 without their plots.
 
-Transfer Save can also write the highlighted expression as C, Python, Rust
-or Julia source.
+Transfer Save can also write the worksheet as C, Python or Julia source,
+or as a Markdown document with the expressions typeset in LaTeX.
 
 Transfer Demo lists Derive's demonstrations and downloads each from the
 Internet Archive when first run. A file of the same name in the working

@@ -436,10 +436,11 @@ TRANSFER_DEMO = Menu(
 )
 
 # Derive's targets were Basic, C, Fortran and Pascal. The command is unchanged, but the
-# list of languages is updated. Each word has a unique mnemonic.
+# list of languages is updated, and Markdown follows them for a document to read. Each
+# word has a unique mnemonic.
 TRANSFER_SAVE = Menu(
     "TRANSFER SAVE:",
-    ("Derive", "C", "Python", "Rust", "Julia", "Options", "State"),
+    ("Derive", "C", "Python", "Julia", "Markdown", "Options", "State"),
 )
 
 # Alphabetical, so the broadest command comes first, as in Derive.

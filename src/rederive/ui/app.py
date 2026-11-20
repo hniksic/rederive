@@ -127,7 +127,7 @@ from textual.widgets.input import Selection
 
 from rederive import __version__, platform
 from rederive.engine.client import Amount, EngineAborted
-from rederive.model import building, state, windows, worksheet
+from rederive.model import building, markdown, state, windows, worksheet
 from rederive.model import demos as catalogue
 from rederive.model import help as helps
 from rederive.model import session as sessions
@@ -1305,6 +1305,7 @@ class RederiveApp(App[None]):
             (menus.TRANSFER_LOAD, "daTa"): self._command_load_data,
             (menus.TRANSFER_LOAD, "Utility"): self._command_load_utility,
             (menus.TRANSFER_SAVE, "Derive"): self._command_save,
+            (menus.TRANSFER_SAVE, "Markdown"): self._command_save_markdown,
             (menus.TRANSFER_SAVE, "State"): self._command_save_state,
             (menus.PLOT, "Plot"): partial(self._command_plot, None),
             (menus.PLOT, "New"): partial(self._command_plot, plots.Where.NEW),
@@ -3805,6 +3806,15 @@ class RederiveApp(App[None]):
             language.suffix,
         )
 
+    def _command_save_markdown(self) -> None:
+        """Save the worksheet as a Markdown document, asking for the block if Range is
+        Some."""
+        self._begin_save(
+            SAVE_SOURCE_PROMPT.format(word="MARKDOWN"),
+            self._save_markdown,
+            markdown.SUFFIX,
+        )
+
     def _begin_save(
         self, label: str, command: Callable[[str], None], suffix: str
     ) -> None:
@@ -3998,6 +4008,10 @@ class RederiveApp(App[None]):
     def _save_source(self, language: Language, name: str) -> None:
         path = worksheet.path_of(name, language.suffix)
         self._written(lambda: self.session.save_source(path, language, *self.block))
+
+    def _save_markdown(self, name: str) -> None:
+        path = worksheet.path_of(name, markdown.SUFFIX)
+        self._written(lambda: self.session.save_markdown(path, *self.block))
 
     def _save_state(self, name: str) -> None:
         path = worksheet.path_of(name, state.SUFFIX)

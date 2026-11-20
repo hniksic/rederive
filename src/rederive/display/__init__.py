@@ -1,4 +1,4 @@
-"""Rendering expression trees as two-dimensional terminal text.
+"""Rendering expression trees as two-dimensional terminal text, and as LaTeX math.
 
 Code outside this package imports only the names re-exported here. The package doesn't
 import the UI or the settings; callers pass options as plain data. It only renders: it
@@ -17,6 +17,7 @@ name.
 from __future__ import annotations
 
 from rederive.display.boxes import Layout, Region
+from rederive.display.latex import write_latex
 from rederive.display.layout import render
 from rederive.display.options import ASTERISK, DOT, IMPLICIT, DisplayOptions
 
@@ -28,4 +29,5 @@ __all__ = [
     "Layout",
     "Region",
     "render",
+    "write_latex",
 ]

@@ -134,6 +134,16 @@ def is_quotient(node: Node) -> bool:
     return node.kind is Kind.BINOP and node.value == "/"
 
 
+def is_matrix(node: Node) -> bool:
+    """Whether `node` is a vector of vectors of equal, non-zero length."""
+    lines = node.children
+    if node.kind is not Kind.VECTOR or not lines:
+        return False
+    if not all(line.kind is Kind.VECTOR for line in lines):
+        return False
+    return len({len(line.children) for line in lines}) == 1 and bool(lines[0].children)
+
+
 def body(engine, node: Node, level: int, budget: int | None, required: int) -> Box:
     """A form's body, fenced if `required` calls for it.
 
@@ -156,6 +166,32 @@ def body_precedence(node: Node) -> int | None:
         return None
     name, _ = application(node)
     return _BODY_PRECEDENCE.get(str(name.value))
+
+
+def needs_fences(node: Node, required: int, after: int) -> bool:
+    """Whether `node` is fenced where it needs at least `required` precedence, with an
+    operator of precedence `after` to its right (see `layout.Engine.operand`)."""
+    body = body_precedence(node)
+    if body is None:
+        return precedence(node) < required
+    # A form ending in a body needs fences if something would be read into the body: an
+    # operator to the right binding at least as tightly, or a prefix as tight as `√`.
+    # Looser prefixes, such as unary minus or `2·`, are fine.
+    return after >= body or required >= POW
+
+
+def fenced_in_run(node: Node, child: Node) -> bool:
+    """Whether a term of a sum or product needs fences that its precedence alone
+    wouldn't require.
+
+    A run nested in a run of the same kind keeps its parentheses, as in Derive, to
+    distinguish `a+(b+c)` from `a+b+c`. A sign inside a product is fenced, `a·(-b)`,
+    because a drawn sign extends over the rest of the product. In a sum, `a + -b` is
+    unambiguous.
+    """
+    if child.kind is node.kind:
+        return True
+    return node.kind is Kind.PRODUCT and child.kind is Kind.UNOP
 
 
 def precedence(node: Node) -> int:

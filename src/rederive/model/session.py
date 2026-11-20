@@ -62,7 +62,7 @@ from rederive.display import DisplayOptions, Layout, Region, render
 # half imports it separately, in `_computing_here`.
 from rederive.engine import client as engine
 from rederive.engine.replacing import same_expression
-from rederive.model import data, dfw, state, worksheet
+from rederive.model import data, dfw, markdown, state, worksheet
 from rederive.model.expr import VARIADIC, Kind, Node, parameter_names, variable_key
 from rederive.model.settings import DEFAULTS, FIELDS, Settings
 from rederive.syntax import (
@@ -1898,6 +1898,27 @@ class Session:
             length=None,
             annotations=self.settings["SaveAnnotation"] == "Save",
             comment=f"{language.comment} ",
+        )
+        platform.current().storage().write(path, text)
+        self.file = path
+        return len(entries)
+
+    def save_markdown(
+        self, path: Path, first: int | None = None, last: int | None = None
+    ) -> int:
+        """Write the history to `path` as a Markdown document, and say how many went.
+
+        The same entries as `save`, each typeset in LaTeX as the screen draws it, with
+        its number; see `markdown`. Range and the annotation option apply.
+        """
+        entries = list(self._block(first, last))
+        annotations = self.settings["SaveAnnotation"] == "Save"
+        text = markdown.write(
+            (
+                (entry.number, self._noted(entry) if annotations else None, entry.node)
+                for entry in entries
+            ),
+            self.options,
         )
         platform.current().storage().write(path, text)
         self.file = path

@@ -3,8 +3,7 @@
 Code outside this package should import only the names re-exported here.
 
 `write_expression` is the inverse of the parser: what it writes parses back to the same
-tree. `write_source` writes a tree as C, Python, Rust or Julia, with no such round-trip
-guarantee.
+tree. `write_source` writes a tree as C, Python or Julia, with no such round-trip guarantee.
 
 Parsing does no math: `2+3` yields a sum node, not `5`. Authored expressions stay inert
 until the user simplifies them.
