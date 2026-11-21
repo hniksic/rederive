@@ -955,6 +955,25 @@ async def test_compiling_takes_the_steps_the_limit_counts(monkeypatch):
     assert compiled[2][1] == "(error: Step limit exceeded)"
 
 
+@pytest.mark.parametrize("compiled", [True, False], ids=["compiled", "converted"])
+async def test_a_definition_shown_takes_the_same_steps_every_time(monkeypatch, compiled):
+    """Each call of a program in a definition shown runs in a context of its own, so
+    each works out the value of the global `g` it reads: the steps don't depend on
+    whether the second context happens to be made where the first one was, which runs
+    repeated in one process make likely."""
+    lines = [
+        "> g := 1",
+        "> mn(a) := PROG(a :+ g, a)",
+        "dd(y) := mn(y) + mn(2)",
+    ]
+    counts = set()
+    for _ in range(20):
+        found = await transcript(monkeypatch, lines, compiled)
+        assert found[0][1] == "dd(y) := y + 4"
+        counts.add(found[0][2])
+    assert counts == {11}
+
+
 async def test_a_top_level_program_stops_at_the_same_step(monkeypatch):
     """A program at top level, whose variables are globals, stops at the step limit at
     the same step either way, and leaves the globals as it reached them."""

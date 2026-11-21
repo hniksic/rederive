@@ -357,7 +357,9 @@ class Environment:
     writing: bool = False
     defining: bool = False
     suspended: dict[sp.Basic, type] = field(default_factory=dict, compare=False)
-    values: dict[tuple, sp.Basic] = field(default_factory=dict, compare=False)
+    values: dict[tuple, tuple[sp.Basic, tuple]] = field(
+        default_factory=dict, compare=False
+    )
     top: Node | None = field(default=None, compare=False)
     in_call: bool = False
 
@@ -1030,6 +1032,12 @@ class _Evaluator(Converter):
         A value written out as a literal (see `_literal`) is the same wherever it is
         evaluated, so it is worked out once in a command and kept in an unstamped cell
         of the store, which the compiled programs read as they read a global's.
+
+        The key tells the tree, the context and the deciding functions apart by
+        identity, and the entry keeps them, so that while the memo lasts no other object
+        can take one of their identities: a context made for one call and dropped (as
+        `_run_in_definition` makes one per program call) would otherwise pass for the
+        next one made at the same address, depending on what the process ran before.
         """
         env = self.env
         store = self.context.store
@@ -1065,8 +1073,10 @@ class _Evaluator(Converter):
             hash(key)
         except TypeError:
             key = None
-        if key is not None and key in env.values:
-            return env.values[key]
+        if key is not None:
+            found = env.values.get(key)
+            if found is not None:
+                return found[0]
         deeper = replace(
             env, bindings={}, frame=Frame(), expanding=env.expanding | {name}
         )
@@ -1078,7 +1088,17 @@ class _Evaluator(Converter):
             # Unstamped: no value the command gave it (see `given`).
             store.cells[name] = Global(native_of(value), 0)
         if key is not None and store.version == version:
-            env.values[key] = value
+            env.values[key] = (
+                value,
+                (
+                    assigned,
+                    self.context,
+                    env.decide,
+                    env.work_out,
+                    env.command,
+                    env.simplify,
+                ),
+            )
         return value
 
     def _written_read(self, name: str, assigned: Node) -> tuple:
