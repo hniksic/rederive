@@ -825,8 +825,9 @@ class _Evaluator(Converter):
             # Approximate rounds the values a program carries (see `carried`).
             and env.context.precision is not Precision.APPROXIMATE
         )
-        #: The native values of variables a native `EVERY` or `SOME` binds here, by
-        #: name, and what it found of the bindings it makes (see `_mapped_closure`).
+        #: The native values of variables a native binding (`EVERY`, `SOME`, `VECTOR`,
+        #: `ITERATE` or `ITERATES`) binds here, by name, and what it found of the
+        #: bindings it makes (see `_binding_scope`).
         self.indices: dict[str, object] | None = None
         self.scopes: dict[int, tuple] | None = None
         #: The cells a name is looked up in first where values are native: a call's
@@ -2647,10 +2648,31 @@ class _Evaluator(Converter):
                 return self.opaque(name, [converted, index, *limits])
         if name in _MAPPING and not self.env.writing:
             return _over(self._mapped(name, body, index, inner, limits), taken)
-        if name in _COUNTED and not self.env.writing:
-            counted = self._counted(name, body, index, inner, limits)
-            if counted is not None:
-                return _over(counted, taken)
+        return self._ranged(name, body, index, evaluator, limits, taken, converted)
+
+    def _ranged(
+        self,
+        name: str,
+        body: Node,
+        index: sp.Basic,
+        evaluator: _Evaluator,
+        limits: list[sp.Basic],
+        taken: Mapping[sp.Basic, sp.Basic],
+        converted: sp.Basic | None = None,
+        counted: bool = True,
+    ) -> sp.Basic:
+        """The rest of `_binding` for a call of `name` that maps nothing, with its
+        variable `index`, the evaluator `evaluator` of its body, its `limits`, the
+        substitutions `taken` into its result, and the body's value `converted` where
+        it is evaluated already. Unless `counted`, the body is not evaluated at each
+        value (see `_counted`): a native binding whose body raised at a value goes on
+        so, as `_counted` gives up there (see `_generated_closure` and
+        `_iterated_closure`)."""
+        inner = evaluator.env
+        if counted and name in _COUNTED and not self.env.writing:
+            found = self._counted(name, body, index, inner, limits)
+            if found is not None:
+                return _over(found, taken)
         if name == "LIM" and not self.env.writing:
             value = self._substituted_limit(body, index, limits, inner)
             if value is not None:
@@ -3470,9 +3492,9 @@ def _with_test(conditional: sp.Basic, test: sp.Basic) -> sp.Basic:
 # Anywhere else, no value is native: each closure that could make one (a number, a
 # name, a value handed back by the conversion) gives the sympy value instead, and the
 # closures of the constructs that are of use only natively (the program constructs,
-# `IF`, `AND` and `OR`, `EVERY` and `SOME`, `|u|`, a vector written out, an element
-# assignment) convert their nodes. What remains of a closure there is the dispatch
-# done ahead.
+# `IF`, `AND` and `OR`, the bindings `EVERY`, `SOME`, `VECTOR`, `ITERATE` and
+# `ITERATES`, `|u|`, a vector written out, an element assignment) convert their nodes.
+# What remains of a closure there is the dispatch done ahead.
 #
 # A variable's cell keeps a native value as it is, a local's and a global's alike (see
 # `Cell` and `Store`), and so does the last value of a frame; everything else that
@@ -3603,7 +3625,11 @@ def _native(node: Node) -> Native:
 def _natively_only(node: Node) -> bool:
     """Whether the closure of `node` is of use only where values are native, and
     converts the node elsewhere: one of a program construct, `IF`, `AND` or `OR`,
-    `EVERY` or `SOME`, `|u|`, a vector written out, or an element assignment."""
+    `EVERY` or `SOME`, `|u|`, a vector written out, or an element assignment.
+
+    The closures of `VECTOR`, `ITERATE` and `ITERATES` convert theirs too, but
+    `_Evaluator.convert` runs them: such a call is often reached by converting what
+    holds it, as the argument of a `SUM` or the body of another binding is."""
     kind = node.kind
     if kind in (Kind.CALL, Kind.APPLY):
         return str(node.children[0].value) in _NATIVE_CONSTRUCTS
@@ -3679,9 +3705,9 @@ def _native_closure(node: Node) -> Native | None:
 
 def _name_closure(node: Node) -> Native | None:
     """A name, read as `_Evaluator._name` reads it: a local's or a global's value as
-    its cell keeps it, an argument made native, and a variable a native `EVERY` or
-    `SOME` binds its value. A global's value is read where its own rules for a name
-    don't apply: it has one (not `CLEARED`) and no held value to release."""
+    its cell keeps it, an argument made native, and a variable a native binding binds
+    its value (see `_binding_scope`). A global's value is read where its own rules for
+    a name don't apply: it has one (not `CLEARED`) and no held value to release."""
     name = str(node.value)
     if name == EXIT:
         return None
@@ -4117,10 +4143,10 @@ def _conditional_closure(node: Node, statement: bool) -> Native:
 
 
 def _call_closure(node: Node) -> Native | None:
-    """A call: the program constructs run here, `EVERY` and `SOME` over native values,
-    a built-in of `_NATIVE_CALLS` computed on native values, and any other call
-    without a special evaluation made on its arguments' values (see
-    `_Evaluator.called`)."""
+    """A call: the program constructs run here, `EVERY`, `SOME`, `VECTOR`, `ITERATE`
+    and `ITERATES` over native values, a built-in of `_NATIVE_CALLS` computed on native
+    values, and any other call without a special evaluation made on its arguments'
+    values (see `_Evaluator.called`)."""
     head, *arguments = node.children
     name = str(head.value)
     if name == "IF":
@@ -4135,6 +4161,10 @@ def _call_closure(node: Node) -> Native | None:
         return _return_closure(node, arguments[0])
     if name in ("EVERY", "SOME"):
         return _mapped_closure(node)
+    if name == "VECTOR":
+        return _generated_closure(node)
+    if name in ("ITERATE", "ITERATES"):
+        return _iterated_closure(node)
     if name in ("MOD", "MODS") and _powered(arguments):
         return None
     if name in _SPECIAL_CALLS - {"MOD", "MODS"}:
@@ -4506,34 +4536,36 @@ def _native_vector(vector: Vector) -> NativeVector:
     return NativeVector([native_of(element) for element in vector.args])
 
 
-def _mapped_closure(node: Node) -> Native | None:
-    """`EVERY(u, k, ...)` and `SOME(u, k, ...)` over the values of a variable `k`, as
-    `_Evaluator._binding` and `_Evaluator._mapped` evaluate them: the body decided
-    natively at each value, with `k` the value as a native one."""
-    head, *arguments = node.children
-    name = str(head.value)
-    if not 3 <= len(arguments) <= 5:
+def _bound_variable(node: Node, counts: range) -> tuple[Node, str] | None:
+    """The second argument of the binding call `node` and the name it is, where the
+    call has as many arguments as `counts` allows and binds a variable of its own; None
+    otherwise."""
+    arguments = node.children[1:]
+    if len(arguments) not in counts:
         return None
-    body, written_index, *rest = arguments
+    written_index = arguments[1]
     if written_index.kind is not Kind.NAME:
         return None
     variable = str(written_index.value)
     if variable in CONSTANTS or variable in ("deg", EXIT):
         return None
-    for argument in arguments:
-        _native(argument)
-    limits = [_native(each) for each in rest]
-    decide = _body_test_closure(body)
-    deciding = name == "SOME"
+    return written_index, variable
+
+
+def _binding_scope(
+    node: Node, name: str, written_index: Node, variable: str
+) -> Callable[[_Evaluator], tuple | None]:
+    """What the binding call `node` of `name` over the variable `variable`, written
+    `written_index`, finds for an evaluator: the variable, the names bound and
+    shadowed, the environment of the body and an evaluator in it, as
+    `_Evaluator._binding` finds them; None where the binding is not over the variable
+    `variable`. They depend on the environment, the globals (which `Store.version`
+    tells apart) and the local of the variable's name, so they are remembered for an
+    evaluator while the globals stay as they are and the variable is no local with a
+    value of its own."""
     names = frozenset({variable})
 
     def scope(evaluator: _Evaluator) -> tuple | None:
-        """The variable, the names bound and shadowed, the environment of the body
-        and an evaluator in it, as `_Evaluator._binding` finds them; None where the
-        binding is not over the variable `variable`. They depend on the environment,
-        the globals (which `Store.version` tells apart) and the local of the
-        variable's name, so they are remembered for an evaluator while the globals
-        stay as they are and the variable is no local with a value of its own."""
         store = evaluator.context.store
         scopes = evaluator.scopes
         if scopes is None:
@@ -4558,6 +4590,27 @@ def _mapped_closure(node: Node) -> Native | None:
                 made = (index, bound, shadowed, inner, evaluator.within(inner))
         scopes[id(node)] = (node, store.version, made)
         return made
+
+    return scope
+
+
+def _mapped_closure(node: Node) -> Native | None:
+    """`EVERY(u, k, ...)` and `SOME(u, k, ...)` over the values of a variable `k`, as
+    `_Evaluator._binding` and `_Evaluator._mapped` evaluate them: the body decided
+    natively at each value, with `k` the value as a native one."""
+    head, *arguments = node.children
+    name = str(head.value)
+    found = _bound_variable(node, range(3, 6))
+    if found is None:
+        return None
+    written_index, variable = found
+    body, _, *rest = arguments
+    for argument in arguments:
+        _native(argument)
+    limits = [_native(each) for each in rest]
+    decide = _body_test_closure(body)
+    deciding = name == "SOME"
+    scope = _binding_scope(node, name, written_index, variable)
 
     def mapped(evaluator: _Evaluator) -> Any:
         if not evaluator.native:
@@ -4594,6 +4647,171 @@ def _mapped_closure(node: Node) -> Native | None:
         return not deciding
 
     return mapped
+
+
+def _generated_closure(node: Node) -> Native | None:
+    """`VECTOR(u, k, ...)` over the values of a variable `k`, as `_Evaluator._binding`
+    and `_Evaluator._counted` evaluate it: the body evaluated natively at each value,
+    with `k` the value as a native one. Where `_counted` would give up (on values it
+    can't step through, or a body that raises), the call goes on as `_binding` goes on
+    from there, with what was evaluated."""
+    head, *arguments = node.children
+    name = str(head.value)
+    found = _bound_variable(node, range(3, 6))
+    if found is None:
+        return None
+    written_index, variable = found
+    body, _, *rest = arguments
+    for argument in arguments:
+        _native(argument)
+    limits = [_native(each) for each in rest]
+    element = _native(body)
+    scope = _binding_scope(node, name, written_index, variable)
+
+    def generated(evaluator: _Evaluator) -> Any:
+        if not evaluator.native:
+            return evaluator._converted(node)
+        found = scope(evaluator)
+        if found is None:
+            return native_of(evaluator._converted(node))
+        index, bound, shadowed, inner, template = found
+        ends = [limit(evaluator) for limit in limits]
+        taken = evaluator._taken_by(bound, shadowed)
+        written: list | None = None
+        values: Any = _native_steps(ends)
+        if values is None:
+            written = [_value_of(sympy_of(end)) for end in ends]
+            try:
+                values = [native_of(each) for each in steps(written)]
+            except Exception:
+                made = evaluator._ranged(
+                    name, body, index, evaluator.within(inner), written, taken
+                )
+                return native_of(made)
+        outside = evaluator.indices or {}
+        elements = []
+        try:
+            for value in values:
+                evaluator.context.step()
+                at = template.at(index, sympy_of(value))
+                at.indices = {**outside, variable: value}
+                elements.append(_assigned_value(sympy_of(element(at))))
+        except Exception:
+            if written is None:
+                written = [_value_of(sympy_of(end)) for end in ends]
+            made = evaluator._ranged(
+                name,
+                body,
+                index,
+                evaluator.within(inner),
+                written,
+                taken,
+                counted=False,
+            )
+            return native_of(made)
+        return _over(Vector(*elements), taken)
+
+    return generated
+
+
+def _native_steps(ends: list) -> range | None:
+    """The values `steps` gives a variable over the native limits `ends`, where they
+    are integers: a count, a range, or a range with a step that is not zero; None for
+    any others."""
+    if not 1 <= len(ends) <= 3 or any(type(end) is not int for end in ends):
+        return None
+    if len(ends) == 1:
+        low, high, step = 1, ends[0], 1
+    else:
+        low, high = ends[0], ends[1]
+        step = ends[2] if len(ends) == 3 else 1
+    if not step:
+        return None
+    count = max((high - low) // step + 1, 0)
+    return range(low, low + step * count, step)
+
+
+def _iterated_closure(node: Node) -> Native | None:
+    """`ITERATE(u, x, x0, n)` and `ITERATES(u, x, x0, n)` of a variable `x`, as
+    `_Evaluator._binding` and `_Evaluator._counted` evaluate them: the body evaluated
+    natively at each iterate, with `x` the iterate as a native one, and an iterate
+    that is not a native number or truth value made as `_counted` makes it. A count
+    that is not a native integer of at least zero goes as `_binding` goes, as does a
+    body that raises, with what was evaluated."""
+    head, *arguments = node.children
+    name = str(head.value)
+    found = _bound_variable(node, range(4, 5))
+    if found is None:
+        return None
+    written_index, variable = found
+    body, _, *rest = arguments
+    for argument in arguments:
+        _native(argument)
+    limits = [_native(each) for each in rest]
+    following = _native(body)
+    scope = _binding_scope(node, name, written_index, variable)
+    sequence = name == "ITERATES"
+
+    def iterating(evaluator: _Evaluator) -> Any:
+        if not evaluator.native:
+            return evaluator._converted(node)
+        found = scope(evaluator)
+        if found is None:
+            return native_of(evaluator._converted(node))
+        index, bound, shadowed, inner, template = found
+        ends = [limit(evaluator) for limit in limits]
+        taken = evaluator._taken_by(bound, shadowed)
+        written = [_value_of(sympy_of(end)) for end in ends]
+        start, count = ends
+        if type(count) is not int or count < 0:
+            made = evaluator._ranged(
+                name, body, index, evaluator.within(inner), written, taken
+            )
+            return native_of(made)
+        current = native_of(written[0])
+        iterates = [current]
+        symbolic: list[sp.Basic | None] = []
+        outside = evaluator.indices or {}
+        try:
+            for _ in range(count):
+                evaluator.context.step()
+                at = template.at(index, sympy_of(current))
+                at.indices = {**outside, variable: current}
+                value = following(at)
+                if type(value) not in SCALARS:
+                    # As `_counted` makes an iterate: simplified, and where undefined,
+                    # from the body simplified with its variable symbolic.
+                    value = _assigned_value(sympy_of(value))
+                    if _undefined_in(value):
+                        filled = evaluator._through_symbolic(
+                            body, index, inner, [sympy_of(current)], symbolic
+                        )
+                        if filled is not None and _fills(
+                            evaluator._settled(value), filled
+                        ):
+                            value = filled
+                    value = native_of(evaluator._settled(evaluator._iterate(value)))
+                current = value
+                if sequence:
+                    iterates.append(current)
+        except Exception:
+            made = evaluator._ranged(
+                name,
+                body,
+                index,
+                evaluator.within(inner),
+                written,
+                taken,
+                counted=False,
+            )
+            return native_of(made)
+        if sequence:
+            made = Vector(*(sympy_of(each) for each in iterates))
+        else:
+            made = sympy_of(current)
+        return native_of(_over(made, taken))
+
+    return iterating
 
 
 def _body_test_closure(body: Node) -> Callable[[_Evaluator, _Evaluator], bool | None]:
@@ -4702,9 +4920,55 @@ def _first(values: list) -> Any:
     return items[0] if items else sp.nan
 
 
+def _membership(values: list) -> Any:
+    """`MEMBER?(u, v)` of a native number or truth value and a vector or set of
+    numbers, truth values, strings and `?` (see `_member`). Such values are as simple as
+    they get and mention no variable, so the built-in compares them as they are; two
+    native values are identical where they are equal and of one type, since `1` is not
+    `true`."""
+    if len(values) != 2:
+        return None
+    value, collection = values
+    kind = type(value)
+    if kind not in SCALARS:
+        return None
+    if type(collection) is NativeVector:
+        if not collection.symbolic:
+            return any(
+                type(item) is kind and item == value for item in collection.items
+            )
+        collection = collection.vector()
+    if not isinstance(collection, (Vector, SetOf)):
+        return None
+    members = collection.__dict__.get(_MEMBERS)
+    if members is None:
+        members = collection.__dict__[_MEMBERS] = (
+            frozenset(collection.args) if _constant(collection) else False
+        )
+    if members is False:
+        return None
+    return sympy_of(value) in members
+
+
+#: The attribute `_membership` remembers the elements of a vector or set in, as a
+#: `frozenset`, or False where it doesn't compute on them.
+_MEMBERS = "_members"
+
+
+def _constant(value: sp.Basic) -> bool:
+    """Whether `value` is a rational number, a truth value, a string, `?`, or a vector
+    or set of such values."""
+    if isinstance(value, (sp.Rational, BooleanAtom, StringLiteral)) or value is sp.nan:
+        return True
+    if isinstance(value, (Vector, SetOf)):
+        return all(_constant(element) for element in value.args)
+    return False
+
+
 #: The built-ins computed on native values, by name: each gives what the built-in gives
 #: on the values, or None where it takes them otherwise.
 _NATIVE_CALLS: dict[str, Callable[[list], Any]] = {
+    "MEMBER?": _membership,
     "MOD": _modulo,
     "MODS": _symmetric_modulo,
     "FLOOR": _floored,

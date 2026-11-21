@@ -391,6 +391,127 @@ CASES = {
         "> bi13(n, v) := PROG(v := [1, 2, 3], v SUB 1 := x, EVERY(v SUB i > 0, i, 1, n))",
         "bi13(3)",
     ],
+    "member": [
+        "> me1(v, k) := PROG(v := [3, 1/2, true, \"a\", ?], v SUB 1 := 4, "
+        "[MEMBER?(4, v), MEMBER?(3, v), MEMBER?(1/2, v), MEMBER?(true, v), "
+        "MEMBER?(1, v), MEMBER?(false, v), MEMBER?(k, v)])",
+        "[me1(1, 4), me1(1, 2)]",
+        "> me2(k, w) := PROG(w := [1, x, [2, 3], (y + 1)^2 - y^2 - 2*y], "
+        "[MEMBER?(k, w), MEMBER?(k + 1, w), MEMBER?(x, w), MEMBER?([2, 3], w), "
+        "MEMBER?(k, {1, 2}), MEMBER?(k, [true]), MEMBER?(true, [1]), MEMBER?(k, 1), "
+        "MEMBER?(k, [])])",
+        "[me2(1), me2(0), me2(z)]",
+        "> me3(v, k, c) := PROG(v := [1, 2, 3], v SUB 2 := x, c := 0, k := 0, "
+        "LOOP(IF(k > 4, RETURN([c, v])), IF(MEMBER?(k, v), c :+ 1), k :+ 1, "
+        "IF(k = 3, v SUB 2 := 4)))",
+        "me3()",
+        "> me4(v, c, i) := PROG(v := [0, 1, x, 2, y, 3], c := [], i := 0, LOOP(i :+ 1, "
+        "IF(i > 6, RETURN(c)), c := APPEND(c, [MEMBER?(v SUB i, [1, 2, x])])))",
+        "me4()",
+        "> me5(n) := VECTOR(MEMBER?(3, [k, 3 - k]), k, 0, n)",
+        "[me5(3), me5(m)]",
+        "> qa := 1",
+        "> me6(v) := PROG(v := [1, 'qa, 3], [MEMBER?(1, v), MEMBER?(2, v)])",
+        "me6()",
+        "PROG(q := 'qa, [MEMBER?(1, [q, 2]), MEMBER?(1, [1, 2]), MEMBER?(q, [1])])",
+        "> mv := [5, 6]",
+        "PROG(mk := 5, [MEMBER?(mk, mv), MEMBER?(mk + 2, mv), MEMBER?(mk, [mk])])",
+    ],
+    "generated": [
+        "> ge1(n) := PROG([VECTOR(k^2, k, n), VECTOR(k, k, 2, n), "
+        "VECTOR(k, k, n, 1, -2), VECTOR(k, k, 1, n, 0), VECTOR(k, k, n, 1), "
+        "VECTOR(k, k, 1/2, n), VECTOR(k, k, 1, n, 1/2), VECTOR(k, k, [3, x, 1/2]), "
+        "VECTOR(k, k, {2, 1}), VECTOR(k, k), VECTOR(k, k, 1, 2, 3, 4)])",
+        "[ge1(3), ge1(0), ge1(m)]",
+        "> ge2(n, s) := PROG(s := 0, [VECTOR(s :+ k, k, 1, n), s, "
+        "VECTOR(IF(k > 2, x, k), k, n), VECTOR(IF(k > y, 1, 0), k, n), "
+        "VECTOR([k, k + 1], k, n)])",
+        "ge2(4)",
+        "> ge3(n) := PROG(VECTOR(IF(k = 3, RETURN(k*10), k), k, 1, n))",
+        "[ge3(2), ge3(5)]",
+        "> ge4(n) := PROG(VECTOR(VECTOR(i*j, j, 1, i), i, 1, n))",
+        "ge4(3)",
+        "> ge5(n) := PROG([EVERY(DIM(VECTOR(j, j, 1, i)) = i, i, 1, n), "
+        "VECTOR(EVERY(j < i, j, 1, i - 1), i, 1, n), "
+        "SOME(MEMBER?(i, VECTOR(j^2, j, 1, n)), i, 2, n)])",
+        "ge5(4)",
+        "> ge6(k) := PROG(VECTOR(k^2, k, 3))",
+        "[ge6(5), ge6(y), ge6()]",
+        "> ge7(k) := PROG(k := 10, [VECTOR(k + 1, k, 3), k])",
+        "ge7()",
+        "> ge8(x) := PROG(VECTOR(x^2, x, 3))",
+        "[ge8(y), ge8(2)]",
+        "> gk := 5",
+        "> ge9(n) := PROG([VECTOR(gk + n, gk, 3), gk])",
+        "ge9(1)",
+        "[VECTOR(gk^2, gk, 2), PROG(VECTOR(gk + 1, gk, 2)), gk]",
+        "> gk := z",
+        "PROG(VECTOR(gk + 1, gk, 2))",
+        "> gk :=",
+        "> ge10(n, v) := PROG(v := VECTOR(0, k, n), v SUB 1 := 9, "
+        "VECTOR(v SUB k + k, k, n))",
+        "ge10(3)",
+        "> ge11(v) := SUM(VECTOR(MOD(k*k, 7), k, 0, v - 1))",
+        "[ge11(10), ge11(m)]",
+        "PROG(gv := 0, [VECTOR(gv :+ k, k, 3), gv])",
+        "PROG(VECTOR(PROG(gw := k, gw^2), k, 3), gw)",
+        "> ge12(n) := PROG(VECTOR(1/(k - 2), k, n))",
+        "ge12(3)",
+        "> qa := 1",
+        "> ge13(q) := PROG(q := 'qa, VECTOR(k + q, k, 2))",
+        "ge13()",
+    ],
+    "iterated": [
+        "> it1(n) := PROG([ITERATE(x + 1, x, 0, n), ITERATES(2*x, x, 1, n), "
+        "ITERATE(x + 1, x, 0, -n), ITERATES(x + 1, x, 0, n/2), "
+        "ITERATE(x/2 + 1, x, 2, inf), ITERATE(1/x, x, 2), "
+        "ITERATES(MOD(x + 1, 3), x, 0), ITERATE(x + 1, x, 0, n, 9)])",
+        "[it1(3), it1(0), it1(-2)]",
+        "> it2(n) := PROG([ITERATE(IF(x > 2, y, x + 1), x, 0, n), "
+        "ITERATES(x*y, x, 1, n), ITERATE([v SUB 2, v SUB 1 + v SUB 2], v, [0, 1], n), "
+        "ITERATES(x/3, x, 1, n), ITERATE(x > 1, x, 2, n), "
+        "ITERATE([j + k, j], [j, k], [1, 0], n)])",
+        "it2(4)",
+        "> it3(n, s) := PROG(s := 0, [ITERATE(PROG(s :+ x, x + 1), x, 1, n), s])",
+        "it3(5)",
+        "> it4(n) := PROG(ITERATE(IF(x = 3, RETURN(x*100), x + 1), x, 0, n))",
+        "[it4(2), it4(9)]",
+        "> it5(x) := PROG(ITERATE(x^2, x, 2, 3))",
+        "[it5(5), it5(y), it5()]",
+        "> it6(x) := PROG(x := 7, [ITERATE(x + 1, x, x, 2), x])",
+        "it6()",
+        "> it7(n) := PROG(ITERATE((x^2 - 1)/(x - 1), x, 1, n))",
+        "it7(2)",
+        "> it8(n) := PROG([EVERY(ITERATE(x + i, x, 0, 3) = 3*i, i, 1, n), "
+        "VECTOR(ITERATE(x*i, x, 1, i), i, 1, n), ITERATE(VECTOR(x + j, j, 1, 2) SUB 1, "
+        "x, 0, n)])",
+        "it8(4)",
+        "> it9(n) := ITERATE(MOD(x*x + 1, 1000003), x, 2, n)",
+        "[it9(20), it9(0), it9(1/2)]",
+        "> ix := 5",
+        "> it10(n) := PROG([ITERATE(ix + n, ix, 1, 3), ix])",
+        "it10(2)",
+        "[ITERATE(ix*2, ix, 1, 3), PROG(ITERATES(ix*2, ix, 1, 3)), ix]",
+        "> ix :=",
+        "PROG(gi := 0, [ITERATE(PROG(gi :+ 1, x*2), x, 1, 4), gi])",
+        "> it11(n) := PROG(ITERATE(x + 1/n, x, 0, n))",
+        "[it11(3), it11(1/2)]",
+        "> qa := 1",
+        "> it12(q) := PROG(q := 'qa, ITERATE(x + q, x, 0, 2))",
+        "it12()",
+    ],
+    "loops approximate": [
+        "> Precision := Approximate",
+        "> la1(n) := PROG([VECTOR(k/3, k, n), ITERATE(x/3 + 1, x, 1, n), "
+        "MEMBER?(1/3, [1/3, 2])])",
+        "la1(3)",
+        "> Precision := Exact",
+        "la1(3)",
+        "> la2(n) := PROG(Precision := Approximate, [VECTOR(k/3, k, n), "
+        "ITERATE(x/3 + 1, x, 1, n)])",
+        "la2(3)",
+        "> Precision := Exact",
+    ],
     "commands": [
         "> co1(v) := PROG(v := SOLVE(x^2 = 4, x), v SUB 1)",
         "co1()",
@@ -955,6 +1076,34 @@ async def test_compiling_takes_the_steps_the_limit_counts(monkeypatch):
     assert compiled[2][1] == "(error: Step limit exceeded)"
 
 
+async def test_a_loop_over_values_stops_at_the_same_step(monkeypatch):
+    """A `VECTOR` or `ITERATE` takes a step at each value either way, in a function and
+    at top level, and the step limit stops it at the same one."""
+    lines = [
+        "> sv(n) := PROG(VECTOR(MOD(k*k, 7), k, 1, n))",
+        "> si(n) := PROG(ITERATE(MOD(x*x + 1, 1000003), x, 2, n))",
+        "> sm(n, k, c) := PROG(k := 0, c := 0, LOOP(IF(k >= n, RETURN(c)), "
+        "IF(MEMBER?(MOD(k, 5), [1, 2]), c :+ 1), k :+ 1))",
+        "DIM(sv(990))",
+        "DIM(sv(997))",
+        "si(990)",
+        "si(997)",
+        "sm(100)",
+        "sm(300)",
+        "PROG(sg := 0, DIM(VECTOR(sg :+ k, k, 1, 990)))",
+        "PROG(sg := 0, DIM(VECTOR(sg :+ k, k, 1, 997)))",
+        "sg",
+        "[EVERY(DIM(VECTOR(j, j, i)) = i, i, 1, 40), "
+        "EVERY(DIM(VECTOR(j, j, i)) = i, i, 1, 50)]",
+    ]
+    compiled = await transcript(monkeypatch, lines, True, step_limit=998)
+    converted = await transcript(monkeypatch, lines, False, step_limit=998)
+    assert compiled == converted
+    answers = [answer for _, answer, _ in compiled]
+    assert "(error: Step limit exceeded)" in answers
+    assert "990" in answers
+
+
 @pytest.mark.parametrize("compiled", [True, False], ids=["compiled", "converted"])
 async def test_a_definition_shown_takes_the_same_steps_every_time(monkeypatch, compiled):
     """Each call of a program in a definition shown runs in a context of its own, so
@@ -1058,6 +1207,10 @@ BENCHMARKS = [
     "> queens(n,c,q,r):=PROG(c:=0, q:=VECTOR(0,i,1,n), r:=1, LOOP(IF(r=0, RETURN(c)), "
     "q SUB r:+1, IF(q SUB r>n, [q SUB r:=0, r:-1], IF(EVERY(q SUB i/=q SUB r AND "
     "ABS(q SUB i-q SUB r)/=r-i, i, 1, r-1), IF(r=n, c:+1, r:+1)))))",
+    "> mem(n,w,k,c):=PROG(w:=[3,5,7,11,13], k:=0, c:=0, LOOP(IF(k>=n, RETURN(c)), "
+    "IF(MEMBER?(MOD(k,17),w), c:+1), k:+1))",
+    "> vec(n):=SUM(VECTOR(MOD(k*k,7),k,0,n-1))",
+    "> itr(n):=ITERATE(MOD(x*x+1,1000003),x,2,n)",
 ]
 
 
@@ -1068,6 +1221,9 @@ async def test_the_benchmarks_of_native_values_compute_their_answers():
     assert (await session.simplify("count(20000)")).text == "39998"
     assert (await session.simplify("sieve(3000)")).text == "430"
     assert (await session.simplify("queens(6)")).text == "4"
+    assert (await session.simplify("mem(20000)")).text == "5883"
+    assert (await session.simplify("vec(20000)")).text == "39998"
+    assert (await session.simplify("itr(20000)")).text == "803427"
 
 
 async def test_writing_an_element_of_a_long_vector_copies_no_vector(monkeypatch):
