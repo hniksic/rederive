@@ -360,7 +360,8 @@ def test_settings_are_not_saved_by_default(session, tmp_path):
 def test_a_name_beyond_ascii_is_written_as_itself(session, tmp_path):
     session.author("é := 1")
     session.save(tmp_path / "g.mth")
-    assert (tmp_path / "g.mth").read_bytes() == "é := 1\n".encode()
+    # Read as UTF-8 text, since lines end as the platform ends them.
+    assert (tmp_path / "g.mth").read_text(encoding="utf-8") == "é := 1\n"
 
 
 def test_a_saved_file_reads_back_as_it_was(session, tmp_path):
@@ -398,7 +399,7 @@ def test_a_saved_file_reads_back_as_it_was(session, tmp_path):
     assert texts(other) == texts(session)
     other.save(tmp_path / "s.mth")
     assert (tmp_path / "s.mth").read_bytes() == (tmp_path / "r.mth").read_bytes()
-    written = (tmp_path / "r.mth").read_text()
+    written = (tmp_path / "r.mth").read_text(encoding="utf-8")
     assert ";" not in written.replace('"', "")
     for spelling in [
         "B v := v SUB DIM(v)",
