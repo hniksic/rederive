@@ -9,6 +9,7 @@ against what Derive 6 computed for them.
 from __future__ import annotations
 
 import pytest
+from test_native import stored_twice
 
 from rederive.model.session import Session
 
@@ -489,6 +490,19 @@ async def test_inverse_laplace_transforms(tmp_path):
         "#e^(-t) - #e^(-2*t)",
         "COS(2*t)",
     ]
+
+
+async def test_an_inverse_transform_stores_what_simplifying_again_leaves(
+    tmp_path, monkeypatch
+):
+    """The program taking the transform apart stores products of polynomials and
+    complex exponentials, each simplified to a fixed point (see `stored_twice`)."""
+    changed = stored_twice(monkeypatch)
+    session = loaded(tmp_path, "LaplaceTransforms", LAPLACE)
+    assert await answers(
+        session, "InvLaplace(32*(3*s^2 - 18*s + 11)/(s^2 - 6*s + 25)^3, s, t)"
+    ) == ["4*t^2*SIN(4*t)*#e^(3*t)"]
+    assert changed == []
 
 
 # -- NonlinearRegression ------------------------------------------------------------

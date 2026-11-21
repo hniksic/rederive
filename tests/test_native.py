@@ -23,7 +23,7 @@ from test_programs import *  # noqa: F403 - the program tests, run again uncompi
 
 from rederive.engine import evaluate, pipeline
 from rederive.engine.client import EngineError
-from rederive.engine.context import Context
+from rederive.engine.context import Context, Precision
 from rederive.engine.vectors import Vector
 from rederive.model.session import Session
 from rederive.syntax import write_expression
@@ -719,11 +719,17 @@ CASES = {
         "st5()",
         "PROG(gs := [SQRT(2), x + 1], gn := 1, LOOP(IF(gn > 3, RETURN(gs)), "
         "gs := APPEND(gs, [gn*SQRT(2)]), gs SUB 1 :+ gn, gn :+ 1))",
-        # Simplified once, the first element takes a form a second pass changes.
+        # Stored again and again, the vector keeps the form it was first simplified to.
         "> st6(n, t, k) := PROG(t := [1536*(-4*w + #i)*#e^(3*w - 4*#i*w), 4096], "
         "k := 1, LOOP(IF(k > n, RETURN([t, TERMS(t SUB 1)])), t := APPEND(t, [k]), "
         "k :+ 1))",
         "[st6(0), st6(1), st6(3)]",
+        # Simplifying the first element combines two exponentials, the exponent written
+        # as Simplify writes any.
+        "> st7(n, t, k) := PROG(t := [-8*#i*(-w*(288 + 384*#i) + 96*w*(3 - 4*#i) - "
+        "192)*#e^(w*(3 - 4*#i)), 4096], k := 1, LOOP(IF(k > n, RETURN([t, TERMS(t SUB "
+        "1)])), t := APPEND(t, [k]), k :+ 1))",
+        "[st7(0), st7(1), st7(3)]",
         "> Precision := Mixed",
         "[st1(2), st2(2), st3(2)]",
         "> Precision := Approximate",
@@ -1415,6 +1421,55 @@ async def test_a_settled_table_is_simplified_anew_under_other_settings(
     old = sum(1 for expression in seen if expression == element)
     # Stored first, then again after the change, and not at the passes between.
     assert old == 2
+
+
+def stored_twice(monkeypatch) -> list[tuple[sp.Basic, sp.Basic, sp.Basic]]:
+    """Simplify a second time each value `_Evaluator._settled` simplifies as a program
+    stores it, and return the list that collects each such value, what simplifying it
+    gave and what simplifying that gave, where the two differ.
+
+    A vector simplified there is marked settled, so that storing it again doesn't
+    simplify it again (see `SETTLED` in to_sympy.py): what simplifying gives must be
+    what simplifying it again would give."""
+    changed = []
+    settled = evaluate._Evaluator._settled
+    inside = [False]
+
+    def twice(self, value, top=False):
+        if inside[0]:
+            return settled(self, value, top)
+        value = evaluate._value_of(value)
+        simplify = self.env.simplify
+        if (
+            simplify is not None
+            and not self.env.writing
+            and not evaluate.is_simple(value)
+            and not self._approximated(value)
+        ):
+            exact = self.context.with_precision(Precision.EXACT)
+            inside[0] = True
+            try:
+                once = simplify(value, exact, top=top)
+                again = simplify(once, exact, top=top)
+            except Exception:
+                pass
+            else:
+                if not evaluate._same(again, once):
+                    changed.append((value, once, again))
+            finally:
+                inside[0] = False
+        return settled(self, value, top)
+
+    monkeypatch.setattr(evaluate._Evaluator, "_settled", twice)
+    return changed
+
+
+@pytest.mark.parametrize("name", CASES)
+async def test_a_program_stores_values_that_simplifying_again_leaves(monkeypatch, name):
+    """A value a program stores is simplified to a fixed point of the simplifying."""
+    changed = stored_twice(monkeypatch)
+    await transcript(monkeypatch, CASES[name], True)
+    assert changed == []
 
 
 async def test_a_table_of_constants_keeps_its_answers():

@@ -4603,8 +4603,8 @@ UNWRAPPED = "_unwrapped"
 
 #: The attribute under which a vector records the settings under which simplifying it
 #: as a program stores a value leaves it as it is (see `_Evaluator._settled` in
-#: evaluate.py): simplifying it so gave it back unchanged, or a list function made it
-#: of the elements of such vectors and of values simplifying leaves as they are. A
+#: evaluate.py): simplifying it so gave it, or a list function made it of the
+#: elements of such vectors and of values simplifying leaves as they are. A
 #: loop that extends a long table of roots or symbolic expressions then simplifies
 #: none of its old elements again.
 SETTLED = "_settled"

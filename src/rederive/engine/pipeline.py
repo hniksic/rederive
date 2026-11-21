@@ -35,7 +35,7 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from contextvars import ContextVar
 from dataclasses import replace
-from functools import reduce
+from functools import partial, reduce
 from itertools import combinations
 from math import gcd, lcm, prod
 from typing import NamedTuple
@@ -94,7 +94,7 @@ from rederive.engine.intervals import (
     settled,
 )
 from rederive.engine.normal import normal_form, over_one_denominator
-from rederive.engine.ordering import main_order
+from rederive.engine.ordering import ORDER_LIST, main_order
 from rederive.engine.printer import is_written, shadowing_built_ins
 from rederive.engine import budget
 from rederive.engine.budget import within
@@ -7135,7 +7135,9 @@ def _perfect_power(number: sp.Rational) -> tuple[sp.Rational, sp.Integer] | None
     return root, sp.Integer(exponent)
 
 
-def _collected_powers(expression: sp.Basic) -> sp.Basic:
+def _collected_powers(
+    expression: sp.Basic, order: Sequence[str] = ORDER_LIST
+) -> sp.Basic:
     """Combine powers of the same base in a product, and nothing else.
 
     This follows Derive's spelling rather than saving length: sympy gives `DIF(x^n, x)`
@@ -7145,8 +7147,28 @@ def _collected_powers(expression: sp.Basic) -> sp.Basic:
     `combine="exp"` applies only the exponent rule, leaving different bases under one
     exponent alone, since that part of `powsimp` is a rewriting direction rather than a
     normal form.
+
+    The exponent of a power this combines is a new sum, which is written in normal
+    form under the variable order `order`, as the normal form writes any exponent, so
+    that simplifying the answer again leaves it as it is. Sympy keeps
+    `#e^(3*t)*#e^(-4*#i*t)` apart, so the normal form leaves the two to this step, and
+    combined they are `#e^((3 - 4*#i)*t)`, not `#e^(3*t - 4*#i*t)`.
     """
-    return sp.powsimp(expression, combine="exp")
+    collected = sp.powsimp(expression, combine="exp")
+    if collected == expression:
+        return expression
+    before = expression.atoms(sp.Pow, sp.exp)
+    combined = {}
+    for power in collected.atoms(sp.Pow, sp.exp):
+        if power in before:
+            continue
+        base, exponent = power.as_base_exp()
+        if not exponent.is_Add:
+            continue
+        written = normal_form(exponent, order, over_numbers=False)
+        if written != exponent:
+            combined[power] = sp.exp(written) if base is sp.E else sp.Pow(base, written)
+    return collected.xreplace(combined) if combined else collected
 
 
 #: Maximum terms and total degree of a radicand for trying square-free factorization.
@@ -7993,6 +8015,8 @@ def _applied(
         rewrite = rule.rewrite
         if rewrite is _extracted_powers and context.branch is Branch.ANY:
             rewrite = _any_extracted_powers
+        elif rewrite is _collected_powers:
+            rewrite = partial(_collected_powers, order=context.order)
         expression = _within_budget(expression, rule.kept, rewrite, rule.work)
     return expression
 

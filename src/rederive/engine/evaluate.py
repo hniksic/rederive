@@ -1421,10 +1421,10 @@ class _Evaluator(Converter):
         approximation is the last step of the command, and a statement after this one
         may need the exact value, as a limit at a root of the denominator does.
 
-        A vector that simplifying leaves as it is records the settings it was
-        simplified under, which list functions pass on to the vectors they make of its
-        elements (see `SETTLED`): a loop that extends a table then simplifies only the
-        elements it adds."""
+        A vector this simplifies records the settings it was simplified under, under
+        which simplifying it again leaves it as it is, and list functions pass them on
+        to the vectors they make of its elements (see `SETTLED`): a loop that extends a
+        table then simplifies only the elements it adds."""
         value = _value_of(value)
         context = self.context
         # What simplifying depends on besides the value (see `SETTLED`).
@@ -1452,9 +1452,8 @@ class _Evaluator(Converter):
             simplified = simplify(value, exact, top=top)
         except Exception:
             return carried(value, context)
-        if isinstance(simplified, Vector) and _same(simplified, value):
-            # Simplifying it again would leave it as it is too, which holds of no
-            # vector simplifying changed: Simplify isn't idempotent on everything.
+        if isinstance(simplified, Vector):
+            # Simplifying it again would leave it as it is.
             mark_settled(simplified, key)
         return carried(simplified, context)
 
