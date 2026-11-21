@@ -53,6 +53,7 @@ Everything else is handled by the converter.
 
 from __future__ import annotations
 
+import contextvars
 import copy
 import dataclasses
 import itertools
@@ -5024,12 +5025,27 @@ def released(value: sp.Basic) -> sp.Basic:
     current values substituted, so an untouched one prints as the author typed it. A
     command's answer is shown in the command's form. One that is a vector takes part
     in the arithmetic around it only now: `2*SOLVE(x = 1, x)` is `[2*x = 2]`.
+
+    Each distinct conditional is worked out once in a display, however often it
+    appears in it or in the displays of others: a program that accumulates
+    conditionals over undecided tests builds displays that contain the earlier ones
+    many times over.
     """
     try:
         if not value.atoms(Suspended, Commanded):
             return settled(value)
     except Exception:
         return value
+    if _RELEASING.get() is not None:
+        return _releasing(value)
+    token = _RELEASING.set(_Releasing())
+    try:
+        return _releasing(value)
+    finally:
+        _RELEASING.reset(token)
+
+
+def _releasing(value: sp.Basic) -> sp.Basic:
     try:
         found = within(budget.REWRITING, lambda: settled(_released(value)))
         if found is not None:
@@ -5042,10 +5058,26 @@ def released(value: sp.Basic) -> sp.Basic:
     # out of the work of an optional rewrite: sympy folds nested conditionals into one,
     # simplifying their conditions, which on large ones may not end.
     try:
-        with sp.evaluate(False):
-            return _released(value)
+        return _written(value)
     except Exception:
         return value
+
+
+@dataclass
+class _Releasing:
+    """What the outermost `released` that is running has worked out, by the
+    conditional or command's answer it was worked out for."""
+
+    #: The displays worked out with their parents evaluated.
+    shown: dict[sp.Basic, sp.Basic] = field(default_factory=dict)
+    #: The expressions rebuilt as they stand, by `_written`.
+    written: dict[sp.Basic, sp.Basic] = field(default_factory=dict)
+
+
+#: The work of the outermost `released` that is running, None outside one.
+_RELEASING: contextvars.ContextVar[_Releasing | None] = contextvars.ContextVar(
+    "_RELEASING", default=None
+)
 
 
 def _released(value: sp.Basic) -> sp.Basic:
@@ -5053,13 +5085,62 @@ def _released(value: sp.Basic) -> sp.Basic:
 
 
 def _shown(found: Suspended | Commanded) -> sp.Basic:
+    shown = _RELEASING.get().shown
+    display = shown.get(found)
+    if display is None:
+        display = shown[found] = released(_display(found))
+    return display
+
+
+def _display(found: Suspended | Commanded) -> sp.Basic:
+    """The display of `found` with its arguments substituted, before release."""
     if isinstance(found, Commanded):
-        return released(found.args[0])
+        return found.args[0]
     cls = type(found)
-    shown = cls.display
-    if found.args != cls.variables:
-        shown = _over(shown, dict(zip(cls.variables, found.args, strict=True)))
-    return released(shown)
+    if found.args == cls.variables:
+        return cls.display
+    return _over(cls.display, dict(zip(cls.variables, found.args, strict=True)))
+
+
+def _written(value: sp.Basic) -> sp.Basic:
+    """`value` released with nothing rebuilt by evaluation.
+
+    A conditional already worked out with its parents evaluated keeps that display;
+    any other is replaced by its display as written. Sympy folds a conditional in the
+    test of another into it (rewriting it to an if-then-else over the sets each test
+    holds on) even with evaluation off, so a conditional is put together from its
+    branches directly. Under evaluation off, the solving of inequalities that folding
+    does builds ever larger unsimplified expressions, which sympy then simplifies for
+    seconds before it runs out of stack.
+    """
+    releasing = _RELEASING.get()
+    written = releasing.written
+
+    def rebuilt(node: sp.Basic) -> sp.Basic:
+        found = written.get(node)
+        if found is not None:
+            return found
+        if isinstance(node, Suspended | Commanded):
+            found = releasing.shown.get(node)
+            if found is None:
+                found = rebuilt(_display(node))
+        elif not node.args:
+            return node
+        else:
+            args = tuple(rebuilt(arg) for arg in node.args)
+            if args == node.args:
+                found = node
+            elif isinstance(node, ExprCondPair):
+                found = sp.Tuple.__new__(ExprCondPair, *args)
+            elif isinstance(node, sp.Piecewise):
+                found = sp.Basic.__new__(sp.Piecewise, *args)
+            else:
+                with sp.evaluate(False):
+                    found = node.func(*args)
+        written[node] = found
+        return found
+
+    return rebuilt(value)
 
 
 def _variables_of(index: Node) -> tuple[str, ...] | None:

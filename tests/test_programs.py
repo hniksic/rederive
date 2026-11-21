@@ -10,7 +10,10 @@ is entered, any other is a pair of an input and the text Simplify answers with, 
 import time
 
 import pytest
+import sympy as sp
+from sympy.core.parameters import global_parameters
 
+from rederive.engine import budget, evaluate
 from rederive.engine.client import EngineError
 from rederive.model.session import Session
 from rederive.syntax import write_expression
@@ -663,6 +666,45 @@ async def test_a_call_past_an_undecided_equation_nests_little_deeper():
         "i := i + 1))",
         ("many(x, 3000)", "3000"),
     )
+
+
+async def test_a_display_works_out_each_undecided_conditional_once(monkeypatch):
+    """A program that adds up conditionals over undecided tests builds an answer whose
+    conditionals contain the earlier ones in their tests, many times over. Its display
+    works out each distinct conditional once, with its parents evaluated, and builds
+    what that can't from the displays as written: sympy's folding of a conditional
+    in a test into the other, which works through the sets the tests hold on, isn't
+    run with evaluation off, where it builds ever larger expressions and simplifies
+    them for seconds (more or fewer, in the order a set of its relations is visited
+    in, so with the process's hash seed)."""
+    attempts = []
+    within = evaluate.within
+
+    def counted(limit, compute):
+        attempts.append(limit)
+        return within(limit, compute)
+
+    unevaluated = []
+    rewrite = sp.Piecewise._eval_rewrite_as_ITE
+
+    def folded(self, *args, **hints):
+        if not global_parameters.evaluate:
+            unevaluated.append(self)
+        return rewrite(self, *args, **hints)
+
+    monkeypatch.setattr(evaluate, "within", counted)
+    monkeypatch.setattr(sp.Piecewise, "_eval_rewrite_as_ITE", folded)
+    a = "IF(q < [1, 2, 3] AND [1, 2, 3] < 0, 4)"
+    b = f"IF(q < [1, 2, 3] AND {a} > [1, 2, 3], 4)"
+    c = f"IF(q < [1, 2, 3] AND [1, 2, 3] < {b} + {a}, 4)"
+    await run(
+        "> acc(p, q, k) := PROG(k := 0, k :+ IF(q < p < k, 4), k :+ IF(q < p < k, 4), "
+        "k :+ IF(q < p < k, 4), k)",
+        ("acc([1, 2, 3])", f"{b} + {a} + {c}"),
+    )
+    # The whole answer and the two conditionals whose tests hold others, once each.
+    assert attempts.count(budget.REWRITING) == 3
+    assert not unevaluated
 
 
 async def test_a_program_passes_over_a_test_of_a_parameter_left_out():
