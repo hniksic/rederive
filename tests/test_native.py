@@ -417,6 +417,26 @@ CASES = {
         "> mv := [5, 6]",
         "PROG(mk := 5, [MEMBER?(mk, mv), MEMBER?(mk + 2, mv), MEMBER?(mk, [mk])])",
     ],
+    "roots": [
+        "> ro1(a) := PROG(a := a, [SQRT(a), INTEGER?(SQRT(a)), SQRT(a)^2, SQRT(a) + 1])",
+        "[ro1(0), ro1(1), ro1(16), ro1(12), ro1(1728), ro1(2), ro1(-4), ro1(-12)]",
+        "[ro1(4/9), ro1(2/9), ro1(9/2), ro1(-4/9), ro1(10^40), ro1(10^41 + 3)]",
+        "[ro1(12^21), ro1(2^61 - 1), ro1(3*(2^61 - 1)^2), ro1(x), ro1(x^2), ro1(1.44)]",
+        "> ro2(n, k, c) := PROG(k := 1, c := 0, LOOP(IF(k > n, RETURN(c)), "
+        "IF(INTEGER?(SQRT(k)), c :+ 1), k :+ 1))",
+        "[ro2(100), ro2(-1)]",
+        "PROG(rk := 0, rv := [], LOOP(IF(rk > 9, RETURN(rv)), "
+        "rv := APPEND(rv, [SQRT(rk - 2)]), rk :+ 1))",
+        "[rk, rv]",
+        "> Branch := Real",
+        "[ro1(-4), ro1(-4/9), ro1(8)]",
+        "> Branch := Any",
+        "[ro1(-4), ro1(-4/9), ro1(8)]",
+        "> Branch := Principal",
+        "> Precision := Approximate",
+        "[ro1(16), ro1(12), ro1(4/9)]",
+        "> Precision := Exact",
+    ],
     "generated": [
         "> ge1(n) := PROG([VECTOR(k^2, k, n), VECTOR(k, k, 2, n), "
         "VECTOR(k, k, n, 1, -2), VECTOR(k, k, 1, n, 0), VECTOR(k, k, n, 1), "
@@ -1211,6 +1231,8 @@ BENCHMARKS = [
     "IF(MEMBER?(MOD(k,17),w), c:+1), k:+1))",
     "> vec(n):=SUM(VECTOR(MOD(k*k,7),k,0,n-1))",
     "> itr(n):=ITERATE(MOD(x*x+1,1000003),x,2,n)",
+    "> sq(n,k,c):=PROG(k:=1, c:=0, LOOP(IF(k>n, RETURN(c)), IF(INTEGER?(SQRT(k)), c:+1), "
+    "k:+1))",
 ]
 
 
@@ -1224,6 +1246,7 @@ async def test_the_benchmarks_of_native_values_compute_their_answers():
     assert (await session.simplify("mem(20000)")).text == "5883"
     assert (await session.simplify("vec(20000)")).text == "39998"
     assert (await session.simplify("itr(20000)")).text == "803427"
+    assert (await session.simplify("sq(5000)")).text == "70"
 
 
 async def test_writing_an_element_of_a_long_vector_copies_no_vector(monkeypatch):

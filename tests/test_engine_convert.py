@@ -34,6 +34,7 @@ from rederive.engine.to_sympy import (
     Taylor,
     Transposed,
     Vector,
+    integer_root,
 )
 from rederive.model.expr import Kind
 from rederive.syntax import (
@@ -396,6 +397,25 @@ def test_showing_a_value_converts_the_child():
 )
 def test_a_table_function_converts(text, expected):
     assert convert(text) == expected
+
+
+def test_the_root_of_an_integer_is_the_one_sympy_takes():
+    """`integer_root` takes the same square factors out as sympy does, of numbers it
+    factors completely and of perfect powers and products with large factors, which it
+    factors only in part."""
+    large = [2**61 - 1, 2**89 - 1, 10**40 + 3, 65537 * 65539]
+    numbers = [
+        *range(3000),
+        *(
+            base**power * cofactor
+            for base in (2, 6, 12, 1001, *large)
+            for power in range(2, 6)
+            for cofactor in (1, 2, 12, 2**31 - 1)
+        ),
+    ]
+    for number in numbers:
+        mine, theirs = integer_root(number), sp.sqrt(sp.Integer(number))
+        assert (type(mine), mine.args, mine) == (type(theirs), theirs.args, theirs)
 
 
 def test_sign_of_zero_is_plus_or_minus_one():

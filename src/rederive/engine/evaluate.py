@@ -151,6 +151,7 @@ from rederive.engine.to_sympy import (
     formals,
     held,
     held_value,
+    integer_root,
     is_conditional,
     is_plain,
     is_simple,
@@ -4905,6 +4906,25 @@ def _magnitude(values: list) -> Any:
     return abs(values[0])
 
 
+def _root(values: list) -> Any:
+    """`SQRT(u)` of a native number at least zero: the root of a perfect square, or of
+    a fraction of two, as a native number, and of any other integer as `integer_root`
+    writes it."""
+    if len(values) != 1:
+        return None
+    (number,) = values
+    kind = type(number)
+    if kind is int and number >= 0:
+        root = math.isqrt(number)
+        return root if root * root == number else integer_root(number)
+    if kind is Fraction and number > 0:
+        top = math.isqrt(number.numerator)
+        bottom = math.isqrt(number.denominator)
+        if top * top == number.numerator and bottom * bottom == number.denominator:
+            return Fraction(top, bottom)
+    return None
+
+
 def _count(values: list) -> Any:
     """`DIM(v)` of a native vector."""
     if len(values) != 1 or type(values[0]) is not NativeVector:
@@ -4974,6 +4994,7 @@ _NATIVE_CALLS: dict[str, Callable[[list], Any]] = {
     "FLOOR": _floored,
     "CEILING": _ceiled,
     "ABS": _magnitude,
+    "SQRT": _root,
     "DIM": _count,
     "FIRST": _first,
 }

@@ -41,6 +41,7 @@ from sympy.core.relational import Relational
 from sympy.functions.elementary.piecewise import ExprCondPair
 from sympy.logic.boolalg import Boolean, BooleanAtom, BooleanFunction
 from sympy.matrices.exceptions import MatrixError
+from sympy.ntheory.factor_ import factorint, perfect_power
 
 from rederive.engine.approximation import (
     GUARD,
@@ -150,6 +151,7 @@ __all__ = [
     "connected",
     "divided",
     "dotted",
+    "integer_root",
     "is_conditional",
     "iterated",
     "multiplied",
@@ -3157,7 +3159,47 @@ def _sqrt(conv: Converter, args: list) -> sp.Basic:
         root = approximate_root(argument, sp.S.Half)
         if root is not None:
             return root
+    if isinstance(argument, sp.Integer) and argument.p >= 0:
+        return integer_root(argument.p)
     return _direct(sp.sqrt)(conv, args)
+
+
+def integer_root(number: int) -> sp.Basic:
+    """The square root of the integer `number`, at least zero, as sympy writes it: an
+    integer, or the square factors it finds taken out of the root, `SQRT(12)` being
+    `2*SQRT(3)`.
+
+    Sympy finds them as this does, but asks the assumptions of each new integer it
+    makes on the way, and a program taking the roots of many integers spends most of
+    its time there. Here they are found on Python integers: the base of a perfect
+    power, or else the factors that trial division up to 2^15 finds, a larger cofactor
+    left as it is. A root that still has square factors is taken again.
+    """
+    outside = 1
+    while True:
+        root = math.isqrt(number)
+        if root * root == number:
+            return sp.Integer(outside * root)
+        power_of = perfect_power(number)
+        factors = (
+            {int(power_of[0]): int(power_of[1])}
+            if power_of is not False
+            else factorint(number, limit=2**15, use_rho=False, use_pm1=False)
+        )
+        taken, inside = 1, 1
+        for factor, exponent in factors.items():
+            half, odd = divmod(exponent, 2)
+            taken *= factor**half
+            if odd:
+                inside *= factor
+        if taken == 1:
+            break
+        outside *= taken
+        number = inside
+    radical = sp.Pow(sp.Integer(number), sp.S.Half, evaluate=False)
+    if outside == 1:
+        return radical
+    return sp.Mul(sp.Integer(outside), radical, evaluate=False)
 
 
 def approximate_root(base: sp.Basic, exponent: sp.Basic) -> sp.Basic | None:
