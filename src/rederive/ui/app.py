@@ -1278,7 +1278,8 @@ class RederiveApp(App[None]):
         self.confirm: Callable[[], None] | None = None
         #: Whether the keyboard reports Shift-Enter apart from Enter, so the Author
         #: line's hint can offer it. The terminal driver sets this when the terminal
-        #: answers its query; otherwise the hint offers Alt-Enter.
+        #: answers its query, and the Windows console driver always does; otherwise the
+        #: hint offers Alt-Enter.
         self.shift_enter = False
         #: Whether that question was asked over a dialog, which the answer must close.
         self.confirmed_over = False
@@ -1404,15 +1405,21 @@ class RederiveApp(App[None]):
         return {**super().get_css_variables(), **self.palette.css_variables()}
 
     def get_driver_class(self) -> Any:
-        """Textual's driver, replaced by one that handles terminal hangup where possible.
+        """Textual's driver, replaced by one that reads the keyboard more fully.
 
-        Only Textual's Linux/macOS driver is replaced, by its subclass; a driver named in
-        the environment, and the Windows driver, are left alone. `driver` is imported
-        here because it imports the Linux driver, which fails on Windows.
+        Textual's Linux/macOS driver is replaced by its subclass, which also handles
+        terminal hangup, and its Windows driver by one that reads console input records,
+        which report Shift-Enter. A driver named in the environment is left alone. The
+        drivers are imported here because each imports a module that fails on the other
+        platforms.
         """
         chosen = super().get_driver_class()
         if sys.platform == "win32":
-            return chosen
+            from textual.drivers.windows_driver import WindowsDriver
+
+            from rederive.ui.windriver import ConsoleDriver
+
+            return ConsoleDriver if chosen is WindowsDriver else chosen
         from textual.drivers.linux_driver import LinuxDriver
 
         from rederive.ui.driver import TerminalDriver

@@ -62,6 +62,7 @@ CLIENT_SIDE = [
     "rederive.plot.web.backend",
     "rederive.plot.web.protocol",
     "rederive.ui.app",
+    "rederive.ui.wininput",
     "rederive.web",
     "rederive.web.boot",
     "rederive.web.driver",
