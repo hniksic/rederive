@@ -904,6 +904,10 @@ async def test_every_and_some_stop_at_the_value_that_decides():
         ("[EVERY(k > 0, k, []), SOME(k > 0, k, [])]", "[true, false]"),
         ("EVERY(k > w, k, [1, 2])", "EVERY(k > w, k, [1, 2])"),
         ("SOME(k > w, k, [1, 2])", "SOME(k > w, k, [1, 2])"),
+        # The values of a range are made as they are reached, not all ahead.
+        ("[EVERY(k > k, k, 1, 10^20), SOME(k > 5, k, 10^30)]", "[false, true]"),
+        "> evl(n) := PROG([EVERY(k > k, k, 1, n), SOME(k > 5, k, 1, n, 2)])",
+        ("evl(10^20)", "[false, true]"),
         "> evs(n, c) := PROG(c := 0, EVERY(PROG(c :+ 1, k < 3), k, 1, n), c)",
         ("evs(10)", "3"),
         "> inap(x, n) := IF(SOME(NOT RATIONAL?(t_), t_, x) OR EVERY(t_ = 0, t_, x) "

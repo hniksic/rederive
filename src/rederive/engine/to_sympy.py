@@ -25,7 +25,7 @@ import math
 import operator
 import string
 import sys
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
 from fractions import Fraction
 from itertools import product
@@ -7413,7 +7413,13 @@ def table_row(value: sp.Basic, entry: sp.Basic, spread: bool = True) -> Vector:
 
 
 def steps(rest: list) -> list[sp.Basic]:
-    """The values a generated vector's variable takes, in order.
+    """The values a generated vector's variable takes, in order (see `stepped`)."""
+    return list(stepped(rest))
+
+
+def stepped(rest: list) -> Iterable[sp.Basic]:
+    """The values a generated vector's variable takes, in order, each made as it is
+    reached: a test over a long range that an early value decides makes only those.
 
     There are `(n - m)/s + 1` of them, rounded down: one if the step overshoots the
     range, none if the range runs the wrong way. Over a vector or a set they are its
@@ -7429,7 +7435,7 @@ def steps(rest: list) -> list[sp.Basic]:
     if step.is_zero is not False:
         raise ValueError("no step")
     count = int(sp.floor((high - low) / step)) + 1
-    return [low + step * offset for offset in range(max(count, 0))]
+    return (low + step * offset for offset in range(max(count, 0)))
 
 
 def _selected(conv: Converter, args: list) -> sp.Basic:
@@ -7453,7 +7459,7 @@ def _selected(conv: Converter, args: list) -> sp.Basic:
     return over_values(chosen, rest)
 
 
-def collection_of(rest: list) -> tuple[list[sp.Basic], bool]:
+def collection_of(rest: list) -> tuple[Iterable[sp.Basic], bool]:
     """The values `MAP_LIST`, `MAP`, `EVERY` and `SOME` give their variable, from the
     arguments after it, and whether a `MAP_LIST` over them gives a set.
 
@@ -7461,14 +7467,15 @@ def collection_of(rest: list) -> tuple[list[sp.Basic], bool]:
     string's characters (see `_as_sequence`); only a set gives a set. An integer `n` is
     the count of values 1 to n, as for `VECTOR`: Derive 6's own utility functions map
     over `DIM(u)` so (`JACOBIAN`). Two or three are a range `m, n` with an optional
-    step `s`, as for `VECTOR` (see `steps`). Raises for anything else.
+    step `s`, as for `VECTOR` (see `stepped`: the values of a range are made as they
+    are reached). Raises for anything else.
     """
     if len(rest) == 1:
         (values,) = rest
         if isinstance(values, SetOf):
             return list(values.args), True
         if isinstance(values, sp.Integer):
-            return steps([sp.Integer(1), values]), False
+            return stepped([sp.Integer(1), values]), False
         sequence = _as_sequence(values)
         if sequence is None:
             raise TypeError("not a collection")
@@ -7477,7 +7484,7 @@ def collection_of(rest: list) -> tuple[list[sp.Basic], bool]:
         isinstance(bound, sp.Expr) and bound.is_real for bound in rest
     ):
         raise TypeError("not a range")
-    return steps(rest), False
+    return stepped(rest), False
 
 
 def _mapped_list(conv: Converter, args: list) -> sp.Basic:
