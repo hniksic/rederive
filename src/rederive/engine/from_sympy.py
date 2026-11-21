@@ -31,6 +31,7 @@ from rederive.engine.context import (
     Notation,
     SettingValue,
 )
+from rederive.engine.native import given
 from rederive.engine.printer import HeldBase, author_text, is_written, named
 from rederive.engine.to_sympy import Assign, FunDef, StringLiteral, Vector
 from rederive.model.expr import Kind, Node
@@ -160,14 +161,21 @@ def effects(context: Context, state: ParseState | None = None) -> tuple[Node, ..
     answer.
     """
     store = context.store
-    if not store.effects:
+    done = [
+        (at, kind, name, node) for (kind, name), (at, node) in store.effects.items()
+    ]
+    done.extend(
+        (cell.at, "assign", name, None) for name, cell in store.cells.items() if cell.at
+    )
+    if not done:
         return ()
+    done.sort(key=lambda each: each[0])
     # The evaluator imports this module, so its helper is imported when needed.
     from rederive.engine.evaluate import released
 
     exact = replace(context, notation=Notation.RATIONAL)
     found: list[Node] = []
-    for (kind, name), node in store.effects.items():
+    for _, kind, name, node in done:
         if node is not None:
             found.append(node)
             continue
@@ -175,7 +183,7 @@ def effects(context: Context, state: ParseState | None = None) -> tuple[Node, ..
             setting = store.settings[name]
             value = CLEARED if setting == CLEARED_SETTING else setting_value(setting)
         else:
-            value = store.values[name]
+            value = given(store, name)
         if name.startswith('"'):
             target: sp.Basic = StringLiteral(name[1:-1])
         else:

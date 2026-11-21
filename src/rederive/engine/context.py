@@ -214,6 +214,35 @@ def library_definition(name: str) -> Definition:
     return Definition.of(node)
 
 
+class Cell:
+    """The value of one variable while a command runs: a local of a running function
+    (see `Frame` in evaluate.py), or as a `Global`, a global. `raw` is the value as
+    the evaluator keeps it, `CLEARED` for a variable that has none.
+
+    Two locals share a cell where Derive shares a vector: `w := v` with `v` a local,
+    and a parameter given a bare local of the caller. An element assignment through
+    either name changes the cell's value, so both see it. Globals never share one.
+    """
+
+    __slots__ = ("raw",)
+
+    def __init__(self, raw: object) -> None:
+        self.raw = raw
+
+
+class Global(Cell):
+    """The cell of a global: `at` is the store's clock (`Store.version`) when the
+    command last gave it a value, which orders the hand-back to the session, or 0 for
+    an unstamped cell, which keeps the session's value of a variable written as a
+    literal once it is worked out (see `_Evaluator._assigned` in evaluate.py)."""
+
+    __slots__ = ("at",)
+
+    def __init__(self, raw: object, at: int) -> None:
+        self.raw = raw
+        self.at = at
+
+
 @dataclass(eq=False)
 class Store:
     """What a command does to the session while it computes, as it does it.
@@ -225,27 +254,39 @@ class Store:
     element and calls it in the second. When the command ends, the answer carries the
     final state back for the session to perform too (see `Result.performed`).
 
-    `values` holds the globals assigned so far, as computed values, and `CLEARED` for
-    one whose value was taken away; reading a global looks here before the session's
-    assignments. `functions` holds the definitions made, None for one whose body was
-    taken away, `domains` the declarations made, `settings` the settings assigned, and
-    `effects` the order to perform things in: a name's key moves to the end each time
-    it is assigned again, and each definition's and declaration's tree is kept.
-    `version` counts every change, so a value worked out from the globals can tell
-    whether it is still current. `steps` counts the program steps taken (see `step`).
-    `displayed` holds the texts `DISPLAY` showed, in order, and `written` the last text
-    `WRITE` wrote (see `show`).
+    `cells` holds the globals assigned so far, each in a `Global` cell with its value,
+    `CLEARED` for one whose value was taken away; reading a global looks here before the
+    session's assignments. Its unstamped cells are no value the command gave: they are
+    never handed back, and only the evaluator reads them. `functions` holds the
+    definitions made, None for one whose body was taken away, `domains` the declarations
+    made, `settings` the settings assigned, and `effects` the trees of the definitions
+    and declarations, each key with the clock when it was last made. `version` is the
+    clock: it counts every change, so a value worked out from the globals can tell
+    whether it is still current, and the stamps it gives order what the session
+    performs. `steps` counts the program steps taken (see `Context.step`). `displayed`
+    holds the texts `DISPLAY` showed, in order, and `written` the last text `WRITE`
+    wrote (see `show`).
 
-    The values are the engine's own (sympy expressions), written out once at the end;
-    so a loop of a million assignments costs a million dictionary writes.
+    A cell keeps its value as the evaluator does a local's, which may be native (a
+    Python number, or a vector written in place; see `rederive.engine.native`).
+    Everything outside the evaluator reads it as a sympy value (`native.given`), and it
+    is written out once at the end; so a loop of a million assignments to a global
+    costs what one to a local does.
     """
 
-    values: dict[str, Any] = field(default_factory=dict)
+    cells: dict[str, Global] = field(default_factory=dict)
+    """This dict is never replaced, only changed: evaluators hold it (see `restore`)."""
     functions: dict[str, Definition | None] = field(default_factory=dict)
     domains: dict[str, Domain] = field(default_factory=dict)
+    """Replaced, not changed, by each declaration, so that a reference to it is the
+    declarations in force when it was taken."""
     settings: dict[str, SettingValue] = field(default_factory=dict)
-    effects: dict[tuple[str, str], Node | None] = field(default_factory=dict)
+    effects: dict[tuple[str, str], tuple[int, Node | None]] = field(
+        default_factory=dict
+    )
     version: int = 0
+    saved: int = 0
+    """The clock when the innermost save point still active was taken (see `save`)."""
     steps: int = 0
     displayed: list[str] = field(default_factory=list)
     written: str | None = None
@@ -281,19 +322,11 @@ class Store:
         if _listener is not None:
             _listener(text, displayed)
 
-    def step(self, limit: int | None) -> None:
-        """Count one step of a program: a statement, a pass of an iteration, or a call
-        of a user function; raise `StepLimitExceeded` once there are more than
-        `limit`."""
-        self.steps += 1
-        if limit is not None and self.steps > limit:
-            raise StepLimitExceeded("Step limit exceeded")
-
     def assign(self, name: str, value: Any) -> None:
         """Give the global `name` the computed `value`, or take its value away with
         `CLEARED`."""
-        self.values[name] = value
-        self._effect(("assign", name), None)
+        self.version += 1
+        self.cells[name] = Global(value, self.version)
 
     def define(self, node: Node) -> None:
         """Perform the `FUNDEF` tree `node`."""
@@ -313,13 +346,76 @@ class Store:
         if declared is None:
             return
         name, domain = declared
-        self.domains[name] = domain
+        self.domains = {**self.domains, name: domain}
         self._effect(("declare", name), node)
 
     def _effect(self, key: tuple[str, str], node: Node | None) -> None:
-        self.effects.pop(key, None)
-        self.effects[key] = node
         self.version += 1
+        self.effects[key] = (self.version, node)
+
+    def save(self) -> Saved:
+        """A save point: what the command has done to the session so far, for `restore`
+        to put back where what it does next is to be undone (see `_entered` in
+        evaluate.py). It stays active until `release`.
+
+        The copies are shallow. That suffices for the cells, since giving a global a
+        value makes it a new cell, provided no cell from before the save point is
+        changed in place while it is active: a cell is changed in place only where
+        its stamp is later than `saved`."""
+        kept = Saved(
+            dict(self.cells),
+            dict(self.functions),
+            self.domains,
+            dict(self.settings),
+            dict(self.effects),
+            self.version,
+            list(self.displayed),
+            self.written,
+            self.random,
+            self.context,
+            self.held,
+            self.saved,
+        )
+        self.saved = self.version
+        return kept
+
+    def restore(self, kept: Saved) -> None:
+        """Undo what the command did since the save point `kept` was taken."""
+        self.cells.clear()
+        self.cells.update(kept.cells)
+        self.functions = dict(kept.functions)
+        self.domains = kept.domains
+        self.settings = dict(kept.settings)
+        self.effects = dict(kept.effects)
+        self.version = kept.version
+        self.displayed = list(kept.displayed)
+        self.written = kept.written
+        self.random = kept.random
+        self.context = kept.context
+        self.held = kept.held
+
+    def release(self, kept: Saved) -> None:
+        """End the save point `kept`, restored or not."""
+        self.saved = kept.saved
+
+
+@dataclass(frozen=True, eq=False)
+class Saved:
+    """What `Store.save` keeps of a store; `saved` is the store's own `saved` from
+    before, which `release` puts back."""
+
+    cells: dict[str, Global]
+    functions: dict[str, Definition | None]
+    domains: dict[str, Domain]
+    settings: dict[str, SettingValue]
+    effects: dict[tuple[str, str], tuple[int, Node | None]]
+    version: int
+    displayed: list[str]
+    written: str | None
+    random: int | None
+    context: Context | None
+    held: bool
+    saved: int
 
 
 #: Where the texts a running command shows go as it shows them; see `reporting`.
@@ -456,7 +552,7 @@ class Context:
     labels: Mapping[int, Node] = field(default_factory=dict)
     store: Store = field(default_factory=Store, compare=False)
     step_limit: int | None = None
-    """How many program steps a command may take (see `Store.step`), or None for no
+    """How many program steps a command may take (see `step`), or None for no
     limit.
 
     Where a command can be aborted (the app's worker is killed by Esc), there is none:
@@ -491,9 +587,13 @@ class Context:
     step, or None for none."""
 
     def step(self) -> None:
-        """Count one program step against `step_limit` (see `Store.step`), and end a
-        strict command that is out of time."""
-        self.store.step(self.step_limit)
+        """Count one step of a program (a statement, a pass of an iteration, or a call
+        of a user function) in `Store.steps`, raise `StepLimitExceeded` once there are
+        more than `step_limit`, and end a strict command that is out of time."""
+        store = self.store
+        store.steps += 1
+        if self.step_limit is not None and store.steps > self.step_limit:
+            raise StepLimitExceeded("Step limit exceeded")
         if self.deadline is not None and monotonic() > self.deadline:
             raise Unsettled("out of time")
 

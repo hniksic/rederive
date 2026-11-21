@@ -288,11 +288,9 @@ class Pointwise:
 
     def at(self, *values: float) -> tuple[complex | None, ...]:
         """The parts' values with the variables at `values` (see the class)."""
-        given = {
-            name: sp.Rational(value)
-            for name, value in zip(self.variables, values, strict=True)
-        }
-        store = Store(values=given)
+        store = Store()
+        for name, value in zip(self.variables, values, strict=True):
+            store.assign(name, sp.Rational(value))
         context = dataclasses.replace(
             self._context, store=store, random_state=self.random_state
         )

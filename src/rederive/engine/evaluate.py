@@ -46,7 +46,8 @@ the rest of the command in the context's `Store` and handed back to the session 
 the answer. `RETURN` and `exit` are the exceptions `_Return` and `_Exit`, caught by the
 construct or activation they end. A setting assigned takes effect for the statements
 after it (see `Store.context`), and each statement, pass of an iteration and call counts
-against the command's step limit (see `Context.step_limit`).
+against the command's step limit (see `Context.step_limit`). Locals and globals are
+kept in the same kind of `Cell`.
 
 Everything else is handled by the converter.
 """
@@ -58,10 +59,13 @@ import copy
 import dataclasses
 import itertools
 import math
+import operator
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from fractions import Fraction
 from functools import cached_property
+from types import MappingProxyType
 from typing import Any
 
 import sympy as sp
@@ -71,17 +75,20 @@ from sympy.core.relational import Relational
 from sympy.functions.elementary.piecewise import ExprCondPair
 from sympy.logic.boolalg import BooleanAtom
 
+from rederive import library
 from rederive.engine import budget
 from rederive.engine.approximation import approximated, carried, carried_out
 from rederive.engine.budget import within
 from rederive.engine.context import (
     CLEARED,
     CLEARED_SETTING,
+    Cell,
     Context,
     Definition,
     Domain,
     DomainKind,
     FileNeeded,
+    Global,
     PassedOverTooFar,
     Precision,
     SettingValue,
@@ -96,6 +103,18 @@ from rederive.engine.from_sympy import (
     written_tree,
 )
 from rederive.engine.intervals import decided
+from rederive.engine.native import (
+    NUMBERS,
+    SCALARS,
+    Assigned,
+    NativeAssignment,
+    NativeVector,
+    assigned,
+    given,
+    native_of,
+    rational,
+    sympy_of,
+)
 from rederive.engine.printer import HeldBase, author_text, has_held
 from rederive.engine.to_sympy import (
     CALCULUS_HEADS,
@@ -238,34 +257,20 @@ class _Exit(BaseException):
     body; the value of what it ends is the last value `Frame.last`."""
 
 
-class _Box:
-    """The value of a local, which two locals share where Derive shares a vector:
-    `w := v` with `v` a local, and a parameter given a bare local of the caller. An
-    element assignment through either name replaces the box's value, so both see it.
-    """
-
-    __slots__ = ("value",)
-
-    def __init__(self, value: object):
-        self.value = value
-
-
-#: The value of a local that has none: a parameter without argument or default, or
-#: one cleared by `x :=`. It reads as the global of its name.
-_UNSET = object()
-
-
 @dataclass(eq=False)
 class Frame:
     """One activation of a user function, or one top-level evaluation, as it runs.
 
     `formals` are the function's parameters, its locals; an assignment to any other
-    name assigns the global. `locals` holds the locals that have been assigned (one
-    that is only bound to its argument is in `Environment.bindings`), and `last` the
-    value of the statement completed last, which `exit` leaves a construct with.
+    name assigns the global. `locals` holds the cells of the locals that have been
+    assigned (one that is only bound to its argument is in `Environment.bindings`); a
+    cell holding `CLEARED` is a local without a value, which reads as the global of its
+    name. `last` is the value of the statement completed last, which `exit` leaves a
+    construct with.
     `loops` and `progs` count the `LOOP`s and `PROG`s running, so that `exit` knows
     what it ends. `activation` marks a function call, whose body `exit` ends if
     nothing else; at top level an `exit` outside every construct is just the name.
+    `last` may be a native value, as a local's may (see `Cell`).
     `through` holds the values given to variables by assignments to the formals
     standing for them (see `_Evaluator._variable_of_formal`), which the arguments
     mentioning them see.
@@ -273,14 +278,14 @@ class Frame:
 
     formals: frozenset[str] = frozenset()
     activation: bool = False
-    locals: dict[str, _Box] = field(default_factory=dict)
-    last: sp.Basic = sp.nan
+    locals: dict[str, Cell] = field(default_factory=dict)
+    last: object = sp.nan
     loops: int = 0
     progs: int = 0
     through: dict[sp.Basic, sp.Basic] = field(default_factory=dict)
 
     def has(self, name: str) -> bool:
-        """Whether `name` is a local of this activation with a box of its own."""
+        """Whether `name` is a local of this activation with a cell of its own."""
         return name in self.locals
 
 
@@ -644,7 +649,7 @@ def _unit(evaluator: _Evaluator, node: Node) -> sp.Basic:
     except _Return as returned:
         return returned.value
     except _Exit:
-        return frame.last
+        return sympy_of(frame.last)
 
 
 def released_held(value: sp.Basic, env: Environment) -> sp.Basic:
@@ -694,23 +699,6 @@ _SHOWN_PROGRAM_STEPS = 5_000
 #: number of times.
 _PASSED_OVER_DEPTH = 50
 
-#: What a program run in a definition being shown changes in the command's `Store`
-#: and has undone (see `_Evaluator._run_in_definition`).
-_UNDONE_IN_DEFINITIONS = (
-    "values",
-    "functions",
-    "domains",
-    "settings",
-    "effects",
-    "version",
-    "displayed",
-    "written",
-    "random",
-    "context",
-    "held",
-)
-
-
 class _Undecided(BaseException):
     """A running program met a test it can't decide that steers it (see
     `_Evaluator._conditional`): the call of the defined function running it stands.
@@ -755,6 +743,23 @@ def _variables_named(value: sp.Basic) -> set[str]:
     return set().union(*(_variables_named(argument) for argument in value.args))
 
 
+def _literal(node: Node) -> bool:
+    """Whether the tree `node` is a literal: a numeral, a negated numeral, or a vector
+    written out of literals. Its value is the same in every precision mode and
+    environment, as a numeral's is (see `numeral`)."""
+    kind = node.kind
+    if kind is Kind.NUMBER:
+        return True
+    if kind is Kind.UNOP:
+        return node.value == "-" and node.children[0].kind is Kind.NUMBER
+    if kind is Kind.VECTOR:
+        return all(
+            child.kind is not Kind.ELLIPSIS and _literal(child)
+            for child in node.children
+        )
+    return False
+
+
 def _holds_program(body: Node) -> bool:
     """Whether the body `body` of a defined function holds a program construct, which
     may meet a test it can't decide (see `_Evaluator._conditional`)."""
@@ -776,6 +781,7 @@ def _remembered(memo: dict[int, tuple[Node, Any]], node: Node, find: Callable) -
 _PROGRAMS: dict[int, tuple[Node, bool]] = {}
 _MENTIONED: dict[int, tuple[Node, tuple[frozenset[str], frozenset[str]] | None]] = {}
 _DEFINING: dict[int, tuple[Node, bool]] = {}
+_LITERALS: dict[int, tuple[Node, bool]] = {}
 _TREES_KEPT = 200_000
 
 
@@ -790,6 +796,13 @@ def _deep() -> Iterator[None]:
         yield
 
 
+#: The operator of an assignment, as an `Assign` holds it.
+_ASSIGNED = sp.Symbol(":=")
+
+#: The cells of an evaluator without variables of its own to look up first.
+_NO_CELLS: Mapping[str, Cell] = MappingProxyType({})
+
+
 class _Evaluator(Converter):
     """The converter with an environment; `convert` dispatches by node kind."""
 
@@ -799,6 +812,49 @@ class _Evaluator(Converter):
         self.parameters = env.parameters
         #: The value of the last `IF` test this evaluator left undecided.
         self._undecided_test: sp.Basic | None = None
+        #: Whether the statements this evaluator runs compute with native values (see
+        #: "compiled nodes").
+        self.native = (
+            COMPILED
+            and env.running
+            and env.frame is not None
+            and not env.writing
+            and not env.defining
+            # Approximate rounds the values a program carries (see `carried`).
+            and env.context.precision is not Precision.APPROXIMATE
+        )
+        #: The native values of variables a native `EVERY` or `SOME` binds here, by
+        #: name, and what it found of the bindings it makes (see `_mapped_closure`).
+        self.indices: dict[str, object] | None = None
+        self.scopes: dict[int, tuple] | None = None
+        #: The cells a name is looked up in first where values are native: a call's
+        #: locals, or the globals for any other evaluation, where no name is a local.
+        #: An evaluation that follows a variable's value or has arguments bound looks
+        #: up its globals only after checking for them (see `_name_closure`).
+        frame = env.frame
+        if frame is None:
+            self.scope: Mapping[str, Cell] = _NO_CELLS
+        elif frame.formals:
+            self.scope = frame.locals
+        elif env.expanding or env.bindings:
+            self.scope = _NO_CELLS
+        else:
+            self.scope = env.context.store.cells
+
+    def at(self, variable: sp.Basic, value: sp.Basic) -> _Evaluator:
+        """`self.within(_at(self.env, {variable: value}))`, for an evaluator that has
+        evaluated nothing, made by copying it."""
+        env = self.env
+        written = {variable: value}
+        if env.written:
+            written = {
+                **{symbol: _over(each, written) for symbol, each in env.written.items()},
+                **written,
+            }
+        made = object.__new__(_Evaluator)
+        made.__dict__.update(self.__dict__)
+        made.env = replace(env, written=written)
+        return made
 
     def within(self, env: Environment) -> _Evaluator:
         return _Evaluator(env)
@@ -807,9 +863,11 @@ class _Evaluator(Converter):
         return self.parameters | self.env.bound
 
     def convert(self, node: Node) -> sp.Basic:
-        compiled = _COMPILED.get(id(node))
-        if compiled is not None:
-            return compiled[1](self)
+        compiled = _NATIVES.get(id(node))
+        if compiled is not None and COMPILED:
+            value = compiled[1](self)
+            # Only a native evaluator has native values (see "compiled nodes").
+            return sympy_of(value) if self.native else value
         return self._converted(node)
 
     def _converted(self, node: Node) -> sp.Basic:
@@ -881,10 +939,10 @@ class _Evaluator(Converter):
         frame = env.frame
         unset = False
         if frame is not None and name not in env.bound:
-            box = frame.locals.get(name)
-            if box is not None:
-                if box.value is not _UNSET:
-                    return _over(box.value, env.written)
+            cell = frame.locals.get(name)
+            if cell is not None:
+                if cell.raw is not CLEARED:
+                    return _over(sympy_of(cell.raw), env.written)
                 unset = True
         value = None if unset else env.bindings.get(name)
         if value is not None:
@@ -901,7 +959,7 @@ class _Evaluator(Converter):
                 return argument.at(rewritten, env.writing)
             return _over(value, env.written)
         if name not in env.bound and name not in env.expanding:
-            stored = self.context.store.values.get(name)
+            stored = given(self.context.store, name)
             if stored is CLEARED:
                 return self._written(super()._name(node))
             if stored is not None:
@@ -930,12 +988,12 @@ class _Evaluator(Converter):
         env = self.env
         frame = env.frame
         if frame is not None:
-            box = frame.locals.get(name)
-            if box is not None and box.value is not _UNSET:
-                return box.value
-            if box is None and name in env.bindings:
+            cell = frame.locals.get(name)
+            if cell is not None and cell.raw is not CLEARED:
+                return sympy_of(cell.raw)
+            if cell is None and name in env.bindings:
                 return env.bindings[name]
-        stored = self.context.store.values.get(name)
+        stored = given(self.context.store, name)
         if stored is not None and stored is not CLEARED:
             return stored
         if stored is None:
@@ -950,9 +1008,9 @@ class _Evaluator(Converter):
         to its argument; None if it has none here."""
         env = self.env
         if env.frame is not None and name not in env.bound:
-            box = env.frame.locals.get(name)
-            if box is not None:
-                return None if box.value is _UNSET else box.value
+            cell = env.frame.locals.get(name)
+            if cell is not None:
+                return None if cell.raw is CLEARED else sympy_of(cell.raw)
         return env.bindings.get(name)
 
     def _assigned(self, name: str, assigned: Node) -> sp.Basic:
@@ -968,9 +1026,19 @@ class _Evaluator(Converter):
         assignment made meanwhile, or a different environment, means evaluating it
         again, and a value that itself assigns, defines or draws a random number is
         never reused.
+
+        A value written out as a literal (see `_literal`) is the same wherever it is
+        evaluated, so it is worked out once in a command and kept in an unstamped cell
+        of the store, which the compiled programs read as they read a global's.
         """
         env = self.env
-        version = self.context.store.version
+        store = self.context.store
+        literal = _remembered(_LITERALS, assigned, _literal)
+        if literal:
+            cell = store.cells.get(name)
+            if cell is not None:
+                return sympy_of(cell.raw)
+        version = store.version
         try:
             if _defines(assigned):
                 raise TypeError("performs when evaluated")
@@ -1006,7 +1074,10 @@ class _Evaluator(Converter):
             value = _unit(self.within(deeper), assigned)
         else:
             value = self.within(deeper).convert(assigned)
-        if key is not None and self.context.store.version == version:
+        if literal and name not in store.cells:
+            # Unstamped: no value the command gave it (see `given`).
+            store.cells[name] = Global(native_of(value), 0)
+        if key is not None and store.version == version:
             env.values[key] = value
         return value
 
@@ -1042,7 +1113,7 @@ class _Evaluator(Converter):
         found = set(names)
         for each in names - seen:
             seen.add(each)
-            stored = context.store.values.get(each)
+            stored = given(context.store, each)
             if stored is not None:
                 if isinstance(stored, sp.Basic):
                     found |= {symbol.name for symbol in _free_symbols(stored)}
@@ -1214,9 +1285,11 @@ class _Evaluator(Converter):
         if current is not None and current is not self.context:
             # A statement before this one assigned a setting.
             return self.within(replace(self.env, context=current)).statement(node)
+        if self.native:
+            return sympy_of(_statement(node)(self))
         self.context.step()
-        if id(node) not in _COMPILED:
-            _compile(node)
+        if COMPILED and id(node) not in _STATEMENTS:
+            _statement(node)
         if node.kind is Kind.CALL:
             head, *arguments = node.children
             if str(head.value) == "IF" and 1 <= len(arguments) <= 4:
@@ -1248,7 +1321,7 @@ class _Evaluator(Converter):
                 value = self.statement(statement)
             return value
         except _Exit:
-            return frame.last
+            return sympy_of(frame.last)
         finally:
             frame.progs -= 1
 
@@ -1263,7 +1336,7 @@ class _Evaluator(Converter):
                 for statement in statements:
                     self.statement(statement)
         except _Exit:
-            return frame.last
+            return sympy_of(frame.last)
         finally:
             frame.loops -= 1
 
@@ -1469,7 +1542,7 @@ class _Evaluator(Converter):
         store.context = changed
         if self._is_local(name):
             assert self.env.frame is not None
-            self.env.frame.locals[name] = _Box(value)
+            self.env.frame.locals[name] = Cell(value)
             return value
         store.set(name, setting)
         return assignment
@@ -1482,7 +1555,7 @@ class _Evaluator(Converter):
             target.kind is Kind.NAME
             and self.env.depth == 0
             and (self.env.frame is None or not self.env.frame.activation)
-            and name not in self.context.store.values
+            and not assigned(self.context.store, name)
             and _refers_to(self.context.assigned(name), name)
         ):
             expanding = self.env.expanding | {name}
@@ -1517,6 +1590,27 @@ class _Evaluator(Converter):
             return StringLiteral(str(target.value))
         return Converter(self.context).symbol(str(target.value))
 
+    def assignment_of(self, made: NativeAssignment | Assigned) -> Assign:
+        """The `Assign` that the assignment of a global a compiled program made stands
+        for (see `NativeAssignment`), its target as the declarations in force then
+        write it."""
+        context = self.context
+        store = context.store
+        if store.domains is not made.domains:
+            then = copy.copy(store)
+            then.domains = made.domains
+            context = dataclasses.replace(context, store=then)
+        target = made.node.children[0]
+        value = sympy_of(made.value)
+        if made.places is None:
+            symbol = Converter(context).symbol(str(target.value))
+            return Assign(symbol, _ASSIGNED, value)
+        links, base = _element_links(target)
+        written = Converter(context).symbol(str(base.value))
+        for (link, _), place in zip(links, made.places, strict=True):
+            written = _linked(link, written, self.operand(sympy_of(place)))
+        return Assign(written, _ASSIGNED, value)
+
     def _is_local(self, name: str) -> bool:
         frame = self.env.frame
         return frame is not None and name in frame.formals
@@ -1533,23 +1627,23 @@ class _Evaluator(Converter):
         counts as, or a global, whose assignment it stays, to `symbol`. Which, `local`
         says, or if None, whether `name` is a parameter of the running activation.
 
-        A local given another local by its bare name shares its vector (see `_Box`).
+        A local given another local by its bare name shares its vector (see `Cell`).
         """
         frame = self.env.frame
         if local is None:
             local = self._is_local(name)
         if local:
             assert frame is not None
-            box = None
+            cell = None
             if written is not None and isinstance(value, Vector):
-                box = self._box_of(written)
-            frame.locals[name] = box if box is not None else _Box(value)
+                cell = self._cell_of(written)
+            frame.locals[name] = cell if cell is not None else Cell(value)
             return value
         self.context.store.assign(name, value)
         return Assign(symbol, sp.Symbol(":="), value)
 
-    def _box_of(self, written: Node) -> _Box | None:
-        """The box of the local `written` names, made for it if it has only its
+    def _cell_of(self, written: Node) -> Cell | None:
+        """The cell of the local `written` names, made for it if it has only its
         argument, or None if it names no local with a value."""
         frame = self.env.frame
         if frame is None or written.kind is not Kind.NAME:
@@ -1557,13 +1651,13 @@ class _Evaluator(Converter):
         name = str(written.value)
         if name in self.env.bound or name not in frame.formals:
             return None
-        box = frame.locals.get(name)
-        if box is not None:
-            return None if box.value is _UNSET else box
+        cell = frame.locals.get(name)
+        if cell is not None:
+            return None if cell.raw is CLEARED else cell
         if name not in self.env.bindings:
             return None
-        box = frame.locals[name] = _Box(self.convert(written))
-        return box
+        cell = frame.locals[name] = Cell(self.convert(written))
+        return cell
 
     def _cleared(
         self, name: str, symbol: sp.Basic, local: bool | None = None
@@ -1576,7 +1670,7 @@ class _Evaluator(Converter):
             local = self._is_local(name)
         if local:
             assert frame is not None
-            frame.locals[name] = _Box(_UNSET)
+            frame.locals[name] = Cell(CLEARED)
         else:
             self.context.store.assign(name, CLEARED)
         return Assign(symbol, sp.Symbol(":="))
@@ -1595,19 +1689,23 @@ class _Evaluator(Converter):
         local, the assignment, with its indices evaluated, for a global.
         """
         target, *values = node.children
-        operator = str(node.value)
-        links: list[tuple[Node, Node]] = []
-        base = target
-        while base.kind is Kind.SUB or (
-            base.kind is Kind.INFIX and (base.value == "ROW" or is_chain(base))
-        ):
-            links.append((base, base.children[1]))
-            base = base.children[0]
-        links.reverse()
+        links, base = _element_links(target)
         indices = [self.operand(self.convert(index)) for _, index in links]
         value = (
             _assigned_value(_value_of(self.convert(values[0]))) if values else None
         )
+        return self._element_stored(node, links, base, indices, value)
+
+    def _element_stored(
+        self,
+        node: Node,
+        links: list[tuple[Node, Node]],
+        base: Node,
+        indices: list[sp.Basic],
+        value: sp.Basic | None,
+    ) -> sp.Basic:
+        """The rest of `_element_assigned`, its indices and value evaluated."""
+        operator = str(node.value)
         assignable = base.kind in (Kind.NAME, Kind.STRING) and all(
             link.kind is Kind.SUB or link.value == "ROW" for link, _ in links
         )
@@ -1633,11 +1731,11 @@ class _Evaluator(Converter):
             return Assign(written, sp.Symbol(":="), value)
         frame = self.env.frame
         if frame is not None and name in frame.formals:
-            box = frame.locals.get(name)
-            if box is None or box.value is _UNSET:
-                frame.locals[name] = _Box(replaced)
+            cell = frame.locals.get(name)
+            if cell is None or cell.raw is CLEARED:
+                frame.locals[name] = Cell(replaced)
             else:
-                box.value = replaced
+                cell.raw = replaced
             return value
         self.context.store.assign(name, replaced)
         return Assign(written, sp.Symbol(":="), value)
@@ -1939,7 +2037,7 @@ class _Evaluator(Converter):
             name = variable_key(child)
             if name in self.env.bound:
                 continue
-            stored = self.context.store.values.get(name)
+            stored = given(self.context.store, name)
             if stored is None and self.context.assigned(name) is None:
                 continue
             if stored is CLEARED:
@@ -1975,21 +2073,26 @@ class _Evaluator(Converter):
         store = self.context.store
         name = variable.name
         before = store.domains.get(name)
-        store.domains[name] = Domain(
-            DomainKind.REAL,
-            written_tree(low, self.context),
-            written_tree(high, self.context),
-            closed_low=low.is_finite is True,
-            closed_high=high.is_finite is True,
-        )
+        store.domains = {
+            **store.domains,
+            name: Domain(
+                DomainKind.REAL,
+                written_tree(low, self.context),
+                written_tree(high, self.context),
+                closed_low=low.is_finite is True,
+                closed_high=high.is_finite is True,
+            ),
+        }
         store.version += 1
         try:
             first = _assigned_value(_value_of(self.convert(arguments[0])))
         finally:
+            domains = dict(store.domains)
             if before is None:
-                store.domains.pop(name, None)
+                domains.pop(name, None)
             else:
-                store.domains[name] = before
+                domains[name] = before
+            store.domains = domains
             store.version += 1
         # The answer is in the variable as the caller has it.
         declared = {
@@ -2187,7 +2290,7 @@ class _Evaluator(Converter):
         variadic function's one parameter takes them all as a vector.
 
         An argument that is a bare local of the caller holding a vector is shared with
-        it, so the callee's element assignments change the caller's vector (see `_Box`).
+        it, so the callee's element assignments change the caller's vector (see `Cell`).
 
         The value is the body's, or what a `RETURN` gives; an `exit` that ends nothing
         in the body ends the body. A function without a body stands, with its omitted
@@ -2229,9 +2332,9 @@ class _Evaluator(Converter):
                 supplied[parameter] = Argument(self.env, value)
                 frame.locals.pop(parameter, None)
                 if index < len(arguments) and isinstance(value, Vector):
-                    box = self._box_of(arguments[index])
-                    if box is not None:
-                        frame.locals[parameter] = box
+                    cell = self._cell_of(arguments[index])
+                    if cell is not None:
+                        frame.locals[parameter] = cell
                 continue
             default = definition.default(index)
             if default is not None:
@@ -2253,26 +2356,22 @@ class _Evaluator(Converter):
         # it did kept (see `_conditional`).
         evaluator = evaluator.within(replace(evaluator.env, in_call=True))
         store = self.context.store
-        kept = {
-            field_name: copy.copy(getattr(store, field_name))
-            for field_name in _UNDONE_IN_DEFINITIONS
-        }
+        kept = store.save()
         depth = self.env.depth + 1
         try:
             return self._dispatched(evaluator, definition, name, values, settings)
         except _Undecided:
-            for field_name, value in kept.items():
-                setattr(store, field_name, value)
+            store.restore(kept)
             return self.opaque(name, values)
         except PassedOverTooFar:
             if store.passed_over is None or store.passed_over < depth:
                 raise
             # This call, or one it made, went on past an undecided test and then
             # nested too deep: it stands.
-            for field_name, value in kept.items():
-                setattr(store, field_name, value)
+            store.restore(kept)
             return self.opaque(name, values)
         finally:
+            store.release(kept)
             if store.passed_over is not None and store.passed_over >= depth:
                 store.passed_over = None
 
@@ -2316,10 +2415,7 @@ class _Evaluator(Converter):
             budget = limit
         running = dataclasses.replace(context, step_limit=budget)
         inner = replace(evaluator.env, defining=False, context=running)
-        kept = {
-            field_name: copy.copy(getattr(store, field_name))
-            for field_name in _UNDONE_IN_DEFINITIONS
-        }
+        kept = store.save()
         try:
             return self._body(_Evaluator(inner), body, name, values)
         except StepLimitExceeded:
@@ -2327,8 +2423,8 @@ class _Evaluator(Converter):
                 raise
             return self.opaque(name, values)
         finally:
-            for field_name, value in kept.items():
-                setattr(store, field_name, value)
+            store.restore(kept)
+            store.release(kept)
 
     def _body(
         self, evaluator: _Evaluator, body: Node, name: str, values: list
@@ -2341,7 +2437,7 @@ class _Evaluator(Converter):
         except _Return as returned:
             value = returned.value
         except _Exit:
-            value = frame.last
+            value = sympy_of(frame.last)
         except RecursionError:
             return self.opaque(name, values)
         # Rounded under the settings in force at its return, which the body may have
@@ -2519,28 +2615,11 @@ class _Evaluator(Converter):
             names, shadowed = _names_in(index), frozenset()
             if names is None:
                 return self._unbound(name, arguments, index)
-        computing = self.env.computing - names
-        if name in _COMPUTING_BINDERS:
-            computing |= names
-        inner = replace(
-            self.env,
-            bindings={n: v for n, v in self.env.bindings.items() if n not in shadowed},
-            bound=self.env.bound | names,
-            computing=computing,
-            written=_unwritten(self.env.written, names),
-        )
+        inner = self._scope(name, names, shadowed)
         evaluator = self.within(inner)
         outer = evaluator if name in BINDING_THROUGHOUT else self
         limits = [_value_of(outer.convert(argument)) for argument in rest]
-        taken = {
-            **self._assigned_to(names),
-            **_taken(self.env.written, names),
-            **{
-                self.symbol(name): self.env.bindings[name]
-                for name in shadowed
-                if name in self.env.bindings
-            },
-        }
+        taken = self._taken_by(names, shadowed)
         converted = None
         if self.env.parameters and not names.isdisjoint(self.env.parameters):
             converted = _value_of(evaluator.convert(body))
@@ -2564,6 +2643,37 @@ class _Evaluator(Converter):
         if name in _COMPUTING_BINDERS and not self.env.writing:
             values = [self.released_held(value) for value in values]
         return _over(self._worked(self.call(name, values), values), taken)
+
+    def _scope(
+        self, name: str, names: frozenset[str], shadowed: frozenset[str]
+    ) -> Environment:
+        """The environment of the body of a call of the binding function `name`, which
+        binds `names` and shadows the parameters `shadowed` (see `_binding`)."""
+        computing = self.env.computing - names
+        if name in _COMPUTING_BINDERS:
+            computing |= names
+        return replace(
+            self.env,
+            bindings={n: v for n, v in self.env.bindings.items() if n not in shadowed},
+            bound=self.env.bound | names,
+            computing=computing,
+            written=_unwritten(self.env.written, names),
+        )
+
+    def _taken_by(
+        self, names: frozenset[str], shadowed: frozenset[str]
+    ) -> dict[sp.Basic, sp.Basic]:
+        """The substitutions into the result of a binding call that binds `names` and
+        shadows `shadowed`: the values those variables have outside it."""
+        return {
+            **self._assigned_to(names),
+            **_taken(self.env.written, names),
+            **{
+                self.symbol(name): self.env.bindings[name]
+                for name in shadowed
+                if name in self.env.bindings
+            },
+        }
 
     def _grid(self, body: Node, index: Node, bounds: list[Node]) -> sp.Basic | None:
         """`VECTOR(u, [x, y], [x0, y0], [x1, y1], [dx, dy])`: `u` over the grid of the
@@ -2996,7 +3106,7 @@ class _Evaluator(Converter):
             name = str(index.value)
             supplied = self._local(name)
             if supplied is None and self.env.running and name not in self.env.bound:
-                stored = self.context.store.values.get(name)
+                stored = given(self.context.store, name)
                 if stored is not None and stored is not CLEARED:
                     supplied = stored
             names = _names_in(supplied) if supplied is not None else None
@@ -3048,8 +3158,13 @@ class _Evaluator(Converter):
         past that it stands, with nothing it did kept, as `fact(m)` with `IF(m = 0,
         RETURN 1)` does for a symbolic m rather than recurse without end.
         """
+        return self._chosen(node, arguments, self._tested(arguments[0]), statement)
+
+    def _chosen(
+        self, node: Node, arguments: list[Node], verdict: bool | None, statement: bool
+    ) -> sp.Basic:
+        """The rest of `_conditional`, its test decided as `verdict`."""
         test_node, *branches = arguments
-        verdict = self._tested(test_node)
         test = self._undecided_test if verdict is None else None
         frame = self.env.frame
         if statement and verdict is not None and frame is not None:
@@ -3100,7 +3215,7 @@ class _Evaluator(Converter):
             name
             for name in frame.formals
             if name not in self.env.bindings
-            and (name not in frame.locals or frame.locals[name].value is _UNSET)
+            and (name not in frame.locals or frame.locals[name].raw is CLEARED)
         )
 
     def _tested(self, node: Node) -> bool | None:
@@ -3117,16 +3232,22 @@ class _Evaluator(Converter):
                 and left_node.kind in STATEMENT_KINDS
                 and right_node.kind in STATEMENT_KINDS
             ):
-                # A command's answer compares as its value: `SOLVE(2 = 2) = true`.
-                left, right = (
-                    side.args[0] if isinstance(side, Commanded) else side
-                    for side in (self.side(left_node), self.side(right_node))
-                )
-                if isinstance(left, sp.Rational) and isinstance(right, sp.Rational):
-                    holds = _ORDERED_BY_SIGN[RELATIONS[word]]
-                    return holds(left.p * right.q - right.p * left.q)
-                return self._decided(_value_of(self.related(word, left, right)))
+                left = self.side(left_node)
+                return self._tested_sides(word, left, self.side(right_node))
         return self._decided(_value_of(self.convert(node)))
+
+    def _tested_sides(self, word: str, left: sp.Basic, right: sp.Basic) -> bool | None:
+        """Whether the `IF` test that is the relation `word` holds between the sides
+        `left` and `right` (see `_tested`)."""
+        # A command's answer compares as its value: `SOLVE(2 = 2) = true`.
+        if isinstance(left, Commanded):
+            left = left.args[0]
+        if isinstance(right, Commanded):
+            right = right.args[0]
+        if isinstance(left, sp.Rational) and isinstance(right, sp.Rational):
+            holds = _ORDERED_BY_SIGN[RELATIONS[word]]
+            return holds(left.p * right.q - right.p * left.q)
+        return self._decided(_value_of(self.related(word, left, right)))
 
     def _decides_released(self, test: sp.Basic) -> bool | None:
         """`Environment.decides` on `test` with its held values released, and a
@@ -3308,213 +3429,51 @@ def _with_test(conditional: sp.Basic, test: sp.Basic) -> sp.Basic:
 # A program evaluates the same nodes over and over, and walking a node through
 # `_Evaluator.convert` and the converter's dispatch costs more than the arithmetic it
 # leads to. So the statements a program runs are compiled, once, into closures: one per
-# node of the kinds below, each doing exactly what converting the node does, with the
-# dispatch done ahead and its children's closures called directly. A closure takes the
-# evaluator, so it reads the environment as the conversion would; where that leaves a
-# node to the general path (a name with substitutions to make, a subscript at top
-# level) it converts it. `_Evaluator.convert` runs a node's closure where it has one.
+# node, each doing exactly what converting the node does, with the dispatch done ahead
+# and its children's closures called directly. A closure takes the evaluator, so it
+# reads the environment as the conversion would. `_Evaluator.statement` runs a
+# statement's closures, and `_Evaluator.convert` a node's closure where it has one.
+#
+# Where a program runs (see `_Evaluator.native`), the closures compute with native
+# values (see `rederive.engine.native`): Python integers, fractions and truth values,
+# vectors written in place, and assignments of globals not yet built. A closure's value
+# stands for the value the conversion gives (`sympy_of` of it is that value). Each one
+# evaluates its children with their closures, in the order the conversion evaluates
+# them, and where their values are native numbers, truth values or vectors it computes
+# the result itself, as the integers, fractions and lists of Python do, in the cases
+# where that is the result the conversion gives. Otherwise it hands the children's
+# values, as sympy values, to what the conversion does with them: since a child is
+# evaluated once either way, a value that turns out not to be native halfway through a
+# statement is no reason to evaluate anything again. A node of a kind with no closure of
+# its own is converted, its value made native if it has a native form.
+#
+# Anywhere else, no value is native: each closure that could make one (a number, a
+# name, a value handed back by the conversion) gives the sympy value instead, and the
+# closures of the constructs that are of use only natively (the program constructs,
+# `IF`, `AND` and `OR`, `EVERY` and `SOME`, `|u|`, a vector written out, an element
+# assignment) convert their nodes. What remains of a closure there is the dispatch
+# done ahead.
+#
+# A variable's cell keeps a native value as it is, a local's and a global's alike (see
+# `Cell` and `Store`), and so does the last value of a frame; everything else that
+# reads one reads it as a sympy value, and so does a closure where values are not
+# native. Each evaluator looks a name up first in the cells of its own variables
+# (`_Evaluator.scope`): a call's locals, or the globals of a program run at top level.
+# A native vector is kept only by the cell of the variable whose value it is, or the
+# native vector it is an element of, so that writing it in place changes what
+# replacing it would change: wherever else its value goes (another variable, an
+# element, a returned value, any expression), it goes as the sympy vector of its
+# elements at the time.
 
+#: Whether programs run compiled; without, every node is converted as it is. The two
+#: give the same results, which tests compare.
+COMPILED = True
 
-def _compile(node: Node) -> None:
-    """Compile the statement `node`: give each node in it of a kind `_closure` knows a
-    closure in `_COMPILED`."""
-    if len(_COMPILED) >= _COMPILED_KEPT:
-        _COMPILED.clear()
-    closure = _part(node)
-    # A statement's entry marks it compiled, whatever its kind.
-    _COMPILED.setdefault(id(node), (node, closure))
+#: A compiled closure: what evaluating its node in the evaluator gives, as a native
+#: value where it has one there.
+Native = Callable[[_Evaluator], Any]
 
-
-def _part(node: Node) -> Callable[[_Evaluator], sp.Basic]:
-    """The closure evaluating `node`, compiled with what it holds, and recorded in
-    `_COMPILED` if it is of a kind `_closure` knows."""
-    found = _COMPILED.get(id(node))
-    if found is not None:
-        return found[1]
-    closure = _closure(node)
-    if closure is None:
-        for child in node.children:
-            _part(child)
-        return _generic(node)
-    _COMPILED[id(node)] = (node, closure)
-    return closure
-
-
-def _generic(node: Node) -> Callable[[_Evaluator], sp.Basic]:
-    def converted(evaluator: _Evaluator) -> sp.Basic:
-        return evaluator._converted(node)
-
-    return converted
-
-
-def _closure(node: Node) -> Callable[[_Evaluator], sp.Basic] | None:
-    """The closure doing what `_Evaluator.convert` does with `node`, or None if `node`
-    is of no kind compiled."""
-    kind = node.kind
-    if kind is Kind.NUMBER:
-        value = numeral(node)
-
-        def number(evaluator: _Evaluator) -> sp.Basic:
-            return value
-
-        return number
-    if kind is Kind.NAME:
-        name = str(node.value)
-        if name == EXIT:
-            return None
-
-        def named(evaluator: _Evaluator) -> sp.Basic:
-            # A local's value, or a parameter's argument, as `_name` reads them where
-            # nothing is substituted.
-            env = evaluator.env
-            frame = env.frame
-            if frame is not None and not env.written and name not in env.bound:
-                box = frame.locals.get(name)
-                if box is None:
-                    if not frame.through:
-                        value = env.bindings.get(name)
-                        if value is not None:
-                            return value
-                elif box.value is not _UNSET:
-                    return box.value
-            return evaluator._name(node)
-
-        return named
-    if kind is Kind.SUM:
-        operators = str(node.value)
-        terms = [_part(child) for child in node.children]
-
-        def summed(evaluator: _Evaluator) -> sp.Basic:
-            values = [term(evaluator) for term in terms]
-            for value in values:
-                if not isinstance(value, sp.Rational):
-                    return evaluator.summed(operators, evaluator.operands_of(values))
-            # Rational numbers are their own operands, and no equation.
-            signs = [values[0]]
-            for index, value in enumerate(values[1:]):
-                signs.append(negated(value) if operators[index] == "-" else value)
-            return added(signs)
-
-        return summed
-    if kind is Kind.PRODUCT:
-        factors = [_part(child) for child in node.children]
-
-        def product(evaluator: _Evaluator) -> sp.Basic:
-            values = [factor(evaluator) for factor in factors]
-            return evaluator.multiplied_out(evaluator.operands_of(values))
-
-        return product
-    if kind is Kind.BINOP:
-        operator = str(node.value)
-        sides = [_part(child) for child in node.children]
-
-        def binary(evaluator: _Evaluator) -> sp.Basic:
-            values = [side(evaluator) for side in sides]
-            return evaluator.binary(operator, evaluator.operands_of(values))
-
-        return binary
-    if kind is Kind.UNOP:
-        operator = str(node.value)
-        (operand,) = [_part(child) for child in node.children]
-
-        def prefixed(evaluator: _Evaluator) -> sp.Basic:
-            values = [operand(evaluator)]
-            return evaluator.prefixed(operator, evaluator.operands_of(values))
-
-        return prefixed
-    if kind is Kind.SUB:
-        base, index = (_part(child) for child in node.children)
-
-        def element(evaluator: _Evaluator) -> sp.Basic:
-            if evaluator.env.depth == 0:
-                return evaluator._converted(node)
-            # The index first, as `Converter._sub` evaluates it.
-            at = evaluator.operand(index(evaluator))
-            whole = evaluator.operand(base(evaluator))
-            if isinstance(whole, Vector) and isinstance(at, sp.Integer):
-                # An element of a vector at one of its places, as `element` takes it.
-                place = place_of(at, whole.size())
-                if place is not None:
-                    return whole.item(place)
-            return evaluator.element(node, whole, at)
-
-        return element
-    if kind is Kind.REL:
-        left_node, right_node = node.children
-        word = str(node.value)
-        if left_node.kind is Kind.REL or (
-            word in COMPARING_TRUTHS
-            and left_node.kind in STATEMENT_KINDS
-            and right_node.kind in STATEMENT_KINDS
-        ):
-            return None
-        left, right = _part(left_node), _part(right_node)
-
-        def related(evaluator: _Evaluator) -> sp.Basic:
-            sides = evaluator.sided(left(evaluator)), evaluator.sided(right(evaluator))
-            return evaluator.related(word, *sides)
-
-        return related
-    if kind is Kind.ASSIGN:
-        return _assignment(node)
-    if kind in (Kind.CALL, Kind.APPLY):
-        head, *arguments = node.children
-        if str(head.value) in _SPECIAL_CALLS:
-            return None
-        parts = [_part(argument) for argument in arguments]
-
-        def called(evaluator: _Evaluator) -> sp.Basic:
-            return evaluator.called(node, [part(evaluator) for part in parts])
-
-        return called
-    return None
-
-
-def _assignment(node: Node) -> Callable[[_Evaluator], sp.Basic] | None:
-    """The closure of the assignment `node`, for `name := u` and the updates `name :+
-    u` and so on: in a running `PROG` or `LOOP` of a called function, where `name` is a
-    local, what `_Evaluator._assign` does then; anywhere else, the assignment
-    converted."""
-    target, *values = node.children
-    name = str(target.value)
-    if target.kind is not Kind.NAME or len(values) != 1 or name in SETTINGS:
-        _part(target)
-        for value in values:
-            _part(value)
-        return None
-    operator = str(node.value)
-    current = _part(target)
-    right = _part(values[0])
-    written = values[0]
-
-    def assigned(evaluator: _Evaluator) -> sp.Basic:
-        env = evaluator.env
-        frame = env.frame
-        if (
-            frame is None
-            or not env.depth
-            or not env.running
-            or env.writing
-            or env.defining
-            or name not in frame.formals
-            or name in env.bound
-            or not (frame.progs or frame.loops or name in frame.locals)
-        ):
-            return evaluator._converted(node)
-        value = _assigned_value(_value_of(right(evaluator)))
-        if operator != ":=":
-            value = _updated(operator, current(evaluator), value)
-        settled = evaluator._settled(value, top=node is env.top)
-        # An update's operand is no value the variable takes over (see `_given`).
-        shared = written if operator == ":=" else None
-        return evaluator._given(name, None, settled, shared, True)
-
-    return assigned
-
-
-#: The compiled nodes, by `id`, each with its closure (see `_compile`), and how many
-#: are kept.
-_COMPILED: dict[int, tuple[Node, Callable[[_Evaluator], sp.Basic]]] = {}
+#: How many compiled nodes are kept in each table.
 _COMPILED_KEPT = 200_000
 
 #: The calls `_Evaluator._call` makes otherwise than by evaluating each argument and
@@ -3526,6 +3485,1222 @@ _SPECIAL_CALLS = (
     | {"IF", "SORT", "TRUTH_TABLE", "APPROX", "NSOLVE", "NSOLUTIONS", "MOD", "MODS"}
     | {"VARIABLES"}
 )
+
+#: A missing native value of a bound variable.
+_NO_VALUE = object()
+
+#: The largest power `^` computes natively, in bits of the base times the exponent: a
+#: bound well below `POWER_BITS`, past which the conversion keeps a power standing.
+_NATIVE_POWER_BITS = 4096
+
+#: The relations, decided between native numbers.
+_HOLDS: dict[str, Callable[[Any, Any], bool]] = {
+    "=": operator.eq,
+    "/=": operator.ne,
+    "<": operator.lt,
+    "<=": operator.le,
+    ">": operator.gt,
+    ">=": operator.ge,
+}
+
+
+def _as_native(evaluator: _Evaluator, value: Any) -> Any:
+    """`value`, a sympy value, in its native form where `evaluator` computes natively."""
+    return native_of(value) if evaluator.native else value
+
+
+def _statement(node: Node) -> Native:
+    """The closure running `node` as a statement, natively, as `_Evaluator.statement`
+    does: counted as a step, its value made the frame's last value. Making it compiles
+    the statement."""
+    found = _STATEMENTS.get(id(node))
+    if found is not None:
+        return found[1]
+    if len(_STATEMENTS) >= _COMPILED_KEPT:
+        _STATEMENTS.clear()
+    inner: Native | None = None
+    if node.kind is Kind.CALL:
+        head, *arguments = node.children
+        if str(head.value) == "IF" and 1 <= len(arguments) <= 4:
+            inner = _conditional_closure(node, statement=True)
+    if (
+        inner is None
+        and node.kind is Kind.VECTOR
+        and not any(child.kind is Kind.ELLIPSIS for child in node.children)
+    ):
+        elements = [_statement(child) for child in node.children]
+
+        def listed(evaluator: _Evaluator) -> sp.Basic:
+            return Vector(*(sympy_of(element(evaluator)) for element in elements))
+
+        inner = listed
+    if inner is None:
+        inner = _native(node)
+    run = inner
+
+    def ran(evaluator: _Evaluator) -> Any:
+        context = evaluator.context
+        store = context.store
+        current = store.context
+        if current is not None and current is not context:
+            # A statement before this one assigned a setting.
+            return evaluator.statement(node)
+        limit = context.step_limit
+        if context.deadline is None and (limit is None or store.steps < limit):
+            # A step `Context.step` counts, and that doesn't end the command.
+            store.steps += 1
+        else:
+            context.step()
+        value = run(evaluator)
+        if type(value) is NativeVector:
+            value = value.vector()
+        evaluator.env.frame.last = value
+        return value
+
+    _STATEMENTS[id(node)] = (node, ran)
+    return ran
+
+
+def _native(node: Node) -> Native:
+    """The closure of `node`, compiled with what it holds."""
+    found = _NATIVES.get(id(node))
+    if found is None:
+        found = _OTHERS.get(id(node))
+        if found is None:
+            closure = _native_closure(node)
+            table = _NATIVES
+            if closure is None:
+                closure = _converting(node)
+                table = _OTHERS
+            elif _natively_only(node):
+                table = _OTHERS
+            if len(table) >= _COMPILED_KEPT:
+                table.clear()
+            found = table[id(node)] = (node, closure)
+    return found[1]
+
+
+def _natively_only(node: Node) -> bool:
+    """Whether the closure of `node` is of use only where values are native, and
+    converts the node elsewhere: one of a program construct, `IF`, `AND` or `OR`,
+    `EVERY` or `SOME`, `|u|`, a vector written out, or an element assignment."""
+    kind = node.kind
+    if kind in (Kind.CALL, Kind.APPLY):
+        return str(node.children[0].value) in _NATIVE_CONSTRUCTS
+    if kind is Kind.ASSIGN:
+        return node.children[0].kind is not Kind.NAME
+    return kind in (Kind.AND, Kind.OR, Kind.ABS, Kind.VECTOR)
+
+
+#: The calls whose closures `_natively_only` tells apart.
+_NATIVE_CONSTRUCTS = frozenset({"IF", "PROG", "LOOP", "RETURN", "EVERY", "SOME"})
+
+
+def _converting(node: Node) -> Native:
+    """The closure of a node converted as it is."""
+    for child in node.children:
+        _native(child)
+
+    def converted(evaluator: _Evaluator) -> Any:
+        return _as_native(evaluator, evaluator._converted(node))
+
+    return converted
+
+
+def _native_closure(node: Node) -> Native | None:
+    """The closure of `node`, or None if it is of no kind compiled."""
+    kind = node.kind
+    if kind is Kind.NUMBER:
+        value = numeral(node)
+        native = native_of(value)
+
+        def number(evaluator: _Evaluator) -> Any:
+            return native if evaluator.native else value
+
+        return number
+    if kind is Kind.NAME:
+        return _name_closure(node)
+    if kind is Kind.SUM:
+        return _sum_closure(node)
+    if kind is Kind.PRODUCT:
+        return _product_closure(node)
+    if kind is Kind.BINOP:
+        return _binary_closure(node)
+    if kind is Kind.UNOP:
+        return _prefix_closure(node)
+    if kind is Kind.SUB:
+        return _element_closure(node)
+    if kind is Kind.REL:
+        return _relation_closure(node)
+    if kind in (Kind.AND, Kind.OR):
+        return _sequence_closure(node)
+    if kind is Kind.ABS:
+        return _magnitude_closure(node)
+    if kind is Kind.VECTOR and not any(
+        child.kind is Kind.ELLIPSIS for child in node.children
+    ):
+        elements = [_native(child) for child in node.children]
+
+        def listed(evaluator: _Evaluator) -> sp.Basic:
+            if not evaluator.native:
+                return evaluator._converted(node)
+            return Vector(*(sympy_of(element(evaluator)) for element in elements))
+
+        return listed
+    if kind is Kind.ASSIGN:
+        target = node.children[0]
+        if target.kind is Kind.NAME:
+            return _assignment_closure(node)
+        return _element_assignment_closure(node)
+    if kind in (Kind.CALL, Kind.APPLY):
+        return _call_closure(node)
+    return None
+
+
+def _name_closure(node: Node) -> Native | None:
+    """A name, read as `_Evaluator._name` reads it: a local's or a global's value as
+    its cell keeps it, an argument made native, and a variable a native `EVERY` or
+    `SOME` binds its value. A global's value is read where its own rules for a name
+    don't apply: it has one (not `CLEARED`) and no held value to release."""
+    name = str(node.value)
+    if name == EXIT:
+        return None
+
+    def named(evaluator: _Evaluator) -> Any:
+        env = evaluator.env
+        if not evaluator.native:
+            # A local's value, or a parameter's argument, as `_name` reads them where
+            # nothing is substituted.
+            frame = env.frame
+            if frame is not None and not env.written and name not in env.bound:
+                cell = frame.locals.get(name)
+                if cell is None:
+                    if not frame.through:
+                        value = env.bindings.get(name)
+                        if value is not None:
+                            return value
+                else:
+                    raw = cell.raw
+                    if raw is not CLEARED:
+                        return sympy_of(raw)
+            return evaluator._name(node)
+        if name not in env.bound:
+            # The evaluator's own variables: a call's locals, or the globals.
+            cell = evaluator.scope.get(name)
+            if cell is None:
+                value = env.bindings.get(name)
+                if value is not None:
+                    if not env.written and not env.frame.through:
+                        if type(value) is sp.Integer:
+                            return value.p
+                        return native_of(value)
+                elif name not in env.expanding:
+                    # A global, read from a function's body.
+                    cell = evaluator.context.store.cells.get(name)
+            if cell is not None:
+                raw = cell.raw
+                if type(raw) is int:
+                    return raw
+                kind = type(raw)
+                if kind not in SCALARS and kind is not NativeVector:
+                    # A value the general operations stored, as `_given` does.
+                    raw = native_of(raw)
+                    kind = type(raw)
+                # A global's held value is released when read (see `_name`).
+                if raw is not CLEARED and (
+                    kind in SCALARS
+                    or type(cell) is Cell
+                    or not evaluator.context.store.held
+                ):
+                    if not env.written or kind in SCALARS:
+                        return raw
+                    if kind is NativeVector:
+                        if not raw.symbolic:
+                            return raw
+                        raw = raw.vector()
+                    return native_of(_over(raw, env.written))
+        else:
+            indices = evaluator.indices
+            if indices is not None:
+                value = indices.get(name, _NO_VALUE)
+                if value is not _NO_VALUE:
+                    return value
+        return native_of(evaluator._name(node))
+
+    return named
+
+
+def _sum_closure(node: Node) -> Native:
+    """A sum: of native numbers, their sum."""
+    operators = str(node.value)
+    terms = [_native(child) for child in node.children]
+    negative = [False, *(sign == "-" for sign in operators)]
+
+    def slow(evaluator: _Evaluator, values: list) -> Any:
+        if evaluator.native:
+            if all(type(value) in NUMBERS for value in values):
+                total: Any = 0
+                for value, minus in zip(values, negative, strict=True):
+                    total = total - value if minus else total + value
+                return rational(total) if type(total) is Fraction else total
+            operands = evaluator.operands_of([sympy_of(value) for value in values])
+            return native_of(evaluator.summed(operators, operands))
+        for value in values:
+            if not isinstance(value, sp.Rational):
+                return evaluator.summed(operators, evaluator.operands_of(values))
+        # Rational numbers are their own operands, and no equation.
+        signs = [values[0]]
+        for value, minus in zip(values[1:], negative[1:], strict=True):
+            signs.append(negated(value) if minus else value)
+        return added(signs)
+
+    if len(terms) == 2:
+        first, second = terms
+        minus = operators == "-"
+
+        def two(evaluator: _Evaluator) -> Any:
+            left = first(evaluator)
+            right = second(evaluator)
+            if type(left) is int and type(right) is int:
+                return left - right if minus else left + right
+            return slow(evaluator, [left, right])
+
+        return two
+
+    def summed(evaluator: _Evaluator) -> Any:
+        return slow(evaluator, [term(evaluator) for term in terms])
+
+    return summed
+
+
+def _product_closure(node: Node) -> Native:
+    """A product: of native numbers, their product."""
+    factors = [_native(child) for child in node.children]
+
+    def slow(evaluator: _Evaluator, values: list) -> Any:
+        if not evaluator.native:
+            return evaluator.multiplied_out(evaluator.operands_of(values))
+        if all(type(value) in NUMBERS for value in values):
+            product: Any = 1
+            for value in values:
+                product = product * value
+            return rational(product) if type(product) is Fraction else product
+        operands = evaluator.operands_of([sympy_of(value) for value in values])
+        return native_of(evaluator.multiplied_out(operands))
+
+    if len(factors) == 2:
+        first, second = factors
+
+        def two(evaluator: _Evaluator) -> Any:
+            left = first(evaluator)
+            right = second(evaluator)
+            if type(left) is int and type(right) is int:
+                return left * right
+            return slow(evaluator, [left, right])
+
+        return two
+
+    def multiplied(evaluator: _Evaluator) -> Any:
+        return slow(evaluator, [factor(evaluator) for factor in factors])
+
+    return multiplied
+
+
+def _binary_closure(node: Node) -> Native:
+    """`/`, `^` or `.`: a quotient of native numbers by a nonzero one, and a native
+    number to an integer power, unless the power is zero to a power that isn't
+    positive or bigger than `_NATIVE_POWER_BITS`."""
+    operator_ = str(node.value)
+    first, second = (_native(child) for child in node.children)
+
+    def slow(evaluator: _Evaluator, left: Any, right: Any) -> Any:
+        if not evaluator.native:
+            return evaluator.binary(operator_, evaluator.operands_of([left, right]))
+        operands = evaluator.operands_of([sympy_of(left), sympy_of(right)])
+        return native_of(evaluator.binary(operator_, operands))
+
+    if operator_ == "/":
+
+        def quotient(evaluator: _Evaluator) -> Any:
+            left = first(evaluator)
+            right = second(evaluator)
+            if type(left) in NUMBERS and type(right) in NUMBERS and right != 0:
+                if type(left) is int and type(right) is int:
+                    if left % right == 0:
+                        return left // right
+                    return Fraction(left, right)
+                return rational(Fraction(left) / right)
+            return slow(evaluator, left, right)
+
+        return quotient
+    if operator_ == "^":
+
+        def power(evaluator: _Evaluator) -> Any:
+            base = first(evaluator)
+            exponent = second(evaluator)
+            if type(exponent) is int and type(base) in NUMBERS:
+                if base == 0:
+                    if exponent > 0:
+                        return 0
+                else:
+                    bits = (
+                        abs(base).bit_length()
+                        if type(base) is int
+                        else max(abs(base.numerator), base.denominator).bit_length()
+                    )
+                    if bits * abs(exponent) <= _NATIVE_POWER_BITS:
+                        if exponent >= 0:
+                            raised = base**exponent
+                        else:
+                            raised = Fraction(1) / base ** (-exponent)
+                        return rational(raised) if type(raised) is Fraction else raised
+            return slow(evaluator, base, exponent)
+
+        return power
+
+    def binary(evaluator: _Evaluator) -> Any:
+        left = first(evaluator)
+        return slow(evaluator, left, second(evaluator))
+
+    return binary
+
+
+def _prefix_closure(node: Node) -> Native:
+    """A prefix operator: the negation of a native number."""
+    operator_ = str(node.value)
+    (operand,) = (_native(child) for child in node.children)
+
+    def prefixed(evaluator: _Evaluator) -> Any:
+        value = operand(evaluator)
+        if not evaluator.native:
+            return evaluator.prefixed(operator_, evaluator.operands_of([value]))
+        if operator_ == "-" and type(value) in NUMBERS:
+            return -value
+        operands = evaluator.operands_of([sympy_of(value)])
+        return native_of(evaluator.prefixed(operator_, operands))
+
+    return prefixed
+
+
+def _element_closure(node: Node) -> Native:
+    """`v SUB i`: the element of a vector at one of its places, counted from the end
+    if negative (see `place_of`). At top level, a subscript that selects an element of a
+    vector written out (see `_written_element`) is converted, as is any subscript
+    there where values are not native."""
+    base, index = (_native(child) for child in node.children)
+    selected = _written_element(node)
+
+    def element(evaluator: _Evaluator) -> Any:
+        if selected is not None and evaluator.env.depth == 0:
+            return _as_native(evaluator, evaluator._converted(node))
+        if not evaluator.native:
+            if evaluator.env.depth == 0:
+                return evaluator._converted(node)
+            # The index first, as `Converter._sub` evaluates it.
+            at = evaluator.operand(index(evaluator))
+            whole = evaluator.operand(base(evaluator))
+            if isinstance(whole, Vector) and isinstance(at, sp.Integer):
+                # An element of a vector at one of its places, as `element` takes it.
+                place = place_of(at, whole.size())
+                if place is not None:
+                    return whole.item(place)
+            return evaluator.element(node, whole, at)
+        at = index(evaluator)
+        whole = base(evaluator)
+        if type(whole) is NativeVector:
+            if type(at) is int:
+                items = whole.items
+                count = len(items)
+                if 0 < at <= count:
+                    return items[at - 1]
+                if -count <= at < 0:
+                    return items[count + at]
+        whole = evaluator.operand(sympy_of(whole))
+        if type(at) is int and isinstance(whole, Vector):
+            count = whole.size()
+            if 0 < at <= count:
+                return native_of(whole.item(at - 1))
+            if -count <= at < 0:
+                return native_of(whole.item(count + at))
+        at = evaluator.operand(sympy_of(at))
+        return native_of(evaluator.element(node, whole, at))
+
+    return element
+
+
+def _decided_relation(node: Node) -> bool:
+    """Whether the relation `node` is one that `_Evaluator._tested` decides from its
+    sides, and that its closure relates from them."""
+    left, right = node.children
+    return left.kind is not Kind.REL and not (
+        str(node.value) in COMPARING_TRUTHS
+        and left.kind in STATEMENT_KINDS
+        and right.kind in STATEMENT_KINDS
+    )
+
+
+def _relation_closure(node: Node) -> Native | None:
+    """A relation, as a value: built from its sides (see `Converter.related`)."""
+    if not _decided_relation(node):
+        return None
+    word = str(node.value)
+    left, right = (_native(child) for child in node.children)
+
+    def related(evaluator: _Evaluator) -> Any:
+        first = left(evaluator)
+        second = right(evaluator)
+        return evaluator.related(
+            word,
+            evaluator.sided(sympy_of(first)),
+            evaluator.sided(sympy_of(second)),
+        )
+
+    return related
+
+
+def _test_closure(node: Node) -> Callable[[_Evaluator], bool | None]:
+    """The `IF` test `node`, decided natively as `_Evaluator._tested` decides it: a
+    relation between native numbers from the numbers."""
+    if node.kind is Kind.REL and _decided_relation(node):
+        word = str(node.value)
+        holds = _HOLDS[word]
+        left, right = (_native(child) for child in node.children)
+        # The relation as a value, where the test is converted.
+        _native(node)
+
+        def related(evaluator: _Evaluator) -> bool | None:
+            first = left(evaluator)
+            second = right(evaluator)
+            if type(first) is int and type(second) is int:
+                return holds(first, second)
+            if type(first) in NUMBERS and type(second) in NUMBERS:
+                return holds(first, second)
+            return evaluator._tested_sides(
+                word,
+                evaluator.sided(sympy_of(first)),
+                evaluator.sided(sympy_of(second)),
+            )
+
+        return related
+    value_of = _native(node)
+
+    def tested(evaluator: _Evaluator) -> bool | None:
+        value = value_of(evaluator)
+        if type(value) is bool:
+            return value
+        return evaluator._decided(_value_of(sympy_of(value)))
+
+    return tested
+
+
+def _truth_closure(node: Node) -> Native:
+    """An operand of `AND` or `OR`, made a truth value natively as
+    `_Evaluator._sequenced` makes it (see `_Evaluator._truth`): a relation between
+    native numbers decided."""
+    if node.kind is Kind.REL and _decided_relation(node):
+        word = str(node.value)
+        holds = _HOLDS[word]
+        left, right = (_native(child) for child in node.children)
+        # The relation as a value, where the test is converted.
+        _native(node)
+
+        def related(evaluator: _Evaluator) -> Any:
+            first = left(evaluator)
+            second = right(evaluator)
+            if type(first) in NUMBERS and type(second) in NUMBERS:
+                return holds(first, second)
+            relation = evaluator.related(
+                word,
+                evaluator.sided(sympy_of(first)),
+                evaluator.sided(sympy_of(second)),
+            )
+            return native_of(evaluator._truth(_assigned_value(relation)))
+
+        return related
+    value_of = _native(node)
+
+    def truth(evaluator: _Evaluator) -> Any:
+        value = value_of(evaluator)
+        if type(value) is bool:
+            return value
+        return native_of(evaluator._truth(_assigned_value(sympy_of(value))))
+
+    return truth
+
+
+def _sequence_closure(node: Node) -> Native:
+    """`p AND q`, `p OR q`, the right operand evaluated only if the left one leaves the
+    answer open (see `_Evaluator._sequenced`): of truth values, a truth value."""
+    word = LOGICAL_WORDS[node.kind]
+    deciding = word == "OR"
+    left, right = (_truth_closure(child) for child in node.children[:2])
+
+    def sequenced(evaluator: _Evaluator) -> Any:
+        if not evaluator.native:
+            return evaluator._converted(node)
+        first = left(evaluator)
+        if first is deciding:
+            return first
+        second = right(evaluator)
+        if type(first) is bool and type(second) is bool:
+            # The first doesn't decide, so the second does.
+            return second
+        return native_of(connected(word, [sympy_of(first), sympy_of(second)]))
+
+    return sequenced
+
+
+def _magnitude_closure(node: Node) -> Native:
+    """`|u|`: of a native number, its absolute value."""
+    (operand,) = (_native(child) for child in node.children)
+
+    def magnitude(evaluator: _Evaluator) -> Any:
+        if not evaluator.native:
+            return evaluator._converted(node)
+        value = operand(evaluator)
+        if type(value) in NUMBERS:
+            return abs(value)
+        return native_of(evaluator.call("ABS", [sympy_of(value)]))
+
+    return magnitude
+
+
+def _conditional_closure(node: Node, statement: bool) -> Native:
+    """`IF(test, a, b, c)`, as `_Evaluator._conditional` evaluates it: a test decided
+    natively picks its branch here, and an undecided one is left to `_chosen`."""
+    _, *arguments = node.children
+    test_node, *branch_nodes = arguments
+    tested = _test_closure(test_node)
+    make = _statement if statement else _native
+    branches = [make(branch) for branch in branch_nodes]
+    count = len(branches)
+
+    def conditional(evaluator: _Evaluator) -> Any:
+        if not statement and not evaluator.native:
+            return evaluator._converted(node)
+        verdict = tested(evaluator)
+        if verdict is True:
+            if statement:
+                evaluator.env.frame.last = True
+            return branches[0](evaluator) if count else 1
+        if verdict is False:
+            if statement:
+                evaluator.env.frame.last = False
+            if not count:
+                return 0
+            if count < 2:
+                return sp.nan
+            return branches[1](evaluator)
+        return native_of(evaluator._chosen(node, arguments, None, statement))
+
+    return conditional
+
+
+def _call_closure(node: Node) -> Native | None:
+    """A call: the program constructs run here, `EVERY` and `SOME` over native values,
+    a built-in of `_NATIVE_CALLS` computed on native values, and any other call
+    without a special evaluation made on its arguments' values (see
+    `_Evaluator.called`)."""
+    head, *arguments = node.children
+    name = str(head.value)
+    if name == "IF":
+        if 1 <= len(arguments) <= 4:
+            return _conditional_closure(node, statement=False)
+        return None
+    if name == "PROG" and arguments:
+        return _program_closure(node, arguments)
+    if name == "LOOP" and arguments:
+        return _loop_closure(node, arguments)
+    if name == "RETURN" and len(arguments) == 1:
+        return _return_closure(node, arguments[0])
+    if name in ("EVERY", "SOME"):
+        return _mapped_closure(node)
+    if name in ("MOD", "MODS") and _powered(arguments):
+        return None
+    if name in _SPECIAL_CALLS - {"MOD", "MODS"}:
+        return None
+    parts = [_native(argument) for argument in arguments]
+    computed = _NATIVE_CALLS.get(name)
+    if name in library.FUNCTIONS:
+        computed = None
+
+    def made(evaluator: _Evaluator, values: list) -> Any:
+        if not evaluator.native:
+            return evaluator.called(node, values)
+        if computed is not None:
+            value = computed(values)
+            if value is not None:
+                # As `_Evaluator.called` would compute it: with no setting changed by
+                # an argument, no held value about, and the built-in not redefined.
+                context = evaluator.context
+                store = context.store
+                if (
+                    (store.context is None or store.context is context)
+                    and not store.held
+                    and name not in store.functions
+                    and name not in context.functions
+                ):
+                    return value
+        written = [sympy_of(value) for value in values]
+        return native_of(evaluator.called(node, written))
+
+    if name == "MOD" and len(parts) == 2:
+        first, second = parts
+
+        def modulo(evaluator: _Evaluator) -> Any:
+            number = first(evaluator)
+            divisor = second(evaluator)
+            if type(number) is int and type(divisor) is int and divisor:
+                context = evaluator.context
+                store = context.store
+                if (
+                    (store.context is None or store.context is context)
+                    and not store.held
+                    and name not in store.functions
+                    and name not in context.functions
+                ):
+                    return number % divisor
+            return made(evaluator, [number, divisor])
+
+        return modulo
+
+    def called(evaluator: _Evaluator) -> Any:
+        return made(evaluator, [part(evaluator) for part in parts])
+
+    return called
+
+
+def _program_closure(node: Node, statements: Sequence[Node]) -> Native:
+    """`PROG(s1, ..., sn)`, as `_Evaluator._program` runs it."""
+    run = [_statement(each) for each in statements]
+
+    def program(evaluator: _Evaluator) -> Any:
+        if not evaluator.native:
+            return evaluator._converted(node)
+        frame = evaluator.env.frame
+        frame.progs += 1
+        try:
+            value: Any = sp.nan
+            for statement in run:
+                value = statement(evaluator)
+            return value
+        except _Exit:
+            return frame.last
+        finally:
+            frame.progs -= 1
+
+    return program
+
+
+def _loop_closure(node: Node, statements: Sequence[Node]) -> Native:
+    """`LOOP(s1, ..., sn)`, as `_Evaluator._loop` runs it."""
+    run = [_statement(each) for each in statements]
+
+    def loop(evaluator: _Evaluator) -> Any:
+        if not evaluator.native:
+            return evaluator._converted(node)
+        frame = evaluator.env.frame
+        frame.loops += 1
+        try:
+            while True:
+                for statement in run:
+                    statement(evaluator)
+        except _Exit:
+            return frame.last
+        finally:
+            frame.loops -= 1
+
+    return loop
+
+
+def _return_closure(node: Node, operand: Node) -> Native:
+    """`RETURN u`, as `_Evaluator._returned` evaluates it."""
+    value_of = _native(operand)
+
+    def returned(evaluator: _Evaluator) -> Any:
+        if not evaluator.native:
+            return evaluator._converted(node)
+        value = value_of(evaluator)
+        if type(value) in SCALARS:
+            # Exact, `_settled` keeps a number or truth value as it is.
+            raise _Return(sympy_of(value))
+        raise _Return(evaluator._settled(sympy_of(value)))
+
+    return returned
+
+
+def _updated_natively(operator_: str, current: Any, value: Any) -> Any:
+    """`_updated` of native numbers, or None if they are not both."""
+    if type(current) is int and type(value) is int:
+        if operator_ == ":+":
+            return current + value
+        if operator_ == ":-":
+            return current - value
+        if operator_ == ":*":
+            return current * value
+    if type(current) not in NUMBERS or type(value) not in NUMBERS:
+        return None
+    match operator_:
+        case ":+":
+            result = current + value
+        case ":-":
+            result = current - value
+        case ":*":
+            result = current * value
+        case _:
+            if value == 0:
+                return None
+            result = Fraction(current) / value
+    return rational(result) if type(result) is Fraction else result
+
+
+def _assignment_closure(node: Node) -> Native | None:
+    """`name := u`, `name :+ u` and the other updates, as `_Evaluator._assign` makes
+    them where a program runs: of a local in a running `PROG` or `LOOP` of a called
+    function, and of a global where values are native and its right side is evaluated
+    as written (see `_Evaluator._right_side`); any other assignment to a name
+    converted."""
+    target, *values = node.children
+    name = str(target.value)
+    if len(values) != 1 or name in SETTINGS:
+        return None
+    operator_ = str(node.value)
+    current = _native(target)
+    right = _native(values[0])
+    # An update's operand is no value the variable takes over (see `_given`).
+    shared = values[0] if operator_ == ":=" else None
+    # `x := x` takes the global's value away (see `_Evaluator._cleared`).
+    clears = shared is not None and _names_target(shared, target)
+    add = {":+": operator.add, ":-": operator.sub, ":*": operator.mul}.get(operator_)
+
+    def worked_out(evaluator: _Evaluator, value: Any) -> Any:
+        """The value assigned, from the value `value` of the right side."""
+        if type(value) not in SCALARS:
+            value = _as_native(evaluator, _assigned_value(_value_of(sympy_of(value))))
+        if shared is None:
+            now = current(evaluator)
+            updated = _updated_natively(operator_, now, value)
+            if updated is None:
+                updated = _as_native(
+                    evaluator, _updated(operator_, sympy_of(now), sympy_of(value))
+                )
+            value = updated
+        if type(value) not in SCALARS:
+            top = node is evaluator.env.top
+            value = _as_native(evaluator, evaluator._settled(value, top=top))
+        return value
+
+    def assignment(evaluator: _Evaluator) -> Any:
+        env = evaluator.env
+        frame = env.frame
+        if not evaluator.native and (
+            frame is None
+            or not env.depth
+            or not env.running
+            or env.writing
+            or env.defining
+        ):
+            return evaluator._converted(node)
+        if name in env.bound:
+            return _as_native(evaluator, evaluator._converted(node))
+        if name in frame.formals:
+            store = None
+            cells = frame.locals
+            if not (frame.progs or frame.loops or name in cells):
+                return _as_native(evaluator, evaluator._converted(node))
+        else:
+            store = evaluator.context.store
+            cells = store.cells
+            if not evaluator.native or clears:
+                return _as_native(evaluator, evaluator._converted(node))
+            if not (env.depth or frame.activation):
+                # At top level, only once the command has assigned it (see
+                # `_Evaluator._right_side`).
+                cell = cells.get(name)
+                if cell is None or not cell.at:
+                    return _as_native(evaluator, evaluator._converted(node))
+        value = right(evaluator)
+        cell = None
+        if type(value) is int and add is not None:
+            # The commonest update, of a counter or a total, where the name reads as
+            # the cell's value.
+            cell = cells.get(name)
+            if (
+                cell is not None
+                and type(cell.raw) is int
+                and (store is None or name not in env.expanding)
+            ):
+                value = add(cell.raw, value)
+            else:
+                cell = None
+        if cell is None:
+            value = worked_out(evaluator, value)
+        if store is not None:
+            store.version = at = store.version + 1
+            cell = cells[name] = Assigned(value, at, evaluator, node, store.domains)
+            return cell
+        if shared is not None and isinstance(value, Vector):
+            cell = evaluator._cell_of(shared)
+            if cell is not None:
+                cells[name] = cell
+                return value
+        cells[name] = Cell(value)
+        return value
+
+    return assignment
+
+
+def _element_assignment_closure(node: Node) -> Native | None:
+    """`v SUB i SUB j := u` and its updates, as `_Evaluator._element_assigned` makes
+    them: where `v` is a local or a global holding a vector with these places, the
+    element written in place (see `rederive.engine.native.NativeVector`)."""
+    target, *values = node.children
+    links, base = _element_links(target)
+    if (
+        len(values) != 1
+        or base.kind is not Kind.NAME
+        or any(link.kind is not Kind.SUB for link, _ in links)
+    ):
+        return None
+    name = str(base.value)
+    operator_ = str(node.value)
+    indices = [_native(index) for _, index in links]
+    right = _native(values[0])
+    _native(target)
+
+    def element_assigned(evaluator: _Evaluator) -> Any:
+        if not evaluator.native:
+            return evaluator._converted(node)
+        places = [index(evaluator) for index in indices]
+        value = right(evaluator)
+        if type(value) not in SCALARS:
+            value = native_of(_assigned_value(_value_of(sympy_of(value))))
+        written = _written_in_place(evaluator, node, name, operator_, places, value)
+        if written is not _NO_VALUE:
+            return written
+        indices_ = [evaluator.operand(sympy_of(place)) for place in places]
+        stored = evaluator._element_stored(
+            node, links, base, indices_, sympy_of(value)
+        )
+        return native_of(stored)
+
+    return element_assigned
+
+
+def _written_in_place(
+    evaluator: _Evaluator,
+    node: Node,
+    name: str,
+    operator_: str,
+    places: list,
+    value: Any,
+) -> Any:
+    """The element assignment `node` of `value` (or the update by it) at `places` in
+    the local or global `name`, made in place, and its value; `_NO_VALUE` where it isn't
+    so made, with nothing changed.
+
+    A global's value is the assignment (see `_Evaluator._given`), and its cell is
+    written in place only where no save point holds it, which one stamped after the
+    innermost save point was taken can't be (see `Store.save`); otherwise the write
+    starts a new cell."""
+    env = evaluator.env
+    frame = env.frame
+    if env.written or name in env.bound:
+        return _NO_VALUE
+    store = None
+    if name in frame.formals:
+        cell = frame.locals.get(name)
+        if cell is not None:
+            whole = cell.raw
+            if whole is CLEARED:
+                return _NO_VALUE
+        elif frame.through:
+            return _NO_VALUE
+        else:
+            whole = env.bindings.get(name)
+    else:
+        store = evaluator.context.store
+        cell = store.cells.get(name)
+        # A held value in it would be released where the global is read.
+        if cell is None or store.held:
+            return _NO_VALUE
+        whole = cell.raw
+        if whole is CLEARED:
+            return _NO_VALUE
+    # The path is checked whole before anything is written.
+    container = whole
+    for place in places:
+        if type(place) is not int or place <= 0:
+            return _NO_VALUE
+        if type(container) is NativeVector:
+            items = container.items
+        elif isinstance(container, Vector) and _unwrapped(container):
+            items = container.args
+        else:
+            return _NO_VALUE
+        if place > len(items):
+            return _NO_VALUE
+        element = items[place - 1]
+        container = element if type(element) is NativeVector else native_of(element)
+    if operator_ != ":=":
+        updated = _updated_natively(operator_, container, value)
+        if updated is None:
+            updated = native_of(
+                _updated(operator_, sympy_of(container), sympy_of(value))
+            )
+        value = updated
+    if type(value) not in SCALARS:
+        value = native_of(evaluator._settled(sympy_of(value)))
+        if type(value) is NativeVector or isinstance(
+            value, (Assign, FunDef, Commanded)
+        ):
+            return _NO_VALUE
+    if store is not None:
+        if cell.at <= store.saved or type(whole) is not NativeVector:
+            whole = _native_vector(sympy_of(whole))
+            cell = store.cells[name] = Global(whole, 0)
+    elif type(whole) is not NativeVector:
+        whole = _native_vector(whole)
+        if cell is None:
+            frame.locals[name] = Cell(whole)
+        else:
+            cell.raw = whole
+    container = whole
+    for place in places[:-1]:
+        container.made = None
+        element = container.items[place - 1]
+        if type(element) is not NativeVector:
+            element = _native_vector(element)
+            container.items[place - 1] = element
+        container = element
+    container.put(places[-1] - 1, value)
+    if store is None:
+        return value
+    store.version += 1
+    cell.at = store.version
+    return NativeAssignment(evaluator, node, places, value, store.domains)
+
+
+def _native_vector(vector: Vector) -> NativeVector:
+    """The vector `vector`, which `_unwrapped` holds of, as a native one."""
+    return NativeVector([native_of(element) for element in vector.args])
+
+
+def _mapped_closure(node: Node) -> Native | None:
+    """`EVERY(u, k, ...)` and `SOME(u, k, ...)` over the values of a variable `k`, as
+    `_Evaluator._binding` and `_Evaluator._mapped` evaluate them: the body decided
+    natively at each value, with `k` the value as a native one."""
+    head, *arguments = node.children
+    name = str(head.value)
+    if not 3 <= len(arguments) <= 5:
+        return None
+    body, written_index, *rest = arguments
+    if written_index.kind is not Kind.NAME:
+        return None
+    variable = str(written_index.value)
+    if variable in CONSTANTS or variable in ("deg", EXIT):
+        return None
+    for argument in arguments:
+        _native(argument)
+    limits = [_native(each) for each in rest]
+    decide = _body_test_closure(body)
+    deciding = name == "SOME"
+    names = frozenset({variable})
+
+    def scope(evaluator: _Evaluator) -> tuple | None:
+        """The variable, the names bound and shadowed, the environment of the body
+        and an evaluator in it, as `_Evaluator._binding` finds them; None where the
+        binding is not over the variable `variable`. They depend on the environment,
+        the globals (which `Store.version` tells apart) and the local of the
+        variable's name, so they are remembered for an evaluator while the globals
+        stay as they are and the variable is no local with a value of its own."""
+        store = evaluator.context.store
+        scopes = evaluator.scopes
+        if scopes is None:
+            scopes = evaluator.scopes = {}
+        found = scopes.get(id(node))
+        if (
+            found is not None
+            and found[0] is node
+            and found[1] == store.version
+            and variable not in evaluator.env.frame.locals
+        ):
+            return found[2]
+        env = evaluator.env
+        if env.parameters or evaluator._pending(written_index):
+            made = None
+        else:
+            index, bound, shadowed = evaluator._index(written_index)
+            if type(index) is not sp.Symbol or bound != names:
+                made = None
+            else:
+                inner = evaluator._scope(name, bound, shadowed)
+                made = (index, bound, shadowed, inner, evaluator.within(inner))
+        scopes[id(node)] = (node, store.version, made)
+        return made
+
+    def mapped(evaluator: _Evaluator) -> Any:
+        if not evaluator.native:
+            return evaluator._converted(node)
+        found = scope(evaluator)
+        if found is None:
+            return native_of(evaluator._converted(node))
+        index, bound, shadowed, inner, template = found
+        ends = [limit(evaluator) for limit in limits]
+        taken = evaluator._taken_by(bound, shadowed)
+        if len(ends) == 2 and type(ends[0]) is int and type(ends[1]) is int:
+            values: Any = range(ends[0], ends[1] + 1)
+        else:
+            try:
+                written = [_value_of(sympy_of(end)) for end in ends]
+                values = (native_of(each) for each in collection_of(written)[0])
+            except Exception:
+                standing = evaluator._standing(name, body, index, inner, written)
+                return native_of(_over(standing, taken))
+        outside = evaluator.indices or {}
+        undecided = False
+        for value in values:
+            evaluator.context.step()
+            at = template.at(index, sympy_of(value))
+            at.indices = {**outside, variable: value}
+            verdict = decide(at, evaluator)
+            if verdict is deciding:
+                return deciding
+            undecided = undecided or verdict is None
+        if undecided:
+            written = [_value_of(sympy_of(end)) for end in ends]
+            standing = evaluator._standing(name, body, index, inner, written)
+            return native_of(_over(standing, taken))
+        return not deciding
+
+    return mapped
+
+
+def _body_test_closure(body: Node) -> Callable[[_Evaluator, _Evaluator], bool | None]:
+    """The body of `EVERY` or `SOME`, evaluated by the first evaluator and decided by
+    the second as `_Evaluator._mapped` decides it at each value."""
+    if body.kind is Kind.REL and _decided_relation(body):
+        word = str(body.value)
+        holds = _HOLDS[word]
+        left, right = (_native(child) for child in body.children)
+        # The relation as a value, where the body is converted.
+        _native(body)
+
+        def related(at: _Evaluator, evaluator: _Evaluator) -> bool | None:
+            first = left(at)
+            second = right(at)
+            if type(first) in NUMBERS and type(second) in NUMBERS:
+                return holds(first, second)
+            relation = at.related(
+                word, at.sided(sympy_of(first)), at.sided(sympy_of(second))
+            )
+            return evaluator._decided(_assigned_value(_value_of(relation)))
+
+        return related
+    value_of = _native(body)
+
+    def tested(at: _Evaluator, evaluator: _Evaluator) -> bool | None:
+        value = value_of(at)
+        if type(value) is bool:
+            return value
+        return evaluator._decided(_assigned_value(_value_of(sympy_of(value))))
+
+    return tested
+
+
+def _modulo(values: list) -> Any:
+    """`MOD(m, n)` of integers (see `Modulo`)."""
+    if len(values) == 1:
+        (number,) = values
+        return 0 if type(number) is int else None
+    if len(values) != 2:
+        return None
+    number, divisor = values
+    if type(number) is not int or type(divisor) is not int:
+        return None
+    return number % divisor if divisor else number
+
+
+def _symmetric_modulo(values: list) -> Any:
+    """`MODS(m, n)` of integers (see `SymmetricModulo`)."""
+    if len(values) == 1:
+        values = [values[0], 1]
+    if len(values) != 2:
+        return None
+    number, divisor = values
+    if type(number) is not int or type(divisor) is not int:
+        return None
+    if not divisor:
+        return number
+    return number - divisor * ((2 * number + divisor) // (2 * divisor))
+
+
+def _quotient_of(values: list) -> Any:
+    """The quotient `m/n` of the native numbers of `FLOOR(m, n)` or `CEILING(m, n)`,
+    `n` defaulting to 1; None if they are no such numbers, or `n` is zero."""
+    if len(values) == 1:
+        values = [values[0], 1]
+    if len(values) != 2:
+        return None
+    number, divisor = values
+    if type(number) not in NUMBERS or type(divisor) not in NUMBERS or divisor == 0:
+        return None
+    return Fraction(number) / divisor
+
+
+def _floored(values: list) -> Any:
+    """`FLOOR(m, n)` of native numbers."""
+    quotient = _quotient_of(values)
+    return None if quotient is None else math.floor(quotient)
+
+
+def _ceiled(values: list) -> Any:
+    """`CEILING(m, n)` of native numbers."""
+    quotient = _quotient_of(values)
+    return None if quotient is None else math.ceil(quotient)
+
+
+def _magnitude(values: list) -> Any:
+    """`ABS(u)` of a native number."""
+    if len(values) != 1 or type(values[0]) not in NUMBERS:
+        return None
+    return abs(values[0])
+
+
+def _count(values: list) -> Any:
+    """`DIM(v)` of a native vector."""
+    if len(values) != 1 or type(values[0]) is not NativeVector:
+        return None
+    return len(values[0].items)
+
+
+def _first(values: list) -> Any:
+    """`FIRST(v)` of a native vector: `?` for an empty one."""
+    if len(values) != 1 or type(values[0]) is not NativeVector:
+        return None
+    items = values[0].items
+    return items[0] if items else sp.nan
+
+
+#: The built-ins computed on native values, by name: each gives what the built-in gives
+#: on the values, or None where it takes them otherwise.
+_NATIVE_CALLS: dict[str, Callable[[list], Any]] = {
+    "MOD": _modulo,
+    "MODS": _symmetric_modulo,
+    "FLOOR": _floored,
+    "CEILING": _ceiled,
+    "ABS": _magnitude,
+    "DIM": _count,
+    "FIRST": _first,
+}
+
+#: The compiled nodes, by `id`, each with its node, which keeps the `id` from being
+#: reused while the entry is kept, and its closure: those `_Evaluator.convert` runs;
+#: those it doesn't, of the nodes converted as they are and of those `_natively_only`
+#: tells apart, which it converts itself; and those of statements.
+_NATIVES: dict[int, tuple[Node, Native]] = {}
+_OTHERS: dict[int, tuple[Node, Native]] = {}
+_STATEMENTS: dict[int, tuple[Node, Native]] = {}
 
 
 class Suspended(AppliedUndef):
@@ -4249,7 +5424,7 @@ def exact_closed_form(node: Node, context: Context) -> bool:
             name in CONSTANT_NAMES
             or (
                 context.assigned(name) is None
-                and name not in context.store.values
+                and not assigned(context.store, name)
                 and context.function(name) is None
             )
         )
@@ -4874,6 +6049,20 @@ def _updated(operator: str, current: sp.Basic, value: sp.Basic) -> sp.Basic:
         case ":*":
             return multiplied([current, value])
     return divided(current, value)
+
+
+def _element_links(target: Node) -> tuple[list[tuple[Node, Node]], Node]:
+    """The subscript links of the target of an element assignment, outermost first,
+    each with its index, and the variable they subscript."""
+    links: list[tuple[Node, Node]] = []
+    base = target
+    while base.kind is Kind.SUB or (
+        base.kind is Kind.INFIX and (base.value == "ROW" or is_chain(base))
+    ):
+        links.append((base, base.children[1]))
+        base = base.children[0]
+    links.reverse()
+    return links, base
 
 
 def _linked(link: Node, base: sp.Basic, index: sp.Basic) -> sp.Basic:
