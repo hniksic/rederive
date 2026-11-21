@@ -2694,7 +2694,7 @@ def test_a_heading_heads_its_column_only_while_it_is_a_heading():
     once = simplify(parse("TRUTH_TABLE(p, q, p XOR q)"), Context())
     assert once.text.startswith("[[p, q, p XOR q], ")
     again = simplify(once.node, Context())
-    assert again.text.startswith("[[p, q, (NOT p AND q) OR (p AND NOT q)], ")
+    assert again.text.startswith("[[p, q, NOT p AND q OR p AND NOT q], ")
 
 
 #: Corpus expressions that settle only on a second pass are listed in

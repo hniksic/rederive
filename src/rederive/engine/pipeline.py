@@ -168,8 +168,9 @@ def simplify(
     """Derive's Simplify: `node` in its sufficiently simple form.
 
     Works on any subtree, so the session can simplify a highlighted subexpression and
-    splice the answer back. `state` is the symbol table used to reparse the answer; a
-    session in a non-default input or case mode must pass its own.
+    splice the answer back. `state` is the symbol table `node` was read with, which
+    spells each of its variables one way (see `named_as_declared`); a session must pass
+    its own.
 
     The author's conditionals are collected up front and passed to the printer, so an
     undecidable one is shown as written (see `authored_conditionals`).
@@ -198,7 +199,7 @@ def simplify(
         with minting(exact):
             value = simplified(node, exact, top=top)
         if exact_number(value):
-            node = from_sympy(value, exact, state).node
+            node = from_sympy(value, exact).node
     if _numerically_solved(node) and context.precision is not Precision.APPROXIMATE:
         return approx(node, context, None, state, top=top)
     with minting(context):
@@ -221,7 +222,6 @@ def simplify(
         return from_sympy(
             value,
             written,
-            state,
             authored_conditionals(
                 node,
                 context,
@@ -235,11 +235,11 @@ def _needing(node: Node, state: ParseState | None, name: str) -> Result:
     """The answer of a command that ended at a `LOAD` of file `name`, for the session
     to look for (see `FileNeeded`): to a caller with no files to offer, the expression
     as it stands."""
-    text = write_expression(node, spaced=True)
+    text = write_expression(node)
     try:
         node = parse_expression(text, state or ParseState()).node
     except DeriveSyntaxError:
-        text = write_expression(node)
+        pass
     return Result(node, text, needs=name)
 
 

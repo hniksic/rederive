@@ -225,7 +225,7 @@ async def test_the_app_runs_a_loaded_worksheet_and_the_new_commands_through_the_
         session.author("x^2")
         app.place_windows()
         await pilot.press("c", "a", "enter", "enter", "5", "enter")
-        assert (await settled(pilot, app, 7))[-1] == "TABLE(x^2,x,1,5)"
+        assert (await settled(pilot, app, 7))[-1] == "TABLE(x^2, x, 1, 5)"
         await pilot.press("s", "enter")
         assert (await settled(pilot, app, 8))[-1] == (
             "[[1, 1], [2, 4], [3, 9], [4, 16], [5, 25]]"
@@ -239,7 +239,7 @@ async def test_the_app_runs_a_loaded_worksheet_and_the_new_commands_through_the_
         )
         # Declare Variable Set, which the worker then reads.
         await pilot.press("d", "v", "w", "enter", "s")
-        assert entries(app)[-1] == "w:epsilonSet"
+        assert entries(app)[-1] == "w :epsilon Set"
         session.author("w UNION w")
         app.place_windows()
         await pilot.press("s", "enter")

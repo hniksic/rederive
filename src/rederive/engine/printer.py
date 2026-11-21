@@ -1,17 +1,17 @@
-"""sympy -> author notation.
+"""sympy -> author notation, as the tree of the author line that writes a value.
 
-Converts every engine result to text: `^` for powers, `SQRT(u)`, `#e` and `#i`,
-upper-case function names, `?` for the unknown value. The output must reparse to the
-same expression, and must use the session's notation (input base and the `Options
-Notation` style, handled by `engine.notation`). Decimal styles bend the first rule, as
-in the original; the exact value is kept separately in `Result.value`.
+Every engine result becomes a tree here: `^` for powers, `SQRT(u)`, `#e` and `#i`,
+upper-case function names, `?` for the unknown value. The tree must mean the same
+expression, and must use the session's notation (input base and the `Options Notation`
+style, handled by `engine.notation`). Decimal styles bend the first rule, as in the
+original; the exact value is kept separately in `Result.value`. Its text is written from
+the tree (`syntax.writer`).
 
-`AuthorPrinter` subclasses sympy's `StrPrinter` and overrides each construct spelled
-differently. For sums and products it overrides only operand order and minus-sign
-placement, leaving sign extraction and denominators to sympy, so sympy's conventions
-show through (`x*k^-2` prints as `x/k^2`) without changing meaning. A range is printed
-as a chain `-2 < x < 2`, and a matrix product nested to the right as the original does:
-`a . (b . (c . d))`.
+`TreePrinter` is a sympy printer whose methods build tree nodes, one per construct. For
+sums and products it decides only operand order and minus-sign placement, leaving sign
+extraction and denominators to sympy, so sympy's conventions show through (`x*k^-2` is
+written `x/k^2`) without changing meaning. A range is written as a chain `-2 < x < 2`,
+and a matrix product nested to the right as the original does: `a . (b . (c . d))`.
 
 Operand order follows the context's order list. A sum puts calls first, then terms by
 variable and descending degree, with constants last: `2*x^2 - 3*a*x + 5*y^3`. A product
@@ -27,10 +27,10 @@ from __future__ import annotations
 
 import functools
 import math
-import re
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
+from dataclasses import replace
 from decimal import Decimal
 from fractions import Fraction
 from typing import ParamSpec, TypeVar
@@ -44,15 +44,17 @@ from sympy.printing.precedence import (
     PRECEDENCE_VALUES,
     precedence,
 )
+from sympy.printing.printer import Printer
 
 from rederive.engine import notation
 from rederive.engine.approximation import is_approximation
-from rederive.engine.context import Context, Notation, Precision
+from rederive.engine.context import Context, Notation
 from rederive.engine.ordering import main_order
-from rederive.model.expr import Node
+from rederive.model.expr import VARIADIC, Kind, Node
+from rederive.syntax.lexer import numeral_value
 from rederive.syntax.names import (
     BUILTIN_FUNCTIONS,
-    GREEK_NAMES,
+    ELLIPSIS,
     PRIME_MARK,
     YIELDING_FUNCTIONS,
 )
@@ -105,10 +107,6 @@ _DIGITS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 #: The separator between the parts of a subscripted symbol's name.
 _SUBSCRIPT = " SUB "
 
-#: The plus-or-minus operator, as the glyph rather than its alternative input spelling
-#: `"+-"`, since a bare `+-u` would read back as a plus over a minus, i.e. `-u`.
-_PLUS_MINUS = "±"
-
 #: Relations spelled differently from sympy; others are written as is.
 _RELATIONS = {"==": "=", "!=": "/="}
 
@@ -142,42 +140,6 @@ _FUNCTION_NAMES = {
     "Modulo": "MOD",
     "SymmetricModulo": "MODS",
 }
-
-#: Logical operator precedence, tightest first, to decide when an operand needs
-#: parentheses. Relations and anything tighter never do.
-_LOGICAL_PRECEDENCE = {"NOT": 5, "AND": 4, "OR": 3, "XOR": 2, "IMP": 1, "IFF": 0}
-
-_LOGICAL_HEADS = {
-    "And": "AND",
-    "Or": "OR",
-    "Xor": "XOR",
-    "Implies": "IMP",
-    "Equivalent": "IFF",
-    "Not": "NOT",
-}
-
-
-def _is_primary(text: str) -> bool:
-    """Whether `text` reads as one primary, which an index may be without parentheses:
-    a name, a nonnegative numeral, a string, or a single call, vector or set."""
-    if re.fullmatch(r"[\w.#@?']+", text) and not text.startswith("."):
-        return True
-    if text.startswith('"') and text.endswith('"') and text.count('"') == 2:
-        return True
-    opening = re.match(r"[\w?']*", text).end()
-    if opening == len(text) or text[opening] not in "([{":
-        return False
-    if opening == 0 and text[0] == "(":
-        return False
-    depth = 0
-    for at, char in enumerate(text[opening:], start=opening):
-        if char in "([{":
-            depth += 1
-        elif char in ")]}":
-            depth -= 1
-            if depth == 0:
-                return at == len(text) - 1
-    return False
 
 
 def logical_order(operands, order: Sequence[str]) -> list[sp.Basic]:
@@ -611,7 +573,7 @@ def function_name(expression: sp.Basic) -> str:
 class WrittenBase(AppliedUndef):
     """An expression kept as the user wrote it, which nothing evaluates: the body of a
     definition that holds a program (see `_Evaluator._fundef`). Each is its own class
-    with the tree in `node`, applied to nothing, and prints as the tree is written."""
+    with the tree in `node`, applied to nothing, which is its tree in an answer."""
 
     node: Node
 
@@ -622,7 +584,8 @@ class HeldBase(AppliedUndef):
     class with the tree in `node`, applied to nothing, so that sympy builds sums and
     products of it without looking inside: it has no free symbols and is no number.
     Equal trees are one class (see `to_sympy.held`), so two equal held values are the
-    same term. It prints as the tree is written, at the tree's `precedence`.
+    same term. Its tree in an answer is the held tree; `precedence` is how tightly
+    that binds, on sympy's scale.
     """
 
     node: Node
@@ -639,7 +602,7 @@ def has_held(expression: object) -> bool:
 
 def is_written(expression: sp.Basic) -> bool:
     """Whether the notation can express every function head in `expression`, i.e. each has
-    a spelling or its own print method in `AuthorPrinter`. Calculus heads whose answer
+    a spelling or its own print method in `TreePrinter`. Calculus heads whose answer
     fails this are left unevaluated, as in Derive.
     """
     try:
@@ -654,7 +617,7 @@ def _has_word(call: sp.Basic) -> bool:
         return True
     if not isinstance(call, AppliedUndef) and _built_in_spelling(call) in _shadowed.get():
         return False
-    return any(f"_print_{kind.__name__}" in vars(AuthorPrinter) for kind in _own(call))
+    return any(f"_print_{kind.__name__}" in vars(TreePrinter) for kind in _own(call))
 
 
 def _own(call: sp.Basic) -> list[type]:
@@ -700,27 +663,14 @@ def _size(exponent: sp.Basic) -> tuple:
     return (place, -degree)
 
 
-def author_text(
-    expression: sp.Basic,
-    context: Context | None = None,
-    authored: dict[sp.Basic, str] | None = None,
-) -> str:
-    """Write `expression` the way the author line would.
-
-    `authored` maps subexpressions to text to print instead; `pipeline.simplify` fills
-    it with author-written conditionals, whose arms are shown as written.
-    """
-    return AuthorPrinter(context, authored).doprint(named(expression))
-
-
 def named(expression: sp.Basic) -> sp.Basic:
     """The expression with sympy's `Dummy` variables renamed to ordinary symbols.
 
     Two dummies can share a name, and a `Dummy` sorts by identity rather than name, so
-    both must be renamed apart from all names in use for the text to read back the
-    same: otherwise `SUM(SUM(f(k), k, 0, n), k, 0, n)` would read back with one
-    variable. Matrix dimensions are excluded, since naming them would put a
-    substitutable variable on the worksheet.
+    both must be renamed apart from all names in use for the answer to mean the same
+    when it is computed with again: otherwise `SUM(SUM(f(k), k, 0, n), k, 0, n)` would
+    come back with one variable. Matrix dimensions are excluded, since naming them would
+    put a substitutable variable on the worksheet.
     """
     shapes = _shapes(expression)
     dummies = sorted(expression.atoms(sp.Dummy) - shapes, key=sp.default_sort_key)
@@ -915,36 +865,245 @@ def _unevaluated(expr: sp.Basic) -> bool:
     )
 
 
-class AuthorPrinter(sp.StrPrinter):
-    """A `StrPrinter` that writes author notation."""
+def _node(
+    kind: Kind,
+    children: Sequence[Node] = (),
+    value: str | None = None,
+    surface: str | None = None,
+) -> Node:
+    """A node of an answer's tree. Its span is given when the tree is written (see
+    `writer.written`)."""
+    return Node(kind, 0, 0, tuple(children), value, surface)
+
+
+def _name(name: str) -> Node:
+    return _node(Kind.NAME, value=name)
+
+
+def _call(name: str, arguments: Sequence[Node]) -> Node:
+    return _node(Kind.CALL, (_name(name), *arguments))
+
+
+def _binop(operator: str, left: Node, right: Node) -> Node:
+    return _node(Kind.BINOP, (left, right), operator)
+
+
+def _signed(sign: str, operand: Node) -> Node:
+    return _node(Kind.UNOP, (operand,), sign)
+
+
+def _relation(operator: str, left: Node, right: Node) -> Node:
+    return _node(Kind.REL, (left, right), operator)
+
+
+def _numeral(written: str, base: int = 10) -> Node:
+    """The numeral `written` in `base`, with a leading minus as a sign."""
+    if written.startswith("-"):
+        return _signed("-", _numeral(written[1:], base))
+    value = numeral_value(written, base)
+    return _node(Kind.NUMBER, value=value, surface=None if written == value else written)
+
+
+def _verbatim(text: str) -> Node:
+    """A leaf written as `text`, which only the text of an unspelled head holds (see
+    `TreePrinter._unspelled`)."""
+    return _node(Kind.NAME, value=text)
+
+
+#: The operators that join the factors of a product run: `*`, and `/` and the dot
+#: product, which take the run before them as their left operand.
+_JOINING = ("*", "/", ".")
+
+
+def _run(pieces: Sequence[tuple[str, Node, bool]]) -> Node:
+    """The product run of `pieces`, each an operator joining it to what is before (`""`
+    for the first), a node, and whether the node stands in parentheses.
+
+    A piece that doesn't is joined into the run as the notation reads it: the factors of
+    a product become factors of the run, `/` and the dot product take the run before
+    them as their left operand, and a sign in front applies to the whole run. So `-0.25`
+    times `x` is `-(0.25*x)`, and `x` times `a/b` is `(x*a)/b`.
+    """
+    sign = None
+    joined: list[tuple[str, Node]] = []
+    for index, (operator, node, fenced) in enumerate(pieces):
+        if not fenced and not index and node.kind is Kind.UNOP:
+            sign, node = str(node.value), node.children[0]
+        stream = [(operator, node)] if fenced else _stream(node, operator)
+        joined.extend(stream)
+    run: list[Node] = []
+    for operator, node in joined:
+        if operator in ("/", "."):
+            run = [_binop(operator, _product(run), node)]
+        else:
+            run.append(node)
+    product = _product(run)
+    return product if sign is None else _signed(sign, product)
+
+
+def _stream(node: Node, operator: str) -> list[tuple[str, Node]]:
+    """`node` as the factors and operators of a product run, the first joined by
+    `operator`."""
+    if node.kind is Kind.PRODUCT:
+        first, *rest = node.children
+        return [*_stream(first, operator), *(("*", child) for child in rest)]
+    if node.kind is Kind.BINOP and node.value in ("/", "."):
+        left, right = node.children
+        return [*_stream(left, operator), (str(node.value), right)]
+    return [(operator, node)]
+
+
+def _product(factors: Sequence[Node]) -> Node:
+    if len(factors) == 1:
+        return factors[0]
+    return _node(Kind.PRODUCT, factors, "*" * (len(factors) - 1))
+
+
+def _sum_of(terms: Sequence[tuple[Node, bool]]) -> Node:
+    """The sum of `terms`, each a node and whether it stands in parentheses.
+
+    A later term written with a minus sign is subtracted, its sign the run's, and a
+    term that is a sum and stands bare joins the run, as the notation reads it.
+    """
+    children: list[Node] = []
+    signs = ""
+    for node, fenced in terms:
+        if children:
+            unsigned = None if fenced else _without_minus(node)
+            signs += "+" if unsigned is None else "-"
+            node = node if unsigned is None else unsigned
+        if node.kind is Kind.SUM and not fenced:
+            if children:
+                signs += str(node.value)
+            else:
+                signs = str(node.value)
+            children.extend(node.children)
+        else:
+            children.append(node)
+    if len(children) == 1:
+        return children[0]
+    return _node(Kind.SUM, children, signs)
+
+
+def _leads_with_minus(node: Node) -> bool:
+    """Whether `node` is written starting with a minus sign."""
+    return _without_minus(node) is not None
+
+
+def _without_minus(node: Node) -> Node | None:
+    """`node` with the minus sign it is written starting with taken off, or None if it
+    starts with none. The sign is the node's own, or that of its first operand where the
+    operator lets an operand stand signed in first place, as a sum and a vector product
+    do."""
+    if node.kind is Kind.UNOP:
+        return node.children[0] if node.value == "-" else None
+    if node.kind is Kind.SUM or (
+        node.kind is Kind.INFIX and str(node.value) in ("DOTPRODUCT", "CROSSPRODUCT")
+    ):
+        first = _without_minus(node.children[0])
+        if first is not None:
+            return replace(node, children=(first, *node.children[1:]))
+    return None
+
+
+def tree(
+    expression: sp.Basic,
+    context: Context | None = None,
+    authored: dict[sp.Basic, Node] | None = None,
+) -> Node:
+    """`expression` as the tree of the author line that writes it.
+
+    `authored` maps subexpressions to trees to stand for them; `pipeline.simplify` fills
+    it with author-written conditionals, whose arms are shown as written.
+    """
+    return TreePrinter(context, authored).doprint(named(expression))
+
+
+def author_text(
+    expression: sp.Basic,
+    context: Context | None = None,
+    authored: dict[sp.Basic, Node] | None = None,
+) -> str:
+    """Write `expression` the way the author line would: its `tree`, written."""
+    return write_expression(tree(expression, context, authored))
+
+
+class TreePrinter(Printer):
+    """Builds the tree of the author notation for a sympy expression.
+
+    Each `_print_<Class>` method returns the tree of its expression. Sums and products
+    take their operand order from the order list and their sign placement from
+    `_divided`, leaving sign extraction and denominators to sympy.
+
+    Some layout decisions depend on how the operands they arrange are written: whether
+    one starts with a minus sign (`_leads_with_minus`), and whether sympy's precedence
+    sets it apart (`_fenced`), since a part that isn't joins the run around it, as `x`
+    times `a/b` is `x*a/b` (see `_run`).
+    """
+
+    #: No sympy class has a method of this name, so every one is built here.
+    printmethod = "_tree"
+    # `grlex` is descending total degree, the original's polynomial order: `x^2 + c`,
+    # not `c + x^2`.
+    _default_settings = {"order": "grlex"}
 
     def __init__(
         self,
         context: Context | None = None,
-        authored: dict[sp.Basic, str] | None = None,
+        authored: dict[sp.Basic, Node] | None = None,
     ) -> None:
-        # `grlex` is descending total degree, the original's polynomial order:
-        # `x^2 + c`, not `c + x^2`.
-        super().__init__({"full_prec": False, "order": "grlex"})
+        super().__init__()
         self.context = context or Context()
         self.authored = authored or {}
         self._unspelling = False
 
-    def _print(self, expr, **kwargs):
-        """Print one subexpression, using the author's text if it is recorded.
+    def doprint(self, expr) -> Node:
+        return self._print(expr)
 
-        The text replaces the whole subtree at the precedence the caller already
-        applied, so undecided conditionals show exactly as written. Sets are
-        intercepted here and sent to `_unspelled`, since the notation has no name for
-        any of sympy's set classes.
+    def _print(self, expr, **kwargs) -> Node:
+        """The tree of one subexpression, the author's own if it is recorded.
+
+        Sets are intercepted here and sent to `_unspelled`, since the notation has no
+        name for any of sympy's set classes.
         """
         if self.authored and isinstance(expr, (sp.Piecewise, AppliedUndef)):
             written = self.authored.get(expr)
             if written is not None:
                 return written
-        if isinstance(expr, sp.Set) and not self._unspelling:
+        if isinstance(expr, sp.Set):
             return self._unspelled(expr)
         return super()._print(expr, **kwargs)
+
+    def emptyPrinter(self, expr) -> Node:
+        """An expression the notation has no form for, as for a head without a name."""
+        return self._unspelled(expr)
+
+    def _print_Basic(self, expr) -> Node:
+        return self._unspelled(expr)
+
+    def _print_str(self, expr) -> Node:
+        return _name(expr)
+
+    def _arguments(self, arguments) -> list[Node]:
+        return [self._print(argument) for argument in arguments]
+
+    def _fenced(self, item, level: int, strict: bool = False) -> tuple[Node, bool]:
+        """`item`'s tree, and whether sympy's precedence sets it apart in a place that
+        binds at `level`, as parentheses would: one that binds more loosely, or as
+        loosely unless `strict`. A part that isn't is read as part of the run around
+        it. A number written with a power of ten is set apart where it binds tighter
+        than a product, since sympy treats numbers as atoms."""
+        node = self._print(item)
+        own = precedence(item)
+        fenced = own < level or (not strict and own <= level)
+        if (
+            not fenced
+            and isinstance(item, sp.Number)
+            and level > PRECEDENCE["Mul"]
+            and node.kind in (Kind.PRODUCT, Kind.BINOP)
+        ):
+            fenced = True
+        return node, fenced
 
     # -- sums ---------------------------------------------------------------
 
@@ -962,10 +1121,8 @@ class AuthorPrinter(sp.StrPrinter):
         return terms
 
     def _minus_first(self, term: sp.Basic) -> bool:
-        """Whether `term` is printed with a leading minus. Quotients are checked by
-        printing them, since the printer moves the numerator's sign in front of the
-        bar.
-        """
+        """Whether `term` is written with a leading minus. Quotients are checked by
+        building them, since the numerator's sign moves in front of the bar."""
         if term.could_extract_minus_sign():
             return True
         if not isinstance(term, sp.Mul):
@@ -974,89 +1131,160 @@ class AuthorPrinter(sp.StrPrinter):
             return False
         if sp.fraction(term)[1] == 1:
             return False
-        return self._print(term).startswith("-")
+        return _leads_with_minus(self._print(term))
+
+    def _print_Add(self, expr) -> Node:
+        """A sum, its terms in order, each later one's minus sign its sign in the run."""
+        level = precedence(expr)
+        terms = [
+            (*self._fenced(term, level, strict=True), term.is_Add)
+            for term in self._as_ordered_terms(expr)
+        ]
+        return _sum_of([(node, fenced or nested) for node, fenced, nested in terms])
 
     # -- names --------------------------------------------------------------
 
-    def _print_Symbol(self, expr):
-        """A variable, written in ASCII, with Greek letters spelled out (`alpha`) so the
-        text can be typed on the author line.
-        """
-        return _SUBSCRIPT.join(
-            GREEK_NAMES.get(part, part) for part in expr.name.split(_SUBSCRIPT)
-        )
+    def _print_Symbol(self, expr) -> Node:
+        """A variable, its subscripts, if it is named with any, as links: `x SUB 1`."""
+        return self._subscripted(expr.name)
 
-    def _print_Dummy(self, expr):
-        """A sympy `Dummy`, written like any other name, since `_k1` doesn't lex. `named`
-        normally renames these first.
-        """
-        return _plain(self._print_Symbol(expr))
+    def _subscripted(self, name: str) -> Node:
+        base, *indices = _subscript_parts(name)
+        if base.startswith("#") and base[1:].isdigit():
+            # A label standing for the expression it numbers, `#3`.
+            node = _node(Kind.LABEL, value=base[1:])
+        else:
+            node = _name(base)
+        for index in indices:
+            if index.startswith("("):
+                part = self._subscripted(index[1:-1])
+            elif index.isdigit():
+                part = _numeral(numeral(int(index), self.context.input_base))
+                part = replace(part, value=index) if part.kind is Kind.NUMBER else part
+            else:
+                part = _name(index)
+            node = _node(Kind.SUB, (node, part))
+        return node
 
-    def _print_MatrixSymbol(self, expr):
+    def _print_Dummy(self, expr) -> Node:
+        """A sympy `Dummy`, written like any other name. `named` normally renames these
+        first."""
+        return _name(_plain(expr.name))
+
+    def _print_MatrixSymbol(self, expr) -> Node:
         """A declared nonscalar, written like the variable it is."""
-        return self._print_Symbol(expr)
+        return self._subscripted(expr.name)
 
     # -- numbers ------------------------------------------------------------
 
-    def _print_Integer(self, expr):
+    def _print_Integer(self, expr) -> Node:
         return self._number(Fraction(int(expr)))
 
-    def _print_Rational(self, expr):
+    def _print_Rational(self, expr) -> Node:
         return self._number(Fraction(expr.p, expr.q))
 
-    def _print_Float(self, expr):
+    def _print_Float(self, expr) -> Node:
         """A float at the context's precision, in the selected notation.
 
-        Rational notation prints plain digits. The grammar has no exponent notation, so
+        Rational notation writes plain digits. The grammar has no exponent notation, so
         large or small floats are written in full, and a whole float keeps its point.
         """
-        text = super()._print_Float(sp.Float(expr, self.context.precision_digits))
+        text = sp.StrPrinter({"full_prec": False})._print_Float(
+            sp.Float(expr, self.context.precision_digits)
+        )
         if "e" in text or "E" in text:
             text = format(Decimal(text), "f")
         if self.context.notation is not Notation.RATIONAL:
             return self._number(Fraction(Decimal(text)))
-        return text if "." in text else text + "."
+        return _numeral(text if "." in text else text + ".")
 
-    def _print_Mul(self, expr):
+    def _print_Mul(self, expr) -> Node:
         """A product, in order-list order.
 
         In a decimal style, a rational coefficient goes in front as a number (`x/4` is
         `0.25·x`). Under Decimal, an exact coefficient that the decimal would cut short
         keeps its ratio where the ratio is no longer than the decimal (`x/3`, but
         `0.948699·x` for 10541/11111 at six digits), so a short exact factor is shown as
-        computed. An unevaluated product, like `Factor`'s `2*3^2*5*3607*3803`, is printed
-        by sympy as is.
+        computed. An unevaluated product, like `Factor`'s `2*3^2*5*3607*3803`, is
+        written as it is.
         """
         if _unevaluated(expr):
-            return super()._print_Mul(expr)
+            return self._as_written(expr)
         coefficient, rest = expr.as_coeff_Mul()
         if getattr(rest, "degree_unit", False) and coefficient.is_Rational:
             # An angle in degrees, written with the postfix operator: `30 DEG`.
-            if coefficient.q == 1:
-                return f"{self._print(coefficient)} DEG"
-            return f"({self._print(coefficient)}) DEG"
+            number = self._print(coefficient)
+            if coefficient.q == 1 and number.kind is Kind.UNOP:
+                inner = _node(Kind.POSTOP, number.children, "DEG")
+                return _signed(str(number.value), inner)
+            return _node(Kind.POSTOP, (number,), "DEG")
         if isinstance(coefficient, sp.Rational) and coefficient.q != 1:
             value = Fraction(coefficient.p, coefficient.q)
-            written = self._number(value)
-            if "/" not in written and not self._keeps_ratio(value, written):
-                return self._beside(written, rest)
+            if not self._is_ratio(value) and not self._keeps_ratio(value):
+                return self._beside(self._number(value), rest)
         return self._divided(expr)
 
-    def _keeps_ratio(self, value: Fraction, written: str) -> bool:
-        """Whether an exact coefficient `written` as a cut-short decimal is better
-        written as its ratio, which is not longer. Only Decimal writes whole numbers in
-        full, as a ratio needs.
+    def _as_written(self, expr) -> Node:
+        """An unevaluated product, its factors in the order given, as sympy writes one:
+        negative powers below the bar."""
+        level = precedence(expr)
+        above, below = [], []
+        for factor in expr.args:
+            if isinstance(factor, sp.Pow) and bool(factor.exp.as_coeff_Mul()[0] < 0):
+                if factor.exp.is_Number:
+                    power = -factor.exp
+                else:
+                    parts = list(factor.exp.args)
+                    parts[0] = -parts[0]
+                    power = sp.Mul._from_args(parts)
+                below.append(
+                    sp.Pow(factor.base, power, evaluate=False)
+                    if power - 1
+                    else factor.base
+                )
+            else:
+                above.append(factor)
+        pieces = []
+        if above and not above[0].is_Add and above[0].could_extract_minus_sign():
+            pieces.append(("", self._print(above.pop(0)), False))
+        for factor in above:
+            node, fenced = self._fenced(factor, level)
+            pieces.append(("*" if pieces else "", node, fenced))
+        if not pieces:
+            pieces.append(("", _numeral("1"), False))
+        if not below:
+            return _run(pieces)
+        under = []
+        if len(below) > 1 and below[0].could_extract_minus_sign():
+            under.append(("", self._print(below.pop(0)), False))
+        for factor in below:
+            node, fenced = self._fenced(factor, level)
+            under.append(("*" if under else "", node, fenced))
+        if len(under) > 1:
+            return _run([*pieces, ("/", _run(under), True)])
+        return _run([*pieces, ("/", under[0][1], under[0][2])])
+
+    def _is_ratio(self, value: Fraction) -> bool:
+        """Whether the notation writes `value`, not whole, as a ratio."""
+        style = self.context.notation
+        return style is Notation.RATIONAL or (
+            style is Notation.MIXED and notation.simple(value)
+        )
+
+    def _keeps_ratio(self, value: Fraction) -> bool:
+        """Whether an exact coefficient written as a cut-short decimal is better written
+        as its ratio, which is not longer. Only Decimal writes whole numbers in full, as
+        a ratio needs.
         """
-        if (
-            self.context.notation is not Notation.DECIMAL
-            or is_approximation(value)
-            or notation.value_of(written) == value
-        ):
+        if self.context.notation is not Notation.DECIMAL or is_approximation(value):
+            return False
+        written = notation.decimal(value, self.context.notation_digits)
+        if notation.value_of(written) == value:
             return False
         ratio = len(str(value.numerator)) + 1 + len(str(value.denominator))
         return ratio <= len(written)
 
-    def _divided(self, expr) -> str:
+    def _divided(self, expr) -> Node:
         """A product with its denominator determined as `_print_Pow` determines one.
 
         Sympy's product printer puts every negatively signed exponent below the bar,
@@ -1067,10 +1295,10 @@ class AuthorPrinter(sp.StrPrinter):
         its sign to the product (`- z*(b + 2)`), and a numerator that would lead with a
         minus gives its sign to the quotient (`-(x^2 - y^2 - 2)/2`).
         """
-        sign = ""
+        negative = False
         level = precedence(expr)
         if expr.could_extract_minus_sign():
-            expr, sign = -expr, "-"
+            expr, negative = -expr, True
         above, below = [], []
         factors = factor_order(
             _merged_roots(expr.as_ordered_factors()), self.context.order
@@ -1078,7 +1306,7 @@ class AuthorPrinter(sp.StrPrinter):
         for index, factor in enumerate(factors):
             if _all_negated(factor):
                 factors[index] = -factor
-                sign = "" if sign else "-"
+                negative = not negative
                 break
         for factor in factors:
             if isinstance(factor, sp.Rational):
@@ -1096,20 +1324,26 @@ class AuthorPrinter(sp.StrPrinter):
             for index, factor in enumerate(above):
                 if self._leads_negative(factor):
                     above[index] = -factor
-                    sign = "" if sign else "-"
+                    negative = not negative
                     break
-
-        def written(parts):
-            return [self.parenthesize(part, level, strict=False) for part in parts]
-
-        text = "*".join(written(above)) or "1"
+        pieces = [
+            ("*" if index else "", *self._fenced(part, level))
+            for index, part in enumerate(above)
+        ] or [("", _numeral("1"), False)]
         if len(below) == 1:
-            text += "/" + written(below)[0]
+            pieces.append(("/", *self._fenced(below[0], level)))
         elif below:
             # One denominator, as sympy writes it: `a/(x*y)`, not `a/x/y`, which
             # would display as a nested fraction.
-            text += "/(" + "*".join(written(below)) + ")"
-        return sign + text
+            under = [
+                ("*" if index else "", *self._fenced(part, level))
+                for index, part in enumerate(below)
+            ]
+            pieces.append(("/", _run(under), True))
+        if negative:
+            first, *rest = pieces
+            pieces = [("", _signed("-", _run([first])), False), *rest]
+        return _run(pieces)
 
     def _leads_negative(self, factor: sp.Basic) -> bool:
         """Whether a bracket would print with a leading minus, after pair swapping."""
@@ -1118,9 +1352,9 @@ class AuthorPrinter(sp.StrPrinter):
         terms = self._as_ordered_terms(factor)
         return bool(terms) and terms[0].could_extract_minus_sign()
 
-    def _beside(self, written: str, rest) -> str:
-        """An already printed coefficient times the rest of its product, which keeps its
-        denominator, so `1/(x - 1)` gets the coefficient above the bar.
+    def _beside(self, written: Node, rest) -> Node:
+        """A coefficient times the rest of its product, which keeps its denominator, so
+        `1/(x - 1)` gets the coefficient above the bar.
         """
         above, below = [], []
         factors = _merged_roots(rest.as_ordered_factors())
@@ -1131,191 +1365,179 @@ class AuthorPrinter(sp.StrPrinter):
             else:
                 above.append(factor)
         level = PRECEDENCE["Mul"]
-        text = written
-        for factor in above:
-            text += "*" + self.parenthesize(factor, level, strict=False)
-        if below:
+        pieces = [("", written, False)]
+        pieces += [("*", *self._fenced(factor, level)) for factor in above]
+        if len(below) == 1:
+            pieces.append(("/", *self._fenced(below[0], level)))
+        elif below:
             # One denominator, as sympy writes it: `a/(x*y)`, not `a/x/y`.
-            under = [self.parenthesize(factor, level, strict=False) for factor in below]
-            text += "/" + (under[0] if len(under) == 1 else "(" + "*".join(under) + ")")
-        return text
+            under = [
+                ("*" if index else "", *self._fenced(factor, level))
+                for index, factor in enumerate(below)
+            ]
+            pieces.append(("/", _run(under), True))
+        return _run(pieces)
 
-    def _number(self, value: Fraction) -> str:
+    def _number(self, value: Fraction) -> Node:
         """`value` in the notation `Options Notation` selects.
 
         Ratios use the session's base; decimal styles are always base ten. Decimal
         notation writes an exact number in full but an approximate one in scientific
         style, so `APPROX(100!)` is `9.33262*10^157` rather than 158 digits.
         """
-        style, digits = self.context.notation, self.context.notation_digits
-        if style is Notation.RATIONAL or (
-            style is Notation.MIXED and notation.simple(value)
-        ):
+        digits = self.context.notation_digits
+        if self._is_ratio(value):
             base = self.context.input_base
             if value.denominator == 1:
-                return numeral(value.numerator, base)
-            return f"{numeral(value.numerator, base)}/{numeral(value.denominator, base)}"
+                return _numeral(numeral(value.numerator, base), base)
+            ratio = _binop(
+                "/",
+                _numeral(numeral(abs(value.numerator), base), base),
+                _numeral(numeral(value.denominator, base), base),
+            )
+            return _signed("-", ratio) if value < 0 else ratio
+        style = self.context.notation
         if style is Notation.DECIMAL and not is_approximation(value):
-            return notation.decimal(value, digits)
-        return notation.scientific(value, digits)
-
-    def parenthesize(self, item, level, strict=False):
-        """Parenthesize a number printed with a power of ten where it binds tighter than a
-        product, as in an exponent: sympy treats numbers as atoms.
-        """
-        text = super().parenthesize(item, level, strict)
-        if (
-            isinstance(item, sp.Number)
-            and level > PRECEDENCE["Mul"]
-            and not text.startswith("(")
-            and ("*" in text or "^" in text)
-        ):
-            return f"({text})"
-        return text
+            return _numeral(notation.decimal(value, digits))
+        mantissa, power = notation.scientific(value, digits)
+        if power is None:
+            return _numeral(mantissa)
+        negative = mantissa.startswith("-")
+        mantissa = mantissa.removeprefix("-")
+        ten = _binop("^", _numeral("10"), _numeral(str(power)))
+        number = _product([_numeral(mantissa), ten]) if mantissa else ten
+        return _signed("-", number) if negative else number
 
     # -- constants and special values ---------------------------------------
 
-    def _print_Exp1(self, expr):
-        return "#e"
+    def _print_Exp1(self, expr) -> Node:
+        return _name("#e")
 
-    def _print_ImaginaryUnit(self, expr):
-        return "#i"
+    def _print_ImaginaryUnit(self, expr) -> Node:
+        return _name("#i")
 
-    def _print_EulerGamma(self, expr):
-        return "euler_gamma"
+    def _print_Pi(self, expr) -> Node:
+        return _name("pi")
 
-    def _print_Infinity(self, expr):
-        return "inf"
+    def _print_ZeroMatrix(self, expr) -> Node:
+        return _numeral("0")
 
-    def _print_NegativeInfinity(self, expr):
-        return "-inf"
+    def _print_Degree(self, expr) -> Node:
+        return _name("deg")
 
-    def _print_ComplexInfinity(self, expr):
+    def _print_EulerGamma(self, expr) -> Node:
+        return _name("euler_gamma")
+
+    def _print_Infinity(self, expr) -> Node:
+        return _name("inf")
+
+    def _print_NegativeInfinity(self, expr) -> Node:
+        return _signed("-", _name("inf"))
+
+    def _print_ComplexInfinity(self, expr) -> Node:
         """Unsigned infinity, the value of `1/0` and `TAN(pi/2)`."""
-        return f"{_PLUS_MINUS}inf"
+        return _signed("+-", _name("inf"))
 
-    def _print_NaN(self, expr):
-        return "?"
+    def _print_NaN(self, expr) -> Node:
+        return _node(Kind.UNKNOWN, value="?")
 
-    def _print_BooleanTrue(self, expr):
-        return "true"
+    def _print_BooleanTrue(self, expr) -> Node:
+        return _name("true")
 
-    def _print_BooleanFalse(self, expr):
-        return "false"
+    def _print_BooleanFalse(self, expr) -> Node:
+        return _name("false")
 
     # -- operators ----------------------------------------------------------
 
-    def _print_Pow(self, expr, rational=False):
+    def _print_Pow(self, expr, rational=False) -> Node:
         level = PRECEDENCE["Pow"]
         if expr.exp is sp.S.Half and not rational:
-            return f"SQRT({self._print(expr.base)})"
+            return _call("SQRT", [self._print(expr.base)])
         if expr.is_commutative and not rational:
             if -expr.exp is sp.S.Half:
-                return f"1/SQRT({self._print(expr.base)})"
+                root = _call("SQRT", [self._print(expr.base)])
+                return _binop("/", _numeral("1"), root)
             if expr.exp is sp.S.NegativeOne:
                 if expr.base.is_Add:
                     content = expr.base.as_content_primitive()[0]
                     if content.is_Integer and content > 1:
                         return self._divided(expr)
-                return f"1/{self.parenthesize(expr.base, level)}"
+                below = self._fenced(expr.base, level)
+                return _run([("", _numeral("1"), False), ("/", *below)])
             if expr.exp.is_Number and expr.exp.is_negative:
-                # A denominator, as the inherited `_print_Mul` writes one in a
-                # product: `1/k^2` rather than `k^(-2)`.
-                return f"1/{self._print(sp.Pow(expr.base, -expr.exp))}"
-        base = self.parenthesize(expr.base, level)
-        exponent = self.parenthesize(expr.exp, level)
-        return f"{base}^{exponent}"
+                # A denominator, as `_divided` writes one in a product: `1/k^2` rather
+                # than `k^(-2)`.
+                denominator = self._print(sp.Pow(expr.base, -expr.exp))
+                return _binop("/", _numeral("1"), denominator)
+        return self._power(expr.base, expr.exp)
 
-    def _print_MatPow(self, expr):
-        """A power of a matrix, written like any other power.
+    def _power(self, base, exponent) -> Node:
+        return _binop("^", self._print(base), self._print(exponent))
 
-        This avoids sympy's `m**(1/2)`. A negative exponent stays unparenthesized in
-        the exponent, `a^-1`, as in the original, since there is no `1/u` for a matrix.
-        """
+    def _print_MatPow(self, expr) -> Node:
+        """A power of a matrix, written like any other power, `a^-1`; there is no `1/u`
+        for a matrix."""
         if expr.exp.is_Number and expr.exp.is_negative:
-            base = self.parenthesize(expr.base, PRECEDENCE["Pow"])
-            return f"{base}^{self._print(expr.exp)}"
+            return self._power(expr.base, expr.exp)
         return self._print_Pow(expr)
 
-    def _print_Inverse(self, expr):
+    def _print_Inverse(self, expr) -> Node:
         """`a^-1`, the same power sympy keeps under a separate head."""
         return self._print_MatPow(expr)
 
-    def _print_MatMul(self, expr):
+    def _print_MatMul(self, expr) -> Node:
         """A matrix product, using the dot operator of section 8.4.
 
-        Derive nests a chain to the right with parentheses, `a . (b . (c . d))`, since
-        the grammar is left-associative. A scalar coefficient goes in front, and a
-        negated product needs no parentheses, so a sum reads `a . b - b . a`.
+        Derive nests a chain to the right, `a . (b . (c . d))`, since the grammar is
+        left-associative. A scalar coefficient goes in front, and a negated product is
+        signed, so a sum reads `a . b - b . a`.
         """
         coefficient, matrices = expr.as_coeff_matrices()
         if not matrices:
             return self._print(coefficient)
-        product = self._nested(matrices)
+        product = self._print(matrices[-1])
+        for matrix in reversed(matrices[:-1]):
+            product = _binop(".", self._print(matrix), product)
         if coefficient == 1:
             return product
         if coefficient == -1:
-            return f"-{product}"
-        if len(matrices) > 1:
-            product = f"({product})"
-        return f"{self.parenthesize(coefficient, PRECEDENCE['Mul'])}*{product}"
+            return _signed("-", product)
+        number, fenced = self._fenced(coefficient, PRECEDENCE["Mul"])
+        return _run([("", number, fenced), ("*", product, len(matrices) > 1)])
 
-    def _nested(self, matrices) -> str:
-        """A sequence of matrices as the original's right-nested chain."""
-        level = PRECEDENCE["Mul"]
-        text = self.parenthesize(matrices[-1], level)
-        for index in range(len(matrices) - 2, -1, -1):
-            if index < len(matrices) - 2:
-                text = f"({text})"
-            text = f"{self.parenthesize(matrices[index], level)} . {text}"
-        return text
-
-    def _print_Transpose(self, expr):
+    def _print_Transpose(self, expr) -> Node:
         """``u` ``, the same operator the inert head uses."""
-        return f"{self.parenthesize(expr.arg, PRECEDENCE['Func'])}`"
+        return _node(Kind.POSTOP, (self._print(expr.arg),), "`")
 
-    def _print_exp(self, expr):
+    def _print_exp(self, expr) -> Node:
         """`#e^u`, never `EXP(u)`, as the notation spells it."""
-        return f"#e^{self.parenthesize(expr.args[0], PRECEDENCE['Pow'])}"
+        return _binop("^", _name("#e"), self._print(expr.args[0]))
 
-    def _print_factorial(self, expr):
-        return f"{self.parenthesize(expr.args[0], PRECEDENCE['Func'])}!"
+    def _print_factorial(self, expr) -> Node:
+        return _node(Kind.POSTOP, (self._print(expr.args[0]),), "!")
 
     _print_Factorial = _print_factorial
 
-    def _print_Relational(self, expr):
-        level = PRECEDENCE["Relational"]
+    def _print_Relational(self, expr) -> Node:
         operator = _RELATIONS.get(expr.rel_op, expr.rel_op)
-        left, right = (
-            # Sympy rates `NOT` as tight as an atom; written, it binds more loosely than
-            # a relation, so `(NOT d) = 0` needs its parentheses.
-            f"({self._print(side)})"
-            if isinstance(side, sp.Not)
-            else self.parenthesize(side, level)
-            for side in (expr.lhs, expr.rhs)
-        )
-        return f"{left} {operator} {right}"
+        return _relation(operator, self._print(expr.lhs), self._print(expr.rhs))
 
     # -- functions ----------------------------------------------------------
 
-    def _print_Function(self, expr):
+    def _print_Function(self, expr) -> Node:
         """`NAME(u, ...)`, or the call quoted under its sympy name if the notation has no
         name for it.
         """
         if _is_suspended(expr):
             return self._print_Suspended(expr)
-        if isinstance(expr, WrittenBase):
-            return self._print_WrittenBase(expr)
-        if isinstance(expr, HeldBase):
-            return self._print_HeldBase(expr)
+        if isinstance(expr, (WrittenBase, HeldBase)):
+            return type(expr).node
         name = spelling(expr)
         if name is None:
-            if not self._unspelling:
-                return self._unspelled(expr)
-            name = type(expr).__name__
-        return f"{name}({self.stringify(expr.args, ', ')})"
+            return self._unspelled(expr)
+        return _call(name, self._arguments(expr.args))
 
-    def _print_Suspended(self, expr):
+    def _print_Suspended(self, expr) -> Node:
         """A suspended conditional as its display, the conditional as written with its
         variables' values substituted. `released` normally replaces it before printing;
         its class name (`IF_2`) is internal and never printed. Sympy prints a subclass
@@ -1332,14 +1554,14 @@ class AuthorPrinter(sp.StrPrinter):
                     shown = shown.xreplace(values)
         return self._print(shown)
 
-    def _print_polygamma(self, expr):
+    def _print_polygamma(self, expr) -> Node:
         """`DIGAMMA(x)` for the order-zero polygamma function, since sympy has no
         separate digamma function."""
         if _is_digamma(expr):
-            return f"DIGAMMA({self._print(expr.args[1])})"
+            return _call("DIGAMMA", [self._print(expr.args[1])])
         return self._print_Function(expr)
 
-    def _print_Gcd(self, expr):
+    def _print_Gcd(self, expr) -> Node:
         """`GCD(n, m)`, with arguments from least main up, as Derive writes them: `GCD(m,
         2)` is `GCD(2, m)`.
         """
@@ -1347,23 +1569,23 @@ class AuthorPrinter(sp.StrPrinter):
         operands = sorted(
             expr.args, key=lambda term: _term_key(term, order), reverse=True
         )
-        return f"GCD({self.stringify(operands, ', ')})"
+        return _call("GCD", self._arguments(operands))
 
-    def _print_Modulo(self, expr):
+    def _print_Modulo(self, expr) -> Node:
         """`MOD(m, n)` and `MODS(m, n)`, written `MOD(m)` for the unit modulus."""
         name = spelling(expr)
         value, modulus = expr.args
         if name is None or modulus != 1:
             return self._print_Function(expr)
-        return f"{name}({self._print(value)})"
+        return _call(name, [self._print(value)])
 
-    def _print_Min(self, expr):
-        return f"MIN({self.stringify(expr.args, ', ')})"
+    def _print_Min(self, expr) -> Node:
+        return _call("MIN", self._arguments(expr.args))
 
-    def _print_Max(self, expr):
-        return f"MAX({self.stringify(expr.args, ', ')})"
+    def _print_Max(self, expr) -> Node:
+        return _call("MAX", self._arguments(expr.args))
 
-    def _print_floor(self, expr):
+    def _print_floor(self, expr) -> Node:
         """`FLOOR(m, n)` if the argument is a quotient, otherwise `FLOOR(u)`.
 
         The notation's two-argument floor (section 6.7: `MOD(m, n)` is `m - n*FLOOR(m,
@@ -1372,62 +1594,62 @@ class AuthorPrinter(sp.StrPrinter):
         """
         numerator, denominator = sp.fraction(sp.together(expr.args[0]))
         if denominator.is_number:
-            return f"FLOOR({self._print(expr.args[0])})"
+            return _call("FLOOR", [self._print(expr.args[0])])
         coefficient, denominator = denominator.as_coeff_Mul()
-        over = self._print(denominator)
-        return f"FLOOR({self._print(numerator / coefficient)}, {over})"
+        return _call(
+            "FLOOR", [self._print(numerator / coefficient), self._print(denominator)]
+        )
 
-    def _print_Heaviside(self, expr):
+    def _print_Heaviside(self, expr) -> Node:
         """`STEP(u)`, omitting the value at zero, which is ours, not the author's."""
-        return f"STEP({self._print(expr.args[0])})"
+        return _call("STEP", [self._print(expr.args[0])])
 
-    def _print_Determinant(self, expr):
+    def _print_Determinant(self, expr) -> Node:
         """`DET(u)` for a matrix sympy keeps unevaluated. It isn't a `Function`, so
         `spelling` doesn't cover it.
         """
-        return f"DET({self._print(expr.arg)})"
+        return _call("DET", [self._print(expr.arg)])
 
-    def _print_Trace(self, expr):
-        return f"TRACE({self._print(expr.arg)})"
+    def _print_Trace(self, expr) -> Node:
+        return _call("TRACE", [self._print(expr.arg)])
 
-    def _print_Piecewise(self, expr):
+    def _print_Piecewise(self, expr) -> Node:
         """A case split, as nested `IF(test, then, else)`. Without a final `true`
         condition the last case has no else, which is correct, since the value is then
         `?`.
         """
         pairs = list(expr.args)
-        text = None
+        node = None
         if pairs and pairs[-1][1] is sp.true:
-            text = self._print(pairs.pop()[0])
+            node = self._print(pairs.pop()[0])
         for value, condition in reversed(pairs):
             parts = [self._print(condition), self._print(value)]
-            if text is not None:
-                parts.append(text)
-            text = f"IF({', '.join(parts)})"
-        return "?" if text is None else text
+            if node is not None:
+                parts.append(node)
+            node = _call("IF", parts)
+        return _node(Kind.UNKNOWN, value="?") if node is None else node
 
-    def _print_ITE(self, expr):
+    def _print_ITE(self, expr) -> Node:
         """A case split between truth values, as `IF(test, then, else)`. Sympy makes
         one of a comparison with a case split: `DIMENSION(IF(k = 1, [f], [])) < 1`.
         """
-        return f"IF({', '.join(self._print(arg) for arg in expr.args)})"
-
+        return _call("IF", self._arguments(expr.args))
 
     # -- calculus heads that reached the output unevaluated -----------------
 
-    def _print_Derivative(self, expr):
+    def _print_Derivative(self, expr) -> Node:
         primed = self._primed(expr, expr.variable_count[0][0])
         if primed is not None:
             return primed
-        text = self._print(expr.expr)
+        node = self._print(expr.expr)
         for variable, count in expr.variable_count:
-            parts = [text, self._print(variable)]
+            parts = [node, self._print(variable)]
             if count != 1:
                 parts.append(self._print(count))
-            text = f"DIF({', '.join(parts)})"
-        return text
+            node = _call("DIF", parts)
+        return node
 
-    def _primed(self, expr, point) -> str | None:
+    def _primed(self, expr, point) -> Node | None:
         """`BB'(r)`: `expr` written with prime notation, or None.
 
         The original uses primes only for an undefined function of one argument
@@ -1444,74 +1666,79 @@ class AuthorPrinter(sp.StrPrinter):
         if call.args[0] != variable or not count.is_Integer or count < 1:
             return None
         marks = PRIME_MARK * int(count)
-        return f"{function_name(call)}{marks}({self._print(point)})"
+        return _call(f"{function_name(call)}{marks}", [self._print(point)])
 
-    def _print_Integral(self, expr):
+    def _print_Integral(self, expr) -> Node:
         return self._limited("INT", expr)
 
-    def _print_Sum(self, expr):
+    def _print_Sum(self, expr) -> Node:
         return self._limited("SUM", expr)
 
-    def _print_Product(self, expr):
+    def _print_Product(self, expr) -> Node:
         return self._limited("PRODUCT", expr)
 
-    def _limited(self, head: str, expr) -> str:
+    def _limited(self, head: str, expr) -> Node:
         """`INT(u, x)` and `INT(u, x, a, b)`, one head per limit."""
-        text = self._print(expr.function)
+        node = self._print(expr.function)
         for limit in expr.limits:
-            parts = [text, *(self._print(part) for part in limit)]
-            text = f"{head}({', '.join(parts)})"
-        return text
+            node = _call(head, [node, *self._arguments(limit)])
+        return node
 
-    def _print_Limit(self, expr):
+    def _print_Limit(self, expr) -> Node:
         """`LIM(u, x, a)`, with a fourth argument for a one-sided limit. The direction
         sympy records at infinity is omitted, since the author didn't ask for a
         one-sided limit.
         """
         expression, variable, point, direction = expr.args
-        parts = [self._print(expression), self._print(variable), self._print(point)]
+        parts = self._arguments((expression, variable, point))
         side = {"+": "1", "-": "-1"}.get(str(direction))
         if side is not None and not point.is_infinite:
-            parts.append(side)
-        return f"LIM({', '.join(parts)})"
+            parts.append(_numeral(side))
+        return _call("LIM", parts)
 
     # -- bounded limits that don't converge ------------------------------------
 
-    def _print_AccumulationBounds(self, expr):
+    def _print_AccumulationBounds(self, expr) -> Node:
         """`INTERVAL(a, b)`: a value known only to lie between `a` and `b`.
 
         This is the result of a bounded limit that doesn't converge: `LIM(SIN(x), x,
         inf)` is `INTERVAL(-1, 1)`. The name is Mathematica's and Maple's, and it is an
         atom, so it works inside larger expressions.
         """
-        return f"INTERVAL({self.stringify(expr.args, ', ')})"
+        return _call("INTERVAL", self._arguments(expr.args))
 
     # -- roots of polynomials that don't factor --------------------------------
 
-    def _print_RootSum(self, expr):
+    def _print_RootSum(self, expr) -> Node:
         """`ROOT_SUM(p, t, u)`: the sum of `u` over every root `t` of `p`. The summand, a
         `Lambda` in sympy, is written in the polynomial's generator.
         """
         variable = expr.poly.gen
         parts = (expr.poly.as_expr(), variable, expr.fun(variable))
-        return f"ROOT_SUM({self.stringify(parts, ', ')})"
+        return _call("ROOT_SUM", self._arguments(parts))
 
-    def _print_ComplexRootOf(self, expr):
+    def _print_ComplexRootOf(self, expr) -> Node:
         """`ROOT_OF(p, t, n)`: the `n`-th root of `p` in `t`, counted from zero. The
         generator is taken from the polynomial.
         """
         parts = (expr.poly.as_expr(), expr.poly.gen, sp.Integer(expr.index))
-        return f"ROOT_OF({self.stringify(parts, ', ')})"
+        return _call("ROOT_OF", self._arguments(parts))
 
     # -- vectors and matrices ------------------------------------------------
 
-    def _print_Tuple(self, expr):
+    def _print_Tuple(self, expr) -> Node:
         """A tuple, written as a vector, since the grammar can't read a parenthesized
         list.
         """
         return self._vector(expr.args)
 
-    def _print_Subs(self, expr):
+    def _print_tuple(self, expr) -> Node:
+        return self._vector(expr)
+
+    def _print_list(self, expr) -> Node:
+        return self._vector(expr)
+
+    def _print_Subs(self, expr) -> Node:
         """`SUBS(u, [x], [a])`, upper-cased to be a fixed point, or a prime over an
         undefined function: `DIF(BB(r^2), r)` is `2*r*BB'(r^2)`.
         """
@@ -1520,29 +1747,29 @@ class AuthorPrinter(sp.StrPrinter):
             primed = self._primed(inner, points[0])
             if primed is not None and inner.variable_count[0][0] == variables[0]:
                 return primed
-        return f"SUBS({self.stringify(expr.args, ', ')})"
+        return _call("SUBS", self._arguments(expr.args))
 
     _print_Substitution = _print_Subs
 
-    def _print_MatrixBase(self, expr):
+    def _print_MatrixBase(self, expr) -> Node:
         """A sympy matrix, met only in a product with a symbolic one, as a vector of
         rows like any explicit matrix (a `Vector`)."""
-        rows = (self._vector(expr.row(row)) for row in range(expr.rows))
-        return f"[{', '.join(rows)}]"
+        rows = [self._vector(expr.row(row)) for row in range(expr.rows)]
+        return _node(Kind.VECTOR, rows)
 
-    def _vector(self, elements) -> str:
-        return f"[{', '.join(self._print(element) for element in elements)}]"
+    def _vector(self, elements) -> Node:
+        return _node(Kind.VECTOR, self._arguments(elements))
 
     # -- logic ---------------------------------------------------------------
 
-    def _print_And(self, expr):
+    def _print_And(self, expr) -> Node:
         chained = self._chain(expr)
         if chained is not None:
             return chained
         order = not getattr(expr, "in_order", False)
         return self._infix("AND", expr.args, order=order)
 
-    def _chain(self, expr) -> str | None:
+    def _chain(self, expr) -> Node | None:
         """Two bounds on one variable as the chain `-2 < x < 2`, as the original writes a
         range. The two sides' strictness is independent.
         """
@@ -1552,29 +1779,21 @@ class AuthorPrinter(sp.StrPrinter):
         if found is None:
             return None
         subject, (lower, low), (upper, high) = found
-        level = PRECEDENCE["Relational"]
-        return " ".join(
-            (
-                self.parenthesize(low, level),
-                _FROM_BELOW[lower],
-                self.parenthesize(subject, level),
-                upper,
-                self.parenthesize(high, level),
-            )
-        )
+        inner = _relation(_FROM_BELOW[lower], self._print(low), self._print(subject))
+        return _relation(upper, inner, self._print(high))
 
-    def _print_Or(self, expr):
+    def _print_Or(self, expr) -> Node:
         order = not getattr(expr, "in_order", False)
         return self._infix("OR", expr.args, order=order)
 
-    def _print_Xor(self, expr):
+    def _print_Xor(self, expr) -> Node:
         return self._infix("XOR", expr.args)
 
-    def _print_Implies(self, expr):
+    def _print_Implies(self, expr) -> Node:
         # `IMP` isn't commutative, so its operands keep their order.
         return self._infix("IMP", expr.args, order=False)
 
-    def _print_Equivalent(self, expr):
+    def _print_Equivalent(self, expr) -> Node:
         if len(expr.args) != 2:
             # All operands have one truth value: each equivalent to the next.
             links = [
@@ -1584,202 +1803,216 @@ class AuthorPrinter(sp.StrPrinter):
             return self._infix("AND", links, order=False)
         return self._infix("IFF", expr.args, order=False)
 
-    def _print_Not(self, expr):
-        return f"NOT {self._logical_operand(expr.args[0], 'NOT')}"
+    def _print_Not(self, expr) -> Node:
+        return _node(Kind.NOT, (self._print(expr.args[0]),))
 
-    def _infix(self, word: str, operands, order: bool = True) -> str:
+    def _infix(self, word: str, operands, order: bool = True) -> Node:
+        """The operands joined by the logical operator `word`, which associates as it is
+        read: `IMP` and `IFF` to the left, the others to the right."""
         if order:
             operands = logical_order(operands, self.context.order)
-        return f" {word} ".join(
-            self._logical_operand(operand, word) for operand in operands
-        )
-
-    def _logical_operand(self, operand: sp.Basic, word: str) -> str:
-        """The operand, parenthesized if it binds more loosely than `word`, or if it is
-        a conjunction inside a disjunction, as the original writes a disjunction of
-        solutions, `(x = -a AND y = -a) OR (x = a AND y = a)`. A range drawn as a chain,
-        `-2 < x < 2`, reads as one relation and is not parenthesized."""
-        inner = _LOGICAL_HEADS.get(type(operand).__name__)
-        if isinstance(operand, sp.Function) and type(operand).__name__ == "Logical":
-            inner = str(operand.args[0])
-        text = self._print(operand)
-        if inner is None:
-            return text
-        if word == "OR" and inner == "AND":
-            if isinstance(operand, sp.And) and self._chain(operand) is not None:
-                return text
-            return f"({text})"
-        if _LOGICAL_PRECEDENCE[inner] > _LOGICAL_PRECEDENCE[word]:
-            return text
-        return f"({text})"
+        kind = _LOGICAL_KINDS[word]
+        nodes = self._arguments(operands)
+        if word in ("IMP", "IFF"):
+            node = nodes[0]
+            for other in nodes[1:]:
+                node = _node(kind, (node, other))
+            return node
+        node = nodes[-1]
+        for other in reversed(nodes[:-1]):
+            node = _node(kind, (other, node))
+        return node
 
     # -- the inert heads ------------------------------------------------------
 
-    def _print_PlusMinus(self, expr):
-        operand = self.parenthesize(expr.args[0], PRECEDENCE["Mul"], strict=True)
-        return f"{_PLUS_MINUS}{operand}"
+    def _print_PlusMinus(self, expr) -> Node:
+        return _signed("+-", self._print(expr.args[0]))
 
-    def _print_StringLiteral(self, expr):
-        return f'"{expr.name}"'
+    def _print_StringLiteral(self, expr) -> Node:
+        return _node(Kind.STRING, value=expr.name)
 
-    def _unspelled(self, expr):
+    def _unspelled(self, expr) -> Node:
         """A head the notation can't express, written as a quoted string.
 
-        Printed bare, sympy's `EmptySet` would read back as `e*m*p*t*y*s*e*t` and
+        Written bare, sympy's `EmptySet` would read back as `e*m*p*t*y*s*e*t` and
         `Interval(0, 1)` as the built-in `INTERVAL`, both looking like computed
-        answers. The quoted text is what would otherwise print; nothing inside is
-        quoted again.
+        answers. The string holds what sympy writes for it, its operands written as
+        usual; nothing inside is quoted again.
         """
+        if self._unspelling:
+            return _verbatim(_Quoting(self).doprint(expr))
         self._unspelling = True
         try:
-            return f'"{super()._print(expr)}"'
+            return _node(Kind.STRING, value=_Quoting(self).doprint(expr))
         finally:
             self._unspelling = False
 
-    def _print_Power(self, expr):
-        base, exponent = expr.args
-        level = PRECEDENCE["Pow"]
-        # The exponent isn't parenthesized at its own level, since `^` is
-        # right-associative: `10^10^10` reads back as the same tower.
-        written = self.parenthesize(base, level, strict=True)
-        return f"{written}^{self.parenthesize(exponent, level)}"
+    def _print_Power(self, expr) -> Node:
+        return self._power(*expr.args)
 
-    def _print_Transposed(self, expr):
-        return f"{self.parenthesize(expr.args[0], PRECEDENCE['Func'])}`"
+    def _print_Transposed(self, expr) -> Node:
+        return _node(Kind.POSTOP, (self._print(expr.args[0]),), "`")
 
-    def _print_Subscript(self, expr):
-        level = PRECEDENCE["Func"]
+    def _print_Subscript(self, expr) -> Node:
         base, index = expr.args
-        return f"{self.parenthesize(base, level)} SUB {self._index(index)}"
+        return _node(Kind.SUB, (self._print(base), self._print(index)))
 
-    def _index(self, index: sp.Basic) -> str:
-        """The index of a subscript link, in parentheses unless it is one primary: a
-        name, a nonnegative numeral, a vector, a set, a string or a call."""
-        text = self._print(index)
-        if _is_primary(text):
-            return text
-        return f"({text})"
-
-    def _print_InfixBase(self, expr):
-        """A word operator that stands. A subscript link binds like `SUB`, and the
-        others are left-associative."""
+    def _print_InfixBase(self, expr) -> Node:
+        """A word operator that stands."""
         left, right = expr.args[:2]
-        level = precedence(expr)
-        if level >= PRECEDENCE["Atom"] - 1:
-            base = self.parenthesize(left, PRECEDENCE["Func"])
-            return f"{base} {expr.operator} {self._index(right)}"
-        first = self.parenthesize(left, level)
-        return f"{first} {expr.operator} {self.parenthesize(right, level, strict=True)}"
+        children = (self._print(left), self._print(right))
+        return _node(Kind.INFIX, children, expr.operator)
 
-    def _print_Added(self, expr):
-        text = ""
-        for term in expr.args:
-            written = self.parenthesize(term, PRECEDENCE["Add"], strict=True)
-            if not text:
-                text = written
-            elif written.startswith("-"):
-                text += f" - {written[1:]}"
-            else:
-                text += f" + {written}"
-        return text
+    def _print_Added(self, expr) -> Node:
+        """A sum kept as written: a term that is a sum itself joins the run, as
+        `(x + 1) + [1, 2]` reads as `x + 1 + [1, 2]`."""
+        level = PRECEDENCE["Add"]
+        return _sum_of([self._fenced(term, level, strict=True) for term in expr.args])
 
-    def _print_Quotient(self, expr):
+    def _print_Quotient(self, expr) -> Node:
         level = PRECEDENCE["Mul"]
         left, right = expr.args
-        over = self.parenthesize(right, level, strict=True)
-        return f"{self.parenthesize(left, level)}/{over}"
-
-    def _print_Dot(self, expr):
-        """`u . v`; a chain nested to the left, `P . L . D`, needs no parentheses, the
-        operator being left-associative."""
-        level = PRECEDENCE["Mul"]
-        left, right = expr.args
-        written = (
-            self._print(left)
-            if type(left) is type(expr)
-            else self.parenthesize(left, level)
+        return _run(
+            [("", *self._fenced(left, level)), ("/", self._print(right), True)]
         )
-        return f"{written} . {self.parenthesize(right, level)}"
 
-    def _print_Truth(self, expr):
+    def _print_Dot(self, expr) -> Node:
+        """`u . v`; a chain nested to the left, `P . L . D`, is left-associative."""
+        left, right = expr.args
+        return _binop(".", self._print(left), self._print(right))
+
+    def _print_UnevaluatedExpr(self, expr) -> Node:
         return self._print(expr.args[0])
 
-    def _print_Vector(self, expr):
+    def _print_Truth(self, expr) -> Node:
+        return self._print(expr.args[0])
+
+    def _print_Vector(self, expr) -> Node:
         return self._vector(expr.args)
 
-    def _print_SetOf(self, expr):
-        return f"{{{', '.join(self._print(element) for element in expr.args)}}}"
+    def _print_SetOf(self, expr) -> Node:
+        return _node(Kind.SET, self._arguments(expr.args))
 
-    def _print_ElidedVector(self, expr):
-        return f"[{self._elided(expr.args)}]"
+    def _print_ElidedVector(self, expr) -> Node:
+        return _node(Kind.VECTOR, self._elided(expr.args))
 
-    def _print_ElidedSet(self, expr):
-        return f"{{{self._elided(expr.args)}}}"
+    def _print_ElidedSet(self, expr) -> Node:
+        return _node(Kind.SET, self._elided(expr.args))
 
-    def _elided(self, terms) -> str:
+    def _elided(self, terms) -> list[Node]:
         """The terms of an arithmetic sequence, the ellipsis before the last."""
-        written = [self._print(term) for term in terms]
-        return ", ".join([*written[:-1], "...", written[-1]])
+        written = self._arguments(terms)
+        ellipsis = _node(Kind.ELLIPSIS, value=ELLIPSIS)
+        return [*written[:-1], ellipsis, written[-1]]
 
-    def _print_SetUnion(self, expr):
-        return self._set_operation(expr, " UNION ")
+    def _print_SetUnion(self, expr) -> Node:
+        return self._set_operation(expr, "UNION")
 
-    def _print_SetIntersection(self, expr):
-        return self._set_operation(expr, " INTERSECTION ")
+    def _print_SetIntersection(self, expr) -> Node:
+        return self._set_operation(expr, "INTERSECTION")
 
-    def _print_SetDifference(self, expr):
+    def _print_SetDifference(self, expr) -> Node:
         return self._set_operation(expr, "\\")
 
-    def _set_operation(self, expr, operator: str) -> str:
-        """Operands left to right, the same operator nested only on the left, as the
-        grammar's left-associative set operators read back."""
-        level = precedence(expr)
-        first, *rest = expr.args
-        written = [self.parenthesize(first, level)]
-        written += [self.parenthesize(operand, level, strict=True) for operand in rest]
-        return operator.join(written)
+    def _set_operation(self, expr, operator: str) -> Node:
+        """Operands left to right, the same operator nested on the left, as the
+        grammar's left-associative set operators read."""
+        first, *rest = self._arguments(expr.args)
+        for operand in rest:
+            first = _node(Kind.SETOP, (first, operand), operator)
+        return first
 
-    def _print_SetComplement(self, expr):
-        return f"{self.parenthesize(expr.args[0], PRECEDENCE['Func'])}`"
+    def _print_SetComplement(self, expr) -> Node:
+        return _node(Kind.POSTOP, (self._print(expr.args[0]),), "`")
 
-    def _print_Logical(self, expr):
+    def _print_Logical(self, expr) -> Node:
         """A logical operator sympy rejected, with operands unsimplified in their written
         order: `3 AND p` is not `p AND 3`.
         """
         word = str(expr.args[0])
         operands = expr.args[1:]
         if len(operands) == 1:
-            return f"{word} {self._logical_operand(operands[0], word)}"
+            return _node(Kind.NOT, (self._print(operands[0]),))
         return self._infix(word, operands, order=False)
 
-    def _print_WrittenBase(self, expr):
-        return write_expression(type(expr).node, spaced=True)
-
-    def _print_HeldBase(self, expr):
-        """A held value as its expression is written; the operator around it
-        parenthesizes it by its `precedence`."""
-        return write_expression(type(expr).node, spaced=True)
-
-    def _print_Assign(self, expr):
+    def _print_Assign(self, expr) -> Node:
         target, operator, *value = expr.args
-        parts = [self._print(target), str(operator), *(self._print(v) for v in value)]
-        return " ".join(parts)
+        children = [self._print(target), *self._arguments(value)]
+        return _node(Kind.ASSIGN, children, str(operator))
 
-    def _print_FunDef(self, expr):
+    def _print_FunDef(self, expr) -> Node:
         name, parameters, *body = expr.args
         if isinstance(parameters, sp.Tuple):
-            head = f"{name}({', '.join(self._print(p) for p in parameters)})"
+            params = _node(Kind.PARAMS, self._arguments(parameters))
         else:
             # The variadic head `F v`, whose one parameter takes all the arguments.
-            head = f"{name} {self._print(parameters)}"
-        return " ".join([head, ":=", *(self._print(part) for part in body)])
+            params = _node(Kind.PARAMS, [self._print(parameters)], VARIADIC)
+        return _node(Kind.FUNDEF, [params, *self._arguments(body)], str(name))
 
-    def _print_Declare(self, expr):
+    def _print_Declare(self, expr) -> Node:
         """`x :epsilon Real`, with the interval when one was declared."""
         target, kind, *interval = expr.args
-        text = f"{self._print(target)} :epsilon {kind}"
+        children = [self._print(target)]
         if len(interval) == 3:
             brackets, low, high = interval
-            opening, closing = str(brackets)
-            text += f" {opening}{self._print(low)}, {self._print(high)}{closing}"
-        return text
+            children.append(
+                _node(Kind.INTERVAL, self._arguments((low, high)), str(brackets))
+            )
+        return _node(Kind.DOMAIN, children, str(kind))
+
+
+#: The node kind of each logical operator.
+_LOGICAL_KINDS = {
+    "AND": Kind.AND,
+    "OR": Kind.OR,
+    "XOR": Kind.XOR,
+    "IMP": Kind.IMP,
+    "IFF": Kind.IFF,
+}
+
+
+def _subscript_parts(name: str) -> list[str]:
+    """The parts of a subscripted symbol's name, `x SUB 1 SUB (i SUB k)`: the base and
+    each index, an index that is itself subscripted in parentheses."""
+    parts, depth, start = [], 0, 0
+    for at, char in enumerate(name):
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+        elif not depth and name.startswith(_SUBSCRIPT, at) and at >= start:
+            parts.append(name[start:at])
+            start = at + len(_SUBSCRIPT)
+    parts.append(name[start:])
+    return parts
+
+
+class _Quoting(sp.StrPrinter):
+    """The text of an expression the notation has no form for (see
+    `TreePrinter._unspelled`): sympy's, its operands written in author notation."""
+
+    def __init__(self, trees: TreePrinter) -> None:
+        super().__init__({"full_prec": False, "order": "grlex"})
+        self.trees = trees
+        self.depth = 0
+
+    def _print(self, expr, **kwargs) -> str:
+        """The expression itself as sympy writes it, a nameless head inside it so too,
+        and any other operand in author notation."""
+        if self.depth and isinstance(expr, sp.Basic) and not _nameless(expr):
+            return write_expression(self.trees._print(expr))
+        self.depth += 1
+        try:
+            return super()._print(expr, **kwargs)
+        finally:
+            self.depth -= 1
+
+    def _print_Function(self, expr) -> str:
+        return f"{type(expr).__name__}({self.stringify(expr.args, ', ')})"
+
+
+def _nameless(expr: sp.Basic) -> bool:
+    """Whether the notation has no form for `expr`: a set, or a head with no name."""
+    if isinstance(expr, sp.Set):
+        return True
+    return isinstance(expr, sp.Function) and not _has_word(expr)

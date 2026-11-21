@@ -679,6 +679,13 @@ def _named(token: Token, word: tuple[str, int] | None = None) -> Token:
     return replace(token, word=word[0], word_end=word[1])
 
 
+def numeral_value(written: str, base: int) -> str:
+    """The value of the numeral `written` in `base`, as its token has it: its decimal
+    value as text (see `_number_value`)."""
+    integer, _, fraction = written.partition(".")
+    return _number_value(integer, fraction, base)
+
+
 def _number_value(integer: str, fraction: str, base: int) -> str:
     """The numeral's decimal value, as text.
 

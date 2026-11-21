@@ -304,7 +304,7 @@ async def test_a_save_writes_the_entries_not_the_library(session, tmp_path):
     await session.simplify("#1")
     session.save(tmp_path / "d.mth")
     assert (tmp_path / "d.mth").read_text() == (
-        "DIVISORS(28)\n\n;Simp(#1)\n[1,2,4,7,14,28]\n"
+        "DIVISORS(28)\n\n;Simp(#1)\n[1, 2, 4, 7, 14, 28]\n"
     )
     other = Session()
     other.load(tmp_path / "d.mth")
@@ -315,7 +315,7 @@ def test_a_redefinition_is_an_entry_and_is_saved(session, tmp_path):
     session.author("DIVISORS(n):=[n, 1]")
     session.author("DIVISORS(6)")
     session.save(tmp_path / "r.mth")
-    assert (tmp_path / "r.mth").read_text() == "DIVISORS(n):=[n,1]\n\nDIVISORS(6)\n"
+    assert (tmp_path / "r.mth").read_text() == "DIVISORS(n) := [n, 1]\n\nDIVISORS(6)\n"
 
 
 # -- reading names ------------------------------------------------------------------

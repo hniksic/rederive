@@ -71,13 +71,13 @@ class Blocking:
         await self._held()
         return computing.simplify(node, context, state)
 
-    async def factor(self, node, context, amount=None, variables=(), state=None):
+    async def factor(self, node, context, amount=None, variables=()):
         await self._held()
-        return computing.factor(node, context, amount, variables, state)
+        return computing.factor(node, context, amount, variables)
 
-    async def expand(self, node, context, amount=None, variables=(), state=None):
+    async def expand(self, node, context, amount=None, variables=()):
         await self._held()
-        return computing.expand(node, context, amount, variables, state)
+        return computing.expand(node, context, amount, variables)
 
     async def expression_variables(self, node, context=None, written=False):
         await self._held()
@@ -196,7 +196,7 @@ async def test_a_computation_holds_the_screen_and_says_how_long_it_has(
         assert await settle(pilot, lambda: "1m" in message(app))
         runner.release()
         assert await settle(pilot, lambda: app.mode == MODE_MENU)
-        assert entries(app) == ["1+1", "2"]
+        assert entries(app) == ["1 + 1", "2"]
         assert message(app).startswith("Compute time:")
 
 
@@ -223,10 +223,10 @@ async def test_no_key_but_escape_means_anything_while_one_runs(app, runner):
         await simplify(pilot, runner)
         await pilot.press("a", "tab", "down", "enter", "q")
         assert app.mode == MODE_COMPUTE
-        assert entries(app) == ["1+1"]
+        assert entries(app) == ["1 + 1"]
         runner.release()
         assert await settle(pilot, lambda: app.mode == MODE_MENU)
-        assert entries(app) == ["1+1", "2"]
+        assert entries(app) == ["1 + 1", "2"]
 
 
 async def test_escape_aborts_and_the_worksheet_is_as_the_command_found_it(app, runner):
@@ -236,7 +236,7 @@ async def test_escape_aborts_and_the_worksheet_is_as_the_command_found_it(app, r
         await pilot.press("escape")
         assert await settle(pilot, lambda: app.mode == MODE_MENU)
         assert message(app).startswith("Aborted after")
-        assert entries(app) == ["1+1"]
+        assert entries(app) == ["1 + 1"]
 
 
 async def test_a_command_after_an_abort_works(app, runner):
@@ -248,7 +248,7 @@ async def test_a_command_after_an_abort_works(app, runner):
         await simplify(pilot, runner)
         runner.release()
         assert await settle(pilot, lambda: app.mode == MODE_MENU)
-        assert entries(app) == ["1+1", "2"]
+        assert entries(app) == ["1 + 1", "2"]
         assert message(app).startswith("Compute time:")
 
 
@@ -276,10 +276,10 @@ async def test_control_enter_simplifies_what_it_entered_on_the_thread(app, runne
         await pilot.press("ctrl+j")
         assert await settle(pilot, runner.running.is_set)
         assert app.mode == MODE_COMPUTE
-        assert entries(app) == ["2+3"]
+        assert entries(app) == ["2 + 3"]
         runner.release()
         assert await settle(pilot, lambda: app.mode == MODE_MENU)
-        assert entries(app) == ["2+3", "5"]
+        assert entries(app) == ["2 + 3", "5"]
 
 
 @pytest.fixture
@@ -302,11 +302,11 @@ async def test_a_demonstration_waits_on_the_step_it_dispatched(app, runner, demo
         await pilot.press("enter")
         assert await settle(pilot, runner.running.is_set)
         assert app.mode == MODE_COMPUTE
-        assert entries(app) == ["2+3"]
+        assert entries(app) == ["2 + 3"]
         runner.release()
         waiting = "Press any key to continue, ESC to stop"
         assert await settle(pilot, lambda: message(app) == waiting)
-        assert entries(app) == ["2+3", "5"]
+        assert entries(app) == ["2 + 3", "5"]
 
 
 async def test_an_abort_ends_the_demonstration_where_it_stands(app, runner, demo):
@@ -318,7 +318,7 @@ async def test_an_abort_ends_the_demonstration_where_it_stands(app, runner, demo
         await pilot.press("escape")
         assert await settle(pilot, lambda: app.mode == MODE_MENU)
         assert message(app).startswith("Aborted after")
-        assert entries(app) == ["2+3"]
+        assert entries(app) == ["2 + 3"]
         # The demo is suspended, not lost: naming the file again resumes it.
         await pilot.press("t", "d", "o")
         await pilot.press(*demo.name)
@@ -327,7 +327,7 @@ async def test_an_abort_ends_the_demonstration_where_it_stands(app, runner, demo
         runner.release()
         waiting = "Press any key to continue, ESC to stop"
         assert await settle(pilot, lambda: message(app) == waiting)
-        assert entries(app) == ["2+3", "(x+1)^2", "(x + 1)^2"]
+        assert entries(app) == ["2 + 3", "(x + 1)^2", "(x + 1)^2"]
 
 
 async def test_control_enter_aborted_leaves_what_it_entered_standing(app, runner):
@@ -338,7 +338,7 @@ async def test_control_enter_aborted_leaves_what_it_entered_standing(app, runner
         assert await settle(pilot, runner.running.is_set)
         await pilot.press("escape")
         assert await settle(pilot, lambda: app.mode == MODE_MENU)
-        assert entries(app) == ["2+3"]
+        assert entries(app) == ["2 + 3"]
         assert message(app).startswith("Aborted after")
 
 
@@ -368,6 +368,6 @@ async def test_what_a_program_writes_is_on_the_message_line():
         await simplify(pilot, runner)
         runner.release()
         assert await settle(pilot, lambda: app.mode == MODE_MENU)
-        assert entries(app) == ["PROG(WRITE(7),DISPLAY(5),8)", '"5"', "8"]
+        assert entries(app) == ["PROG(WRITE(7), DISPLAY(5), 8)", '"5"', "8"]
         assert message(app) == "7"
         assert await settle(pilot, lambda: shown == ["7", "5"])

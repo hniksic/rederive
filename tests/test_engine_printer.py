@@ -18,6 +18,8 @@ from rederive.engine.evaluate import Suspended, released
 from rederive.engine.printer import numeral
 from rederive.engine.to_sympy import (
     Assign,
+    InOrder,
+    InOrderOr,
     ColumnsOf,
     CrossProduct,
     Declare,
@@ -186,14 +188,28 @@ def test_the_operands_of_a_commutative_operator_are_put_in_order():
     negated first on a tie. `IMP` is not commutative and keeps its order."""
     p, q, r, s = sp.symbols("p q r s")
     assert written(sp.Or(r, q, p)) == "p OR q OR r"
-    assert written(sp.Or(sp.And(s, r), sp.And(q, p))) == "(p AND q) OR (r AND s)"
+    assert written(sp.Or(sp.And(s, r), sp.And(q, p))) == "p AND q OR r AND s"
     assert written(sp.Or(q, sp.Not(p))) == "NOT p OR q"
     assert written(sp.Or(sp.And(p, q), sp.And(sp.Not(p), r))) == (
-        "(NOT p AND r) OR (p AND q)"
+        "NOT p AND r OR p AND q"
     )
     # Variables in the order list come first, the rest alphabetically.
     assert written(sp.And(*sp.symbols("a z x"))) == "x AND z AND a"
     assert written(sp.Implies(q, p)) == "q IMP p"
+
+
+def test_a_logical_operand_is_parenthesized_where_precedence_needs_it():
+    """A conjunction inside a disjunction needs no parentheses, since `AND` binds more
+    tightly; a disjunction inside a conjunction does, as do the solver's conjunctions
+    and disjunctions kept in order, which would otherwise read as another formula."""
+    x, y, a, b = sp.symbols("x y a b")
+    either = InOrderOr(sp.Eq(x, -2), sp.Eq(x, 2))
+    assert written(InOrder(either, sp.Eq(a, b))) == (
+        "(x = -2 OR x = 2) AND a = b"
+    )
+    both = InOrder(sp.Eq(x, -2), sp.Eq(a, b))
+    assert written(sp.Or(both, sp.Eq(y, 2))) == "x = -2 AND a = b OR y = 2"
+    assert written(sp.And(sp.Or(a, b), x)) == "x AND (a OR b)"
 
 
 def test_the_terms_of_a_sum_are_put_in_order():
@@ -455,19 +471,14 @@ def test_a_special_function_is_written_under_its_name_and_reads_back(
     assert reread(expression) == expression
 
 
-def test_a_multi_character_name_reads_back_as_one_name():
-    # In Character mode `tera` is four factors unless declared; the state `from_sympy`
-    # builds declares it.
+def test_a_multi_character_name_is_one_name():
+    # In Character mode `tera` typed undeclared is four factors; the answer's is one
+    # name.
     result = from_sympy(sp.Symbol("tera", real=True) * 2)
     assert result.text == "2*tera"
     assert to_sympy(result.node) == sp.Symbol("tera", real=True) * 2
 
 
-def test_a_caller_may_supply_the_parse_state():
-    state = ParseState()
-    from_sympy(sp.Symbol("kilo", real=True), Context(), state)
-    # The caller's state is used as given, not replaced.
-    assert "kilo" not in state.variables
 
 
 # -- what `.doit()` can hand back --------------------------------------------
@@ -637,18 +648,13 @@ def test_what_doit_hands_back_reads_back(expression):
     assert from_sympy(to_sympy(result.node)).text == result.text
 
 
-def test_a_supplied_state_learns_the_names_only_the_answer_uses():
-    """Names that appear only in the answer are declared in a copy of the caller's state.
-
-    An answer can contain a name never typed on the worksheet, and in Character mode
-    `k1` is `k*1` unless declared. The engine must not modify the caller's state.
-    """
-    state = ParseState()
+def test_a_name_only_the_answer_uses_is_one_name():
+    """An answer can contain a name never typed on the worksheet, which in Character
+    mode `k1` would be `k*1` typed undeclared; in the answer it is one name."""
     invented = sp.Symbol("k1", real=True) * 2
-    result = from_sympy(invented, Context(), state)
+    result = from_sympy(invented, Context())
     assert result.text == "2*k1"
     assert to_sympy(result.node) == sp.Symbol("k1", real=True) * 2
-    assert "k1" not in state.variables
 
 
 # -- suspended conditionals ----------------------------------------------------

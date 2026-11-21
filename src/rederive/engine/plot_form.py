@@ -133,7 +133,7 @@ def _as_evaluated(node: Node, context: Context) -> PlotForm:
         return _pointwise(node, context)
     return PlotForm(
         node,
-        write_expression(node, spaced=True),
+        write_expression(node),
         variables=main_order(variables_in(value, inert), context.order),
         relation=relation_in(value),
     )
@@ -168,7 +168,7 @@ def _pointwise(node: Node, context: Context) -> PlotForm:
     names = set(variables_in(value, inert)) | (_written_names(node, context) - inert)
     return PlotForm(
         node,
-        write_expression(node, spaced=True),
+        write_expression(node),
         variables=main_order(list(names), context.order),
         relation=relation_in(value),
         pointwise=True,

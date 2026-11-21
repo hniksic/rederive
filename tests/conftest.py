@@ -51,10 +51,10 @@ def _record():
 def answers_stay_readable():
     """Fail any test that produces an answer not expressible in author notation.
 
-    A result reaches the worksheet by being printed and parsed back, and one the parser
-    can't read is kept as inert text. That's the right fallback for an unforeseen head,
-    but it must not go unnoticed: `RootSum` and `AccumBounds` both slipped through this
-    way, since a dead result looks like a live one.
+    A head the notation has no name for is written as inert text. That's the right
+    fallback for an unforeseen head, but it must not go unnoticed: `RootSum` and
+    `AccumBounds` both slipped through this way, since a dead result looks like a live
+    one.
 
     Checking every test covers what a dedicated corpus would (the shipped library and
     parser cases already run through Simplify in `test_simplify_corpus.py`, and

@@ -130,7 +130,7 @@ async def test_defaults_answered_no_changes_nothing(app):
         await options(pilot, "d")
         await pilot.press("n")
         assert app.settings["Angle"] == "Degree"
-        assert entries(app) == ["Angle:=Degree"]
+        assert entries(app) == ["Angle := Degree"]
 
 
 async def test_escape_leaves_the_settings_alone(app):

@@ -89,21 +89,22 @@ def test_the_whole_part_survives_any_digit_count(digits: int, expected: str) -> 
 @pytest.mark.parametrize(
     ("value", "expected"),
     [
-        (Fraction(123456789, 10000), "1.23456*10^4"),
-        (Fraction(1, 2**100), "7.88860*10^-31"),
-        (Fraction(2**100), "1.26765*10^30"),
-        (Fraction(123456789), "1.23456*10^8"),
+        (Fraction(123456789, 10000), ("1.23456", 4)),
+        (Fraction(1, 2**100), ("7.88860", -31)),
+        (Fraction(2**100), ("1.26765", 30)),
+        (Fraction(123456789), ("1.23456", 8)),
         # A mantissa of one is dropped.
-        (Fraction(1, 10**6), "10^-6"),
-        (Fraction(10000), "10^4"),
-        (Fraction(20000), "2*10^4"),
-        (Fraction(12345), "1.2345*10^4"),
-        (Fraction(200011, 20), "1.00005*10^4"),
-        (Fraction(0), "0"),
-        (Fraction(-15, 10) * 10**7, "-1.5*10^7"),
+        (Fraction(1, 10**6), ("", -6)),
+        (Fraction(-1, 10**6), ("-", -6)),
+        (Fraction(10000), ("", 4)),
+        (Fraction(20000), ("2", 4)),
+        (Fraction(12345), ("1.2345", 4)),
+        (Fraction(200011, 20), ("1.00005", 4)),
+        (Fraction(0), ("0", None)),
+        (Fraction(-15, 10) * 10**7, ("-1.5", 7)),
     ],
 )
-def test_scientific(value: Fraction, expected: str) -> None:
+def test_scientific(value: Fraction, expected: tuple[str, int | None]) -> None:
     assert scientific(value, 6) == expected
 
 
@@ -116,7 +117,7 @@ def test_where_scientific_takes_over(digits: int, power: int) -> None:
     `1234.5` is still written plainly, with one more integer digit than allowed.
     """
     value = Fraction(123456789, 10**8) * Fraction(10) ** power
-    plain = "*" not in scientific(value, digits)
+    plain = scientific(value, digits)[1] is None
     assert plain == (-4 <= power <= 3)
 
 

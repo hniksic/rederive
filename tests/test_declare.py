@@ -86,7 +86,7 @@ async def test_the_default_domain_stands_for_every_variable_nobody_named(session
 
 async def test_a_value_is_written_as_an_assignment(session):
     entry = session.declare_value("area", "pi r^2")
-    assert entry.text == "area:=pi*r^2"
+    assert entry.text == "area := pi*r^2"
     assert entry.layout.lines == ("           2", "area := π·r ")
     session.author("2 area")
     assert (await session.simplify("#2")).text == "2*pi*r^2"
@@ -94,7 +94,7 @@ async def test_a_value_is_written_as_an_assignment(session):
 
 def test_a_blank_value_leaves_the_name_an_unassigned_variable(session):
     session.declare_value("area", "pi r^2")
-    assert session.declare_value("area").text == "area:="
+    assert session.declare_value("area").text == "area :="
     assert session.assignments == {}
 
 
@@ -112,7 +112,7 @@ async def test_an_assignment_overrides_a_domain_declaration(session):
 
 async def test_the_definitions_own_variables_become_the_parameters(session):
     entry = session.declare_function("hyp", "sqrt(a^2 + b^2)")
-    assert entry.text == "hyp(a,b):=SQRT(a^2+b^2)"
+    assert entry.text == "hyp(a, b) := SQRT(a^2 + b^2)"
     # The name keeps the spelling it was declared with; the built-in is upper case.
     assert entry.layout.lines[-1] == "hyp(a, b) := √(a  + b )"
     # Another case spelling finds it, as no other name is spelled so.
@@ -134,34 +134,34 @@ def test_the_parameters_become_variables_without_values(session):
 def test_the_parameters_are_ordered_most_main_first(session):
     """`x`, `y` and `z` are the order list; the rest follow alphabetically."""
     assert session.declare_function("p", "y + a + x + z + b").text.startswith(
-        "p(x,y,z,a,b):="
+        "p(x, y, z, a, b) :="
     )
 
 
 def test_a_variable_with_a_value_is_still_a_variable(session):
     session.declare_value("k", "5")
-    assert session.declare_function("q", "k + z + m").text.startswith("q(z,k,m):=")
+    assert session.declare_function("q", "k + z + m").text.startswith("q(z, k, m) :=")
 
 
 def test_a_constant_and_a_function_are_not_variables(session):
-    assert session.declare_function("f", "pi SIN(x)").text.startswith("f(x):=")
+    assert session.declare_function("f", "pi SIN(x)").text.startswith("f(x) :=")
 
 
 def test_a_definition_with_no_variables_defines_no_function(session):
     """The original writes such a definition as a variable with a value."""
-    assert session.declare_function("q", "5").text == "q:=5"
+    assert session.declare_function("q", "5").text == "q := 5"
     assert session.assignments["q"].value == "5"
 
 
 def test_an_arbitrary_function_is_its_parameters_and_no_body(session):
     entry = session.declare_arbitrary("f", ("x", "y"))
-    assert entry.text == "f(x,y):="
+    assert entry.text == "f(x, y) :="
     assert entry.layout.lines == ("f(x, y) :=",)
     assert "f" in session.functions or session.state.functions["f"].params == ("x", "y")
 
 
 def test_an_arbitrary_function_with_no_parameters_is_a_variable(session):
-    assert session.declare_arbitrary("g", ()).text == "g:="
+    assert session.declare_arbitrary("g", ()).text == "g :="
     assert "g" not in session.state.functions
 
 
@@ -170,13 +170,13 @@ def test_an_arbitrary_function_with_no_parameters_is_a_variable(session):
 
 def test_a_vector_is_its_elements_between_brackets(session):
     entry = session.declare_vector(("1", "2", "x"))
-    assert entry.text == "[1,2,x]"
+    assert entry.text == "[1, 2, x]"
     assert entry.layout.lines == ("[1, 2, x]",)
 
 
 def test_a_matrix_is_a_vector_of_rows(session):
     entry = session.declare_matrix((("1", "2", "3"), ("4", "5", "6")))
-    assert entry.text == "[[1,2,3],[4,5,6]]"
+    assert entry.text == "[[1, 2, 3], [4, 5, 6]]"
     assert entry.layout.lines == ("┌ 1  2  3 ┐", "│         │", "└ 4  5  6 ┘")
 
 

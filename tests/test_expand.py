@@ -138,7 +138,7 @@ def test_a_head_that_binds_a_variable_comes_through_as_itself():
     state = ParseState()
     state.declare(FunctionDeclaration("G", ("y", "z")))
     text = "DIF(LIM(G(y, z), y, 2*x - y), y)"
-    answer = expand(parse(text, state), Context(), RATIONAL, (), state).text
+    answer = expand(parse(text, state), Context(), RATIONAL, ()).text
     assert answer == simplify(parse(text, state), Context(), state).text
     assert "SUBS(DIF(G(x_, z), x_), [x_], [2*x - y])" in answer
 
@@ -374,13 +374,13 @@ def test_simplify_evaluates_an_expand_head(text, expected):
     ("text", "expected"),
     [
         # A logical expression expands to its disjunctive normal form.
-        ("EXPAND(p AND (q OR r))", "(p AND q) OR (p AND r)"),
+        ("EXPAND(p AND (q OR r))", "p AND q OR p AND r"),
         (
             "EXPAND((x = -1772148577 OR x = 1772148577) AND (y = -159789256 OR y = "
             "159789256))",
-            "(x = -1772148577 AND y = -159789256) OR (x = -1772148577 AND y = "
-            "159789256) OR (x = 1772148577 AND y = -159789256) OR (x = 1772148577 AND "
-            "y = 159789256)",
+            "x = -1772148577 AND y = -159789256 OR x = -1772148577 AND y = "
+            "159789256 OR x = 1772148577 AND y = -159789256 OR x = 1772148577 AND "
+            "y = 159789256",
         ),
         ("TERMS(p AND (q OR r))", "[p AND q, p AND r]"),
         # The terms in a variable are its powers, the zeroth too: those free of it are

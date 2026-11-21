@@ -143,7 +143,7 @@ async def test_sumfact_a_program_saved_with_blank_separated_products(session, tm
     )
     assert not session.load(sheet.write(tmp_path / "sumfact.dfw"))
     assert "RETURN(#e^x*s)" in body(session, "sumfactpow")
-    assert "s:+a*x^n" in body(session, "sumfactpow")
+    assert "s :+ a*x^n" in body(session, "sumfactpow")
     assert await simplified(session, "sumfactpow(k^2 + 1, k, y)") == (
         "(y^2 + y + 1)*#e^y"
     )
@@ -320,8 +320,9 @@ async def test_example_a_worksheet_named_as_a_math_file(session, tmp_path):
     assert not session.load(path)
     assert session.file is None
     assert len(session.entries) == 4
-    assert body(session, "f") == "2*SIN(3*t)-4*COS(8*t)+5*SIN(15*t)+3"
-    assert write_expression(session.assignments["data"]) == "VECTOR(f(2*pi/64*k),k,0,63)"
+    assert body(session, "f") == "2*SIN(3*t) - 4*COS(8*t) + 5*SIN(15*t) + 3"
+    data = write_expression(session.assignments["data"])
+    assert data == "VECTOR(f(2*pi/64*k), k, 0, 63)"
     assert "FASTF" not in session.functions
     math_file(folder / "Fastf.mth", "FASTF(x):=x")
     assert await simplified(session, "#3") == "true"
@@ -339,7 +340,7 @@ def test_spheres_a_minimal_version_6_worksheet(session, tmp_path):
     )
     sheet.expression("(x^2+y^2+z^2-1)*(x^2+y^2+z^2+4*z+3)", "Simp(#1)")
     assert not session.load(sheet.write(tmp_path / "spheres.dfw"))
-    assert texts(session)[1] == "(x^2+y^2+z^2-1)*(x^2+y^2+z^2+4*z+3)"
+    assert texts(session)[1] == "(x^2 + y^2 + z^2 - 1)*(x^2 + y^2 + z^2 + 4*z + 3)"
     assert annotations(session) == ["User", "Simp(#1)"]
     assert session.settings["CaseMode"] == "Insensitive"
 
@@ -353,7 +354,9 @@ def test_dug9_setting_objects_and_case_sensitive_names(session, tmp_path):
     assert not session.load(sheet.write(tmp_path / "DUG9.dfw"))
     assert session.settings["CaseMode"] == "Sensitive"
     assert session.settings["InputMode"] == "Word"
-    assert texts(session)[3] == "[(p1-p1q2-p1q3)/Rp1q1+p2q1/Rp2q1+p3q1/Rp3q1+q1=0]"
+    assert texts(session)[3] == (
+        "[(p1 - p1q2 - p1q3)/Rp1q1 + p2q1/Rp2q1 + p3q1/Rp3q1 + q1 = 0]"
+    )
     assert {"Rp1q1", "p1q2", "q1"} <= names_in(session.entries[3].node)
 
 
@@ -657,7 +660,7 @@ async def test_induction_1_names_that_differ_only_in_case(session, tmp_path):
     assert {"S", "s", "T"} <= set(session.functions)
     assert await simplified(session, "S(3)") == "36"
     assert await simplified(session, "s(3)") == "36"
-    assert body(session, "S") == "SUM(r^3,r,1,n)"
+    assert body(session, "S") == "SUM(r^3, r, 1, n)"
 
 
 async def test_col_pade_a_compressed_state_with_a_program(session, tmp_path):
@@ -869,7 +872,7 @@ def test_logarithmic_spiral_settings_domains_and_wrapped_escapes(session, tmp_pa
     assert domain.kind is DomainKind.REAL and domain.closed_low and domain.closed_high
     assert write_expression(domain.high) == "+pi"
     assert session.functions["SpiralTorusYZ_U"].names == ("b", "m", "θ", "φ")
-    assert "SIN(2*pi*θ)" in body(session, "SpiralTorusYZ_U")
+    assert "SIN(2*pi*theta)" in body(session, "SpiralTorusYZ_U")
     assert session.settings["PrecisionDigits"] == 64
     assert "h" in session.functions
 
@@ -924,7 +927,9 @@ def test_circles_a_settings_block_with_numbers_for_the_radix(session, tmp_path):
     assert session.settings.base("OutputBase") == 10
     assert session.settings["InputMode"] == "Character"
     assert '"Circles1"' in texts(session)
-    assert texts(session)[-1] == "VECTOR(VECTOR(SQRT(1-(x+5-2*a)^2)-5+2*b,a,0,5),b,0,5)"
+    assert texts(session)[-1] == (
+        "VECTOR(VECTOR(SQRT(1 - (x + 5 - 2*a)^2) - 5 + 2*b, a, 0, 5), b, 0, 5)"
+    )
 
 
 def test_f_n1_strings_of_a_tilde_and_a_backslash(session, tmp_path):

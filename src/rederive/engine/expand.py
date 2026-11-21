@@ -30,7 +30,6 @@ from rederive.engine.printer import shadowing_built_ins
 from rederive.engine.approximation import approximated, noting_approximations
 from rederive.engine.pipeline import simplified, top_level_equation
 from rederive.model.expr import Node
-from rederive.syntax.state import ParseState
 
 __all__ = ["expand", "expanded"]
 
@@ -43,13 +42,10 @@ def expand(
     context: Context | None = None,
     amount: Amount = DEFAULT_AMOUNT,
     variables: Sequence[str] = (),
-    state: ParseState | None = None,
 ) -> Result:
     """Derive's Expand: `node` written as a sum.
 
     `variables` names the expansion variables in the order chosen, empty meaning all.
-    `state` is the symbol table used to reparse the answer; a session in a non-default
-    input or case mode must pass its own.
 
     As in Derive, the expansion variables temporarily override the order list: expanding
     `(x + 2*y + 1)^3` about `y` then `x` gives a polynomial led by `8*y^3`, about `x`
@@ -57,7 +53,7 @@ def expand(
     """
     context = (context or Context()).fresh()
     answer = expanded(node, context, amount, variables)
-    return from_sympy(answer, _about(context, variables), state)
+    return from_sympy(answer, _about(context, variables))
 
 
 def _about(context: Context, variables: Sequence[str]) -> Context:

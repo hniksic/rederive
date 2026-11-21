@@ -520,12 +520,6 @@ class Context:
     trigpower: TrigPower = TrigPower.AUTO
     angle: Angle = Angle.RADIAN
     input_base: int = 10
-    case_sensitive: bool = False
-    """Whether `CaseMode := Sensitive` is in force, so `p` and `P` are two variables.
-
-    The engine reads its own intermediate values back as text (see `from_sympy`), and
-    must then tell them apart as the session does.
-    """
     order: tuple[str, ...] = ORDER_LIST
     """The variable order list, most main first, as set by `Manage Ordering`.
 
@@ -749,7 +743,6 @@ def _fields_of(settings: Settings) -> dict[str, Any]:
         trigpower=_setting(settings, "Trigpower", TrigPower, TrigPower.AUTO),
         angle=_setting(settings, "Angle", Angle, Angle.RADIAN),
         input_base=settings.base("InputBase"),
-        case_sensitive=str(settings["CaseMode"]).lower() == "sensitive",
     )
 
 

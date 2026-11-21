@@ -271,7 +271,7 @@ async def test_renumber_moves_a_reference_inside_an_expression(session):
     session.remove(2, 2)
     session.author("#3 + 1")
     session.renumber()
-    assert labels(session) == ["#1: x", "#2: z", "#3: #2+1"]
+    assert labels(session) == ["#1: x", "#2: z", "#3: #2 + 1"]
     # It still refers to the same expression.
     assert (await session.simplify("#3")).text == "z + 1"
 
@@ -408,7 +408,7 @@ def test_an_annotation_is_written_above_the_expression_it_belongs_to(
     session.annotate(1, "Kirchhoff")
     file = tmp_path / "sheet.mth"
     session.save(file)
-    assert file.read_text().splitlines()[:2] == [";Kirchhoff", "x+1"]
+    assert file.read_text().splitlines()[:2] == [";Kirchhoff", "x + 1"]
 
 
 def test_an_annotation_read_back_is_the_one_that_was_written(session, tmp_path):
@@ -502,7 +502,7 @@ async def test_the_order_list_reaches_the_variables_factor_offers(app):
 def test_the_order_list_decides_a_declared_functions_parameters(session):
     session.order = ("y", "x", "z")
     entry = session.declare_function("F", "x^2 + y")
-    assert entry.text == "F(y,x):=x^2+y"
+    assert entry.text == "F(y, x) := x^2 + y"
 
 
 # -- Manage Substitute -------------------------------------------------------
@@ -523,43 +523,43 @@ def test_a_value_is_written_in_for_each_variable(session):
     authored(session, "a x^2 + b x + c")
     entry = session.substitute("#1", {"x": "2", "a": "3", "b": "5", "c": "c"})
     # Left unsimplified; Simplify would give 22.
-    assert entry.text == "3*2^2+5*2+c"
+    assert entry.text == "3*2^2 + 5*2 + c"
     assert entry.annotation == "Sub(#1)"
 
 
 def test_an_expression_may_be_written_in_as_well_as_a_number(session):
     authored(session, "a x^2 + b x + c")
-    assert session.substitute("#1", {"x": "x + 1"}).text == "a*(x+1)^2+b*(x+1)+c"
+    assert session.substitute("#1", {"x": "x + 1"}).text == "a*(x + 1)^2 + b*(x + 1) + c"
 
 
 def test_the_substitutions_all_go_in_at_once(session):
     """Substitutions are simultaneous, so swapping `x` and `y` really swaps them."""
     authored(session, "x + 2 y")
-    assert session.substitute("#1", {"x": "y", "y": "x"}).text == "y+2*x"
+    assert session.substitute("#1", {"x": "y", "y": "x"}).text == "y + 2*x"
 
 
 def test_two_variables_are_interchanged_wherever_they_stand(session):
     authored(session, "a x^2 + b x + c")
-    assert session.substitute("#1", {"a": "c", "c": "a"}).text == "c*x^2+b*x+a"
+    assert session.substitute("#1", {"a": "c", "c": "a"}).text == "c*x^2 + b*x + a"
 
 
 def test_a_variable_answered_with_its_own_name_is_left_alone(session):
     authored(session, "a x^2 + b x + c")
-    assert session.substitute("#1", {"x": "2", "a": "a"}).text == "a*2^2+b*2+c"
+    assert session.substitute("#1", {"x": "2", "a": "a"}).text == "a*2^2 + b*2 + c"
 
 
 def test_a_blank_value_leaves_its_variable_alone(session):
     authored(session, "a x + b")
-    assert session.substitute("#1", {"a": "", "b": "2"}).text == "a*x+2"
+    assert session.substitute("#1", {"a": "", "b": "2"}).text == "a*x + 2"
 
 
 def test_nothing_to_write_in_writes_the_expression_out_again(session):
     authored(session, "2 + 3")
-    assert session.substitute("#1", {}).text == "2+3"
+    assert session.substitute("#1", {}).text == "2 + 3"
 
 
 def test_a_typed_expression_is_substituted_into_as_the_users_own(session):
-    assert session.substitute("x + 1", {"x": "5"}).text == "5+1"
+    assert session.substitute("x + 1", {"x": "5"}).text == "5 + 1"
     assert session.entries[-1].annotation == "Sub(User)"
 
 
@@ -585,7 +585,7 @@ def test_every_match_of_the_highlighted_part_is_replaced(session):
     authored(session, "3 SQRT(x^2 + y^2)/(2 + SQRT(x^2 + y^2))")
     assert highlight(session, "right").kind == "product"
     entry = session.substitute_part("#1", "r")
-    assert entry.text == "r/(2+SQRT(x^2+y^2))"
+    assert entry.text == "r/(2 + SQRT(x^2 + y^2))"
     # No quote on the label: the result derives from the whole entry.
     assert entry.annotation == "Sub(#1)"
 
@@ -594,26 +594,26 @@ def test_a_match_is_the_whole_subexpression_and_not_a_part_of_one(session):
     """`k` for `t^3` gives `t^6 + k`, not `k^2 + k`: only whole subexpressions match."""
     authored(session, "t^6 + t^3")
     assert highlight(session, "right", "right").value == "^"
-    assert session.substitute_part("#1", "k").text == "t^6+k"
+    assert session.substitute_part("#1", "k").text == "t^6 + k"
 
 
 def test_the_same_subexpression_is_replaced_wherever_it_stands(session):
     authored(session, "(x + 1) y + (x + 1)")
     highlight(session, "right", "right")
-    assert session.substitute_part("#1", "u").text == "u*y+u"
+    assert session.substitute_part("#1", "u").text == "u*y + u"
 
 
 def test_a_match_is_of_the_expression_and_not_of_how_it_was_written(session):
     """`2 x` and `2*x` are the same tree, so both match."""
     authored(session, "2 x + 2*x")
     highlight(session, "right")
-    assert session.substitute_part("#1", "u").text == "u+u"
+    assert session.substitute_part("#1", "u").text == "u + u"
 
 
 def test_a_blank_replacement_writes_nothing_in(session):
     authored(session, "t^6 + t^3")
     highlight(session, "right", "right")
-    assert session.substitute_part("#1", "").text == "t^6+t^3"
+    assert session.substitute_part("#1", "").text == "t^6 + t^3"
 
 
 def test_a_highlighted_part_is_what_makes_the_command_ask_once(session):
@@ -651,7 +651,7 @@ async def test_substitute_asks_for_the_expression_and_then_for_each_variable(app
         assert prompt(app) == ("MANAGE SUBSTITUTE value:", "c")
         # Enter on the offered name leaves that variable unchanged.
         await pilot.press("enter")
-        assert entries(app)[-1] == "3*2^2+5*2+c"
+        assert entries(app)[-1] == "3*2^2 + 5*2 + c"
         assert annotation(app) == "Sub(#1)"
         assert message(app).startswith("Compute time:")
         assert highlighted(app) == "Author"
@@ -676,7 +676,7 @@ async def test_a_subexpression_is_asked_about_once_and_offered_nothing(app):
         assert prompt(app) == ("MANAGE SUBSTITUTE value:", "")
         assert message(app) == "Enter replacement for subexpression"
         await pilot.press(*"k", "enter")
-        assert entries(app)[-1] == "t^6+k"
+        assert entries(app)[-1] == "t^6 + k"
         assert annotation(app) == "Sub(#1)"
 
 
@@ -686,7 +686,7 @@ async def test_an_expression_with_nothing_in_it_to_replace_asks_nothing(app):
     async with app.run_test() as pilot:
         await pilot.press("a", *"2 + 3", "enter")
         await manage(pilot, "s", "enter")
-        assert entries(app) == ["2+3"]
+        assert entries(app) == ["2 + 3"]
         assert band(app)[0].startswith(" MANAGE: ")
 
 
@@ -698,7 +698,7 @@ async def test_ctrl_enter_simplifies_what_was_substituted(app):
         await manage(pilot, "s", "enter", *"2", "enter", *"3", "enter")
         await pilot.press(*"5", "enter", *"0")
         await pilot.press("ctrl+j")
-        assert entries(app)[-2:] == ["3*2^2+5*2+0", "22"]
+        assert entries(app)[-2:] == ["3*2^2 + 5*2 + 0", "22"]
         assert annotations(app.session)[-2:] == ["Sub(#1)", "Simp(#2)"]
 
 
@@ -708,7 +708,7 @@ async def test_a_value_that_does_not_read_leaves_the_line_up(app):
         await manage(pilot, "s", "enter")
         await pilot.press(*"2 +", "enter")
         assert message(app) == "Syntax error detected at cursor"
-        assert entries(app) == ["x+1"]
+        assert entries(app) == ["x + 1"]
         assert prompt(app) == ("MANAGE SUBSTITUTE value:", "2 +")
 
 
@@ -720,7 +720,7 @@ async def test_escape_abandons_substitute_from_either_question(app, keys, step):
         await pilot.press("a", *"x + 1", "enter")
         await manage(pilot, *keys)
         await pilot.press("escape")
-        assert entries(app) == ["x+1"]
+        assert entries(app) == ["x + 1"]
         assert app.substituting is None
         # One Esc returns to the Manage menu, as from any of its prompts.
         assert band(app)[0].startswith(" MANAGE: ")

@@ -635,7 +635,7 @@ async def test_a_click_steps_a_demonstration(app, tmp_path):
         assert band(app) == [" adds two numbers"]
         await pilot.click(content(app), offset=(2, 0))
         assert band(app) == [" and a symbolic one"]
-        assert entries(app) == ["2+3", "5", "(x+1)^2", "(x + 1)^2"]
+        assert entries(app) == ["2 + 3", "5", "(x + 1)^2", "(x + 1)^2"]
 
 
 # -- copying -------------------------------------------------------------------
@@ -653,7 +653,7 @@ async def test_a_drag_over_the_pane_selects_nothing(app):
         await pilot.mouse_up(pane, offset=(5, 0))
         assert not app.screen.get_selected_text()
         await pilot.press("ctrl+c")
-        assert app.clipboard == "x+1"
+        assert app.clipboard == "x + 1"
         assert message(app) == COPIED
 
 
@@ -704,4 +704,4 @@ async def test_a_click_says_nothing_while_a_computation_runs():
         assert app.mode == MODE_COMPUTE
         runner.release()
         assert await settle(pilot, lambda: app.mode != MODE_COMPUTE)
-        assert entries(app) == ["1+1", "2"]
+        assert entries(app) == ["1 + 1", "2"]

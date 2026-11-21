@@ -87,7 +87,7 @@ def test_a_localized_or_one_line_simplification_counts_as_typed(session, file):
     sheet.expression("b", "Simp(User)").write(file)
     session.load(file)
     assert annotations(session) == ["User", "User", "Simp(User)"]
-    assert texts(session) == ["a", "2+3=5", "b"]
+    assert texts(session) == ["a", "2 + 3 = 5", "b"]
 
 
 def test_text_becomes_a_string_per_paragraph(session, file):
@@ -107,7 +107,7 @@ def test_label_references_follow_expressions_past_the_text(session, file):
     sheet = Sheet().text(r"{\rtf1 Title\par}").expression("x^2")
     sheet.expression("#1+1").expression("x^2+1", "Simp(#2)").write(file)
     session.load(file)
-    assert texts(session) == ['"Title"', "x^2", "#2+1", "x^2+1"]
+    assert texts(session) == ['"Title"', "x^2", "#2 + 1", "x^2 + 1"]
     assert annotations(session)[3] == "Simp(#3)"
 
 
@@ -115,14 +115,14 @@ def test_merging_numbers_the_worksheet_after_what_is_there(session, file):
     session.author("y")
     Sheet().expression("x").expression("#1+1").write(file)
     session.merge(file)
-    assert texts(session) == ["y", "x", "#2+1"]
+    assert texts(session) == ["y", "x", "#2 + 1"]
 
 
 def test_a_utf16_annotation_and_expression_are_read(session, file):
     Sheet().expression("λ+1", "Benutzer", wide=True).write(file)
     session.load(file)
     # An entry's text spells a Greek letter by name.
-    assert texts(session) == ["lambda+1"]
+    assert texts(session) == ["lambda + 1"]
     assert annotations(session) == ["User"]
 
 
@@ -142,13 +142,13 @@ def test_derive_6_characters_in_an_expression_are_read(session, file):
     """Version 6 escapes what code page 1252 lacks, and has its own `#e` and `#i`."""
     Sheet().expression(b"\x7fe7c0^(\x7fe7c1\x7f00b7x)+\x7f221a2").write(file)
     session.load(file)
-    assert texts(session) == ["#e^(#i*x)+SQRT(2)"]
+    assert texts(session) == ["#e^(#i*x) + SQRT(2)"]
 
 
 def test_derive_5_codes_in_an_expression_are_read(session, file):
     Sheet(OLD).expression(b"v\x99 2\x93\xb9").write(file)
     session.load(file)
-    assert texts(session) == ["v SUB 2<=pi"]
+    assert texts(session) == ["v SUB 2 <= pi"]
 
 
 def test_derive_5_greek_letters_in_the_state_are_the_names_derive_6_saves(session, file):
@@ -180,7 +180,7 @@ def test_derive_5_sharp_s_in_a_word_or_string_is_a_sharp_s(session, file):
     user typed, not beta."""
     Sheet(OLD).expression(b'["gr\xf6\xdfter Wert:", \xdf0_]').write(file)
     session.load(file)
-    assert texts(session) == ['["größter Wert:",β0_]']
+    assert texts(session) == ['["größter Wert:", β0_]']
 
 
 def test_plots_and_embedded_objects_are_left_out_and_counted(session, file):
@@ -280,7 +280,7 @@ def test_the_saved_settings_apply_before_the_definitions(session, file):
     Sheet(state=["A:=1", "a:=2", "CaseMode:=Sensitive"]).expression("A+a").write(file)
     assert not session.load(file)
     assert session.assignments.keys() >= {"A", "a"}
-    assert texts(session) == ["A+a"]
+    assert texts(session) == ["A + a"]
 
 
 async def test_a_definition_may_use_a_function_defined_further_down(session, file):
@@ -332,7 +332,7 @@ async def test_a_function_name_beside_an_operand_in_the_state_multiplies(session
     product a call."""
     Sheet(state=["g(x):=k x + d", "k(x):=x^2"]).write(file)
     assert not session.load(file)
-    assert write_expression(session.functions["g"].body) == "k*x+d"
+    assert write_expression(session.functions["g"].body) == "k*x + d"
     assert (await session.simplify("k(3)")).text == "9"
 
 
@@ -397,14 +397,14 @@ def test_a_worksheet_named_as_a_math_file_is_read_as_a_worksheet(session, tmp_pa
 def test_a_math_file_named_as_a_worksheet_is_read_as_text(session, file):
     file.write_text("x+1\n\ny\n", encoding="utf-8")
     session.load(file)
-    assert texts(session) == ["x+1", "y"]
+    assert texts(session) == ["x + 1", "y"]
 
 
 def test_a_math_file_decodes_derive_6_escapes(session, tmp_path):
     path = tmp_path / "escaped.mth"
     path.write_bytes(b"\x7f2211(k,k,1,n)\r\n\r\n\x7fe7c0^x\r\n\r\n\"\x7f03b1\"\r\n")
     session.load(path)
-    assert texts(session) == ["SUM(k,k,1,n)", "#e^x", '"α"']
+    assert texts(session) == ["SUM(k, k, 1, n)", "#e^x", '"α"']
 
 
 def test_an_escape_broken_across_a_continuation_is_decoded(session, tmp_path):
@@ -412,7 +412,7 @@ def test_an_escape_broken_across_a_continuation_is_decoded(session, tmp_path):
     path = tmp_path / "broken.mth"
     path.write_bytes(b"x\x7f22~\r\n64y\r\n")
     session.load(path)
-    assert texts(session) == ["x<=y"]
+    assert texts(session) == ["x <= y"]
 
 
 def test_a_truncated_worksheet_is_refused_and_the_history_kept(session, file):
@@ -501,13 +501,13 @@ def test_rtf_skips_hidden_groups_and_reads_escaped_symbols():
     ("text", "expected"),
     [
         ("v↓2", "v SUB 2"),
-        ("x ≔ 1", "x:=1"),
-        ("∑(k, k, 1, n)·∏(k, k, 1, n)", "SUM(k,k,1,n)*PRODUCT(k,k,1,n)"),
-        ("∂(x^2, x) + ∫(x, x)", "DIF(x^2,x)+INT(x,x)"),
-        ("¬ p ∧ q ∨ r → s", "(NOT(p) AND q) OR r IMP s"),
-        ("a ≠ b", "a/=b"),
+        ("x ≔ 1", "x := 1"),
+        ("∑(k, k, 1, n)·∏(k, k, 1, n)", "SUM(k, k, 1, n)*PRODUCT(k, k, 1, n)"),
+        ("∂(x^2, x) + ∫(x, x)", "DIF(x^2, x) + INT(x, x)"),
+        ("¬ p ∧ q ∨ r → s", "NOT p AND q OR r IMP s"),
+        ("a ≠ b", "a /= b"),
         ("u ⋅ v", "u . v"),
-        ("(3) +  + ", "GAMMA(3)+euler_gamma+pi"),
+        ("(3) +  + ", "GAMMA(3) + euler_gamma + pi"),
     ],
 )
 def test_derive_6_spellings_read_as_the_names_they_stand_for(text, expected):

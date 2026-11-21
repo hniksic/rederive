@@ -1316,7 +1316,8 @@ async def test_a_display_with_a_wrong_line_count_stands():
 
 async def test_nothing_is_shown_when_a_definition_is_entered():
     session = await run("> dz(x) := DISPLAY(x)", ("dz(5)", "5"))
-    assert [entry.text for entry in session.entries] == ["dz(x):=DISPLAY(x)", '"5"', "5"]
+    texts = [entry.text for entry in session.entries]
+    assert texts == ["dz(x) := DISPLAY(x)", '"5"', "5"]
 
 
 async def test_what_was_displayed_stays_when_the_command_is_abandoned():
@@ -2064,7 +2065,7 @@ async def test_completing_the_square_step_by_step():
     await displays(session, "transform(11*x^2 - 4*x - 13)", f'"{shown[0]}"', shown)
     # The global holds the inner quotes; reading it releases them.
     held = write_expression(session.assignments["steps"].children[0])
-    assert held == "['(11*(x^2-4*x/11)-13)]"
+    assert held == "['(11*(x^2 - 4*x/11) - 13)]"
     assert (await session.simplify("steps SUB 1")).text == "[11*(x^2 - 4*x/11) - 13]"
     for expected in [
         "11*(x^2 - 4*x/11) - 13",

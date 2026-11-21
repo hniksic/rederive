@@ -181,7 +181,7 @@ VECTORS = [
     # Like `FLOOR`, the remainder of a vector is taken element by element.
     ("MOD([[7, 11], [3, 8]], 2)", "[[1, 1], [1, 0]]"),
     # Only square matrices have powers and inverses to divide by.
-    ("[[1, 2, 3], [4, 5, 6]]^(-1)", "[[1, 2, 3], [4, 5, 6]]^(-1)"),
+    ("[[1, 2, 3], [4, 5, 6]]^(-1)", "[[1, 2, 3], [4, 5, 6]]^-1"),
     ("[[1, 2, 3], [4, 5, 6]]^2", "[[1, 2, 3], [4, 5, 6]]^2"),
     ("[[1, 2, 3], [4, 5, 6]]^n", "[[1, 2, 3], [4, 5, 6]]^n"),
     # A vector's power is one of its dot square (see below).

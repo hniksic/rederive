@@ -62,20 +62,23 @@ def decimal(value: Fraction, digits: int) -> str:
     return sign + text + "." + _expansion(remainder, keep, started=bool(whole))
 
 
-def scientific(value: Fraction, digits: int) -> str:
-    """`value` as `m*10^e`, or as a decimal numeral where its magnitude allows.
+def scientific(value: Fraction, digits: int) -> tuple[str, int | None]:
+    """`value` as `m*10^e`, the mantissa `m` as a decimal numeral and the exponent `e`;
+    or as a decimal numeral alone, with None for the exponent, where its magnitude
+    allows.
 
-    A mantissa of one is dropped: `10^-6`, not `1·10^-6`.
+    A mantissa of one is then left out, `10^-6` rather than `1·10^-6`, which is shown by
+    a mantissa of `""` or `"-"`.
     """
     if not value:
-        return "0"
+        return "0", None
     power = exponent(abs(value))
     if PLAIN[0] <= power <= PLAIN[1]:
-        return decimal(value, digits)
+        return decimal(value, digits), None
     mantissa = decimal(value / _TEN**power, digits)
     if mantissa in ("1", "-1"):
-        return mantissa[:-1] + f"10^{power}"
-    return f"{mantissa}*10^{power}"
+        mantissa = mantissa[:-1]
+    return mantissa, power
 
 
 def value_of(text: str) -> Fraction:

@@ -376,8 +376,8 @@ LOGIC = [
     ("p OR NOT p", "true"),
     ("p AND NOT p", "false"),
     ("p IMP q", "NOT p OR q"),
-    ("p XOR q", "(NOT p AND q) OR (p AND NOT q)"),
-    ("p IFF q", "(NOT p AND NOT q) OR (p AND q)"),
+    ("p XOR q", "NOT p AND q OR p AND NOT q"),
+    ("p IFF q", "NOT p AND NOT q OR p AND q"),
     ("true IFF false", "false"),
     ("p IFF p", "true"),
     ("NOT (p AND q)", "NOT p OR NOT q"),
@@ -385,9 +385,9 @@ LOGIC = [
     ("p AND r OR p AND q", "p AND (q OR r)"),
     # Operands are sorted by the order list, each term by its leading variable, with a
     # negated literal first on a tie.
-    ("s AND r OR q AND p", "(p AND q) OR (r AND s)"),
-    ("c OR b AND a", "(a AND b) OR c"),
-    ("p AND q OR NOT p AND r", "(NOT p AND r) OR (p AND q)"),
+    ("s AND r OR q AND p", "p AND q OR r AND s"),
+    ("c OR b AND a", "a AND b OR c"),
+    ("p AND q OR NOT p AND r", "NOT p AND r OR p AND q"),
     # With six variables the algebra isn't worth it: both normal forms come from a
     # truth table, and here they are longer than the input.
     ("a XOR b XOR c XOR d XOR e XOR f", "a XOR b XOR c XOR d XOR e XOR f"),

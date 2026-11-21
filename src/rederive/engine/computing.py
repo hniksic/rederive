@@ -53,7 +53,7 @@ from rederive.engine.client import (
 from rederive.engine.evaluate import evaluated
 from rederive.engine.expand import expand
 from rederive.engine.factor import factor
-from rederive.engine.from_sympy import from_sympy, parse_state_for
+from rederive.engine.from_sympy import from_sympy
 from rederive.engine.pipeline import approx, simplify
 from rederive.engine.plot_form import plot_form
 from rederive.engine.printer import author_text
@@ -98,7 +98,6 @@ __all__ = [
     "factor",
     "from_sympy",
     "main_order",
-    "parse_state_for",
     "plot_form",
     "relation_of",
     "replace",

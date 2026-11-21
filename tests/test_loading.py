@@ -79,7 +79,7 @@ def test_free_text_and_the_empty_annotation_are_kept(session, tmp_path):
     assert annotations(session) == ["Interest/Discount", ""]
     session.save(tmp_path / "e.mth")
     assert (tmp_path / "e.mth").read_text() == (
-        ";Interest/Discount\nID(i,nth,mth):=i\n\n;\nx\n"
+        ";Interest/Discount\nID(i, nth, mth) := i\n\n;\nx\n"
     )
 
 
@@ -95,7 +95,10 @@ def test_a_backslash_in_a_string_is_a_character(session, tmp_path):
 def test_a_string_line_is_an_entry_but_no_definition_of_a_utility(session, tmp_path):
     math_file(tmp_path / "b.mth", '"Circles1"', "VECTOR(SQRT(1-(x+5-2*a)^2)-5,a,0,5)")
     assert not session.load(tmp_path / "b.mth")
-    assert texts(session) == ['"Circles1"', "VECTOR(SQRT(1-(x+5-2*a)^2)-5,a,0,5)"]
+    assert texts(session) == [
+        '"Circles1"',
+        "VECTOR(SQRT(1 - (x + 5 - 2*a)^2) - 5, a, 0, 5)",
+    ]
     other = Session()
     assert not other.load_utility(tmp_path / "b.mth")
     assert texts(other) == [] and not other.assignments and not other.functions
@@ -109,7 +112,7 @@ def test_strings_of_a_backslash_and_a_tilde_survive_the_wrap(session, tmp_path):
     assert not session.load(tmp_path / "f.mth")
     names = session.entries[1].node.children[1]
     assert [child.value for child in names.children] == list("#$@[\\]^`{|}~")
-    assert texts(session)[0] == 'L:=[["~",[[1.6,7],[inf,inf]]]]'
+    assert texts(session)[0] == 'L := [["~", [[1.6, 7], [inf, inf]]]]'
 
 
 async def test_a_semicolon_in_a_wrapped_string_is_data(session, tmp_path):
@@ -187,7 +190,7 @@ async def test_a_loaded_file_takes_definitions_and_settings_but_enters_nothing(
     math_file(tmp_path / "c.mth", "F(x):=x+1", '"comment"', "Precision:=Approximate")
     session.author("F(x) := 0")
     session.author('LOAD("c.mth")')
-    assert texts(session) == ["F(x):=0", 'LOAD("c.mth")']
+    assert texts(session) == ["F(x) := 0", 'LOAD("c.mth")']
     assert session.settings["Precision"] == "Approximate"
     assert (await session.simplify("F(2)")).text == "3"
 
@@ -312,14 +315,14 @@ async def test_another_spelling_of_a_reserved_name_is_the_users(session):
 def test_a_data_file_may_annotate_and_separate_by_semicolons(session, tmp_path):
     (tmp_path / "a.dat").write_bytes(b";Measured values\r\n1;2;3\r\n4 , 5 , 6\r\n")
     assert not session.load_data(tmp_path / "a.dat")
-    assert texts(session) == ["[[1,2,3],[4,5,6]]"]
+    assert texts(session) == ["[[1, 2, 3], [4, 5, 6]]"]
     assert annotations(session) == ["Measured values"]
 
 
 def test_a_data_file_may_separate_by_tabs(session, tmp_path):
     (tmp_path / "b.dat").write_bytes(b"1\t2\t3\r\n")
     assert not session.load_data(tmp_path / "b.dat")
-    assert texts(session) == ["[1,2,3]"]
+    assert texts(session) == ["[1, 2, 3]"]
     assert annotations(session) == ["User"]
 
 
@@ -333,12 +336,13 @@ def test_the_state_option_writes_the_settings_first(session, tmp_path):
     session.save(tmp_path / "s.mth")
     written = (tmp_path / "s.mth").read_text()
     assert written.startswith(
-        "Precision:=Approximate\n\nPrecisionDigits:=10\n\nNotation:=Scientific\n\n"
+        "Precision := Approximate\n\nPrecisionDigits := 10\n\nNotation := Scientific\n\n"
     )
     assert written.endswith(
-        "InputMode:=Character\n\nDisplayFormat:=Normal\n\nTimesOperator:=Dot\n\nx\n"
+        "InputMode := Character\n\nDisplayFormat := Normal\n\nTimesOperator := Dot\n\n"
+        "x\n"
     )
-    assert "VariableOrder:=[x,y,z]\n\nOutputBase:=Decimal\n\n" in written
+    assert "VariableOrder := [x, y, z]\n\nOutputBase := Decimal\n\n" in written
     other = Session()
     other.load(tmp_path / "s.mth")
     assert other.settings["Precision"] == "Approximate"
@@ -354,14 +358,14 @@ def test_settings_are_not_saved_by_default(session, tmp_path):
 
 
 def test_a_name_beyond_ascii_is_written_as_itself(session, tmp_path):
-    session.author("θ := 1")
+    session.author("é := 1")
     session.save(tmp_path / "g.mth")
-    assert (tmp_path / "g.mth").read_bytes() == "θ:=1\n".encode()
+    assert (tmp_path / "g.mth").read_bytes() == "é := 1\n".encode()
 
 
 def test_a_saved_file_reads_back_as_it_was(session, tmp_path):
-    """Derive 6's constructs are written the way Derive 6 writes them, so they read
-    back to the same entries."""
+    """Derive 6's constructs are written so that they read back to the same
+    entries."""
     lines = [
         "f(x, y := 0) := PROG(k := 0, LOOP(IF(k > x, exit), k :+ 1), RETURN k)",
         "x :epsilon Real (0, ∞)",
@@ -397,14 +401,14 @@ def test_a_saved_file_reads_back_as_it_was(session, tmp_path):
     written = (tmp_path / "r.mth").read_text()
     assert ";" not in written.replace('"', "")
     for spelling in [
-        "B v:=v SUB DIM(v)",
-        "m SUB  SUB 2",
+        "B v := v SUB DIM(v)",
+        "m SUB SUB 2",
         "(FIRST(t)) SUB 2",
-        'a+("+-"b)',
+        "a + (±b)",
         "45 DEG",
-        "(m:=3) AND c:=4",
-        "h(a,b):='(a/b)+'IF(a>0,['(b SUB 1),\"s\"])",
-        "[''(1+2),'x^2]",
+        "(m := 3) AND (c := 4)",
+        "h(a, b) := '(a/b) + 'IF(a > 0, ['(b SUB 1), \"s\"])",
+        "[''(1 + 2), 'x^2]",
     ]:
         assert spelling in written, spelling
 

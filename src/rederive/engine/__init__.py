@@ -15,13 +15,13 @@ import from the UI):
 The import line thus states what a module is allowed to do. `tests/test_packages.py`
 enforces that the app side stays on its half.
 
-A `Node` tree and a `Context` go in; a `Result` with the answer's text and reparsed tree
+A `Node` tree and a `Context` go in; a `Result` with the answer's tree and its text
 comes back. All commands share two converters:
 
 * `to_sympy` translates a tree into sympy faithfully, simplifying nothing beyond sympy's
   automatic evaluation. It reads the precision mode, angle mode, input base and variable
   domains from the context.
-* `from_sympy` writes an expression back as author notation and reparses it.
+* `from_sympy` builds an expression's tree in author notation and writes its text.
 
 Both directions are total. Anything the engine has no mathematics for, including
 constructs sympy rejects (a call with unusable arguments, a product of incompatible

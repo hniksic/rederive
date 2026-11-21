@@ -1,8 +1,7 @@
 """Expression trees back to author notation.
 
-Spellings are checked against what the original's Transfer Save writes. The round trip
-is the writer's contract: every expression in both corpora must parse, write and parse
-back to the same tree, so a saved worksheet reopens unchanged.
+The round trip is the writer's contract: every expression in both corpora must parse,
+write and parse back to the same tree, so a saved worksheet reopens unchanged.
 """
 
 from __future__ import annotations
@@ -20,29 +19,29 @@ from rederive.syntax import (
     write_expression,
 )
 
-#: Authored text and what the original writes for it, each confirmed against the
-#: original.
+#: Authored text and how it is written.
 SPELLINGS = [
-    # juxtaposition becomes a `*`, and the spacing goes
-    ("x (x + 1)", "x*(x+1)"),
-    ("3 x^2 - 2 x + 1", "3*x^2-2*x+1"),
+    # juxtaposition becomes a `*`, with blanks around sum signs and relations and after
+    # commas
+    ("x (x + 1)", "x*(x + 1)"),
+    ("3 x^2 - 2 x + 1", "3*x^2 - 2*x + 1"),
     ("1/(2 x)", "1/(2*x)"),
-    ("2.5 + 1/2", "2.5+1/2"),
-    ("a = b", "a=b"),
-    ("a <= b", "a<=b"),
-    ("[1, 2, 3]", "[1,2,3]"),
-    ("INT(x^2, x)", "INT(x^2,x)"),
-    ("x := 3", "x:=3"),
+    ("2.5 + 1/2", "2.5 + 1/2"),
+    ("a = b", "a = b"),
+    ("a <= b", "a <= b"),
+    ("[1, 2, 3]", "[1, 2, 3]"),
+    ("INT(x^2, x)", "INT(x^2, x)"),
+    ("x := 3", "x := 3"),
     # a name is written as it was declared, a built-in in upper case
-    ("f(y) := y^2", "f(y):=y^2"),
-    ("sin(y)+Sin(y)", "SIN(y)+SIN(y)"),
+    ("f(y) := y^2", "f(y) := y^2"),
+    ("sin(y)+Sin(y)", "SIN(y) + SIN(y)"),
     # a bare application becomes a call, and `|u|` the call it means
     ("SIN x", "SIN(x)"),
     ("(SIN x)^2", "SIN(x)^2"),
     ("|x|", "ABS(x)"),
     # a nested run keeps the parentheses that mark it as separate
-    ("(a-b)+c", "(a-b)+c"),
-    ("a-b+c", "a-b+c"),
+    ("(a-b)+c", "(a - b) + c"),
+    ("a-b+c", "a - b + c"),
     ("(a*b)*c", "(a*b)*c"),
     # `/` closes the run to its left, so its position decides the parentheses
     ("a*b/c*d", "a*b/c*d"),
@@ -50,11 +49,11 @@ SPELLINGS = [
     ("a*(b/c)", "a*(b/c)"),
     ("(a/b)/c", "a/b/c"),
     ("a/(b/c)", "a/(b/c)"),
-    ("p*(1+t)*((n-1)/i)", "p*(1+t)*((n-1)/i)"),
+    ("p*(1+t)*((n-1)/i)", "p*(1 + t)*((n - 1)/i)"),
     # a sign is parenthesized except at the start of a run
     ("-x*y", "-x*y"),
-    ("-a-b", "-a-b"),
-    ("-(a+b)", "-(a+b)"),
+    ("-a-b", "-a - b"),
+    ("-(a+b)", "-(a + b)"),
     ("a*-b*c", "a*(-b)*c"),
     ("(-a)^2", "(-a)^2"),
     ("-a^2", "-a^2"),
@@ -72,42 +71,50 @@ SPELLINGS = [
     # word operators keep the spaces that keep them from fusing with operands
     ("x SUB 2", "x SUB 2"),
     ("a SUB b SUB c", "a SUB b SUB c"),
-    ("x SUB (a+b)", "x SUB (a+b)"),
-    ("(a+b) SUB 2", "(a+b) SUB 2"),
-    ("a AND b OR c", "(a AND b) OR c"),
+    ("x SUB (a+b)", "x SUB (a + b)"),
+    ("(a+b) SUB 2", "(a + b) SUB 2"),
+    # a word operator gets only the parentheses the grammar needs: `AND` groups to the
+    # right and `IMP` to the left
+    ("a AND b OR c", "a AND b OR c"),
     ("a XOR b IMP c", "a XOR b IMP c"),
-    ("a AND (b AND c)", "a AND (b AND c)"),
-    ("NOT a AND b", "NOT(a) AND b"),
-    ("NOT (a=b)", "NOT(a=b)"),
-    # plus-or-minus is written as it is typed, quotes and all
-    ('"+-" x', '"+-"x'),
-    ('a + "+-" b', 'a+("+-"b)'),
+    ("a AND (b AND c)", "a AND b AND c"),
+    ("(a OR b) OR c", "(a OR b) OR c"),
+    ("a AND (b OR c)", "a AND (b OR c)"),
+    ("a IMP b IMP c", "(a IMP b) IMP c"),
+    ("a IMP (b IMP c)", "a IMP (b IMP c)"),
+    # `NOT` is prefix, parenthesized only around looser-binding operands
+    ("NOT a AND b", "NOT a AND b"),
+    ("NOT (a=b)", "NOT a = b"),
+    ("NOT(p AND q)", "NOT (p AND q)"),
+    # plus-or-minus is written as the glyph
+    ('"+-" x', "±x"),
+    ('a + "+-" b', "a + (±b)"),
     # the dot product is the one operator that could fuse into a numeral
     ("2 . 3", "2 . 3"),
-    ("[1,2] . [3,4]", "[1,2] . [3,4]"),
+    ("[1,2] . [3,4]", "[1, 2] . [3, 4]"),
     # the rest are unchanged
     ("n!", "n!"),
-    ("(a+b)!", "(a+b)!"),
+    ("(a+b)!", "(a + b)!"),
     ("3!/2", "3!/2"),
     ("50%", "50%"),
-    ("(x + 1)/(x - 1)", "(x+1)/(x-1)"),
+    ("(x + 1)/(x - 1)", "(x + 1)/(x - 1)"),
     ("#e^(#i pi)", "#e^(#i*pi)"),
-    ("SUM(k, k, 1, 10)", "SUM(k,k,1,10)"),
-    ("IF(x > 0, 1, -1)", "IF(x>0,1,-1)"),
+    ("SUM(k, k, 1, 10)", "SUM(k, k, 1, 10)"),
+    ("IF(x > 0, 1, -1)", "IF(x > 0, 1, -1)"),
     ('"a string"', '"a string"'),
-    ("x :epsilon Real (0, inf)", "x:epsilonReal (0, inf)"),
-    ("[[1,2],[3,4]]", "[[1,2],[3,4]]"),
+    ("x :epsilon Real (0, inf)", "x :epsilon Real (0, inf)"),
+    ("[[1,2],[3,4]]", "[[1, 2], [3, 4]]"),
     ("-inf", "-inf"),
     # sets, and the set operators: the difference unspaced, the words spaced
-    ("{1, ..., 10} \\ {2, 3, 5, 7}", "{1,...,10}\\{2,3,5,7}"),
-    ("{1} union {2} = {1, 2}", "{1} UNION {2}={1,2}"),
+    ("{1, ..., 10} \\ {2, 3, 5, 7}", "{1, ..., 10}\\{2, 3, 5, 7}"),
+    ("{1} union {2} = {1, 2}", "{1} UNION {2} = {1, 2}"),
     # Derive 6's word operators, in upper case and spaced; glyphs as words
     ("p iff q", "p IFF q"),
     ("u ⊆ v", "u SUBSET v"),
     ("a UNION b SUBSET c", "a UNION b SUBSET c"),
-    ("a - b DOTPRODUCT c + d", "a-b DOTPRODUCT c+d"),
-    ("c - (-a) DOTPRODUCT b", "c-(-a DOTPRODUCT b)"),
-    ("(a+b) CROSSPRODUCT c", "(a+b) CROSSPRODUCT c"),
+    ("a - b DOTPRODUCT c + d", "a - b DOTPRODUCT c + d"),
+    ("c - (-a) DOTPRODUCT b", "c - (-a DOTPRODUCT b)"),
+    ("(a+b) CROSSPRODUCT c", "(a + b) CROSSPRODUCT c"),
     ("x deg", "x DEG"),
     ("100°", "100 DEG"),
     ("m ROW 2", "m ROW 2"),
@@ -117,45 +124,47 @@ SPELLINGS = [
     ("(a SUB i)!", "a SUB i!"),
     ("a SUB (i!)", "a SUB (i!)"),
     # `RETURN u` as the call, parenthesized where something follows it
-    ("IF(v=[], RETURN w)", "IF(v=[],RETURN(w))"),
-    ("(RETURN x)+1", "(RETURN(x))+1"),
-    ("IF(i>n, exit)", "IF(i>n,exit)"),
+    ("IF(v=[], RETURN w)", "IF(v = [], RETURN(w))"),
+    ("(RETURN x)+1", "(RETURN(x)) + 1"),
+    ("IF(i>n, exit)", "IF(i > n, exit)"),
     # assignments, updates and their targets; `:==` is `:=`
-    ("k :+ 1", "k:+1"),
-    ("w SUB j := q", "w SUB j:=q"),
-    ("x :== 3", "x:=3"),
+    ("k :+ 1", "k :+ 1"),
+    ("w SUB j := q", "w SUB j := q"),
+    ("x :== 3", "x := 3"),
     # matrix rows are written as nested vectors
-    ("[a, b; c, d]", "[[a,b],[c,d]]"),
-    ("m :epsilon Real [0, inf)", "m:epsilonReal [0, inf)"),
-    ("x :epsilon Vector", "x:epsilonVector"),
+    ("[a, b; c, d]", "[[a, b], [c, d]]"),
+    ("m :epsilon Real [0, inf)", "m :epsilon Real [0, inf)"),
+    ("x :epsilon Vector", "x :epsilon Vector"),
     # definition heads
-    ("f(x, n := 0, tmp) := x + n", "f(x,n:=0,tmp):=x+n"),
+    ("f(x, n := 0, tmp) := x + n", "f(x, n := 0, tmp) := x + n"),
     ("Block commands := commands SUB DIM(commands)", (
-        "Block commands:=commands SUB DIM(commands)"
+        "Block commands := commands SUB DIM(commands)"
     )),
-    ("F() := 5", "F():=5"),
-    # the column subscript with two blanks; a call indexed is parenthesized
-    ("m↓↓2", "m SUB  SUB 2"),
+    ("F() := 5", "F() := 5"),
+    # the column subscript; a call indexed is parenthesized
+    ("m↓↓2", "m SUB SUB 2"),
     ("FIRST(t) SUB 2", "(FIRST(t)) SUB 2"),
-    ("SOLUTIONS(e, [a, b]) COL 1", "(SOLUTIONS(e,[a,b])) COL 1"),
+    ("SOLUTIONS(e, [a, b]) COL 1", "(SOLUTIONS(e, [a, b])) COL 1"),
     ("v SUB 1 SUB 1", "v SUB 1 SUB 1"),
     ("v SUB DIM(v)", "v SUB DIM(v)"),
-    # a conjunction in a disjunction is parenthesized, a final assignment is not
-    ("x=1 AND y=-2 OR x=3 AND y=0", "(x=1 AND y=-2) OR (x=3 AND y=0)"),
-    ("(m:=v SUB 3) AND c:=v SUB 4", "(m:=v SUB 3) AND c:=v SUB 4"),
-    ("[(m:=3) AND c:=4, 1]", "[(m:=3) AND c:=4,1]"),
-    ("((m:=3) AND c:=4) OR d", "((m:=3) AND (c:=4)) OR d"),
+    # an assignment inside a logical operator is parenthesized
+    ("x=1 AND y=-2 OR x=3 AND y=0", "x = 1 AND y = -2 OR x = 3 AND y = 0"),
+    ("(m:=v SUB 3) AND c:=v SUB 4", "(m := v SUB 3) AND (c := v SUB 4)"),
+    ("[(m:=3) AND c:=4, 1]", "[(m := 3) AND (c := 4), 1]"),
+    ("((m:=3) AND c:=4) OR d", "(m := 3) AND (c := 4) OR d"),
     # the quote, its operand parenthesized unless a primary
-    ("BRUCH(a, b) := '(a/b)", "BRUCH(a,b):='(a/b)"),
-    ("s_ := INSERT('[a = q_*b + r_], s_, 0)", "s_:=INSERT('[a=q_*b+r_],s_,0)"),
-    ("[a = '(q_*b) + r_]", "[a='(q_*b)+r_]"),
+    ("BRUCH(a, b) := '(a/b)", "BRUCH(a, b) := '(a/b)"),
+    ("s_ := INSERT('[a = q_*b + r_], s_, 0)", "s_ := INSERT('[a = q_*b + r_], s_, 0)"),
+    ("[a = '(q_*b) + r_]", "[a = '(q_*b) + r_]"),
     ("'p^2", "'p^2"),
     ("'(-x)", "'(-x)"),
-    ("''(1 + 2)", "''(1+2)"),
-    ("'IF(x >= 0, g)", "'IF(x>=0,g)"),
+    ("''(1 + 2)", "''(1 + 2)"),
+    ("'IF(x >= 0, g)", "'IF(x >= 0, g)"),
     ("'(RETURN x)", "'(RETURN(x))"),
     # the minus sign is the hyphen
-    ("a − b", "a-b"),
+    ("a − b", "a - b"),
+    # a Greek letter is stored as its glyph and written as its name
+    ("alpha + 1", "alpha + 1"),
 ]
 
 
@@ -171,20 +180,21 @@ def test_the_original_writes_it_this_way(authored: str, expected: str) -> None:
 #: built-ins in upper case, and old names of Derive's either replaced by the Derive 6
 #: name or kept.
 NAMED = [
-    (["first([a,b,c])"], "FIRST([a,b,c])"),
-    (["Transform(f):=f", "transform(x)+TRANSFORM(x)"], "Transform(x)+Transform(x)"),
+    (["first([a,b,c])"], "FIRST([a, b, c])"),
+    (["Transform(f):=f", "transform(x)+TRANSFORM(x)"], "Transform(x) + Transform(x)"),
     (["DIMENSION(v)"], "DIM(v)"),
     (["AUX(a,b):=", "CONV(a,x_):=[REVERSE_VECTOR(AUX(a,x_))]"], (
-        "CONV(a,x_):=[REVERSE(AUX(a,x_))]"
+        "CONV(a, x_) := [REVERSE(AUX(a, x_))]"
     )),
-    (["DELETE_ELEMENT(v,1)"], "DELETE(v,1)"),
-    (["REPLACE_ELEMENT(c,p,n)"], "REPLACE(c,p,n)"),
-    (["IF(NUMBER(n),1,0)"], "IF(NUMBER(n),1,0)"),
-    (["ELEMENT(v,2)"], "ELEMENT(v,2)"),
+    (["DELETE_ELEMENT(v,1)"], "DELETE(v, 1)"),
+    (["REPLACE_ELEMENT(c,p,n)"], "REPLACE(c, p, n)"),
+    (["IF(NUMBER(n),1,0)"], "IF(NUMBER(n), 1, 0)"),
+    (["ELEMENT(v,2)"], "ELEMENT(v, 2)"),
     (['LOAD("D:\\DfD\\x.mth")'], 'LOAD("D:\\DfD\\x.mth")'),
-    # A Greek letter that would read back as something else is written by name.
-    (["gamma+Omega+Gamma+Theta"], "γ+Omega+Gamma+Theta"),
-    (["gamma(k):=k+1"], "γ(k):=k+1"),
+    # A Greek variable is written by name, which reads back as the letter even where
+    # the glyph would not: `Γ` is the gamma function and `Ω` a small omega.
+    (["gamma+Omega+Gamma+Theta"], "gamma + Omega + Gamma + Theta"),
+    (["gamma(k):=k+1"], "γ(k) := k + 1"),
 ]
 
 
@@ -200,51 +210,6 @@ def test_a_name_is_written_as_it_was_declared(lines: list[str], expected: str) -
     written = write_expression(result.node)
     assert written == expected
     assert write_expression(parse_expression(written, state).node) == expected
-
-
-SPACINGS = [
-    ("IF(h <= 40, 10*h, 400 + 15*(h - 40))", "IF(h <= 40, 10*h, 400 + 15*(h - 40))"),
-    ("x (x+1)-1", "x*(x + 1) - 1"),
-    ("[1,2,3]", "[1, 2, 3]"),
-    ("-x^2+2*x-1", "-x^2 + 2*x - 1"),
-    ("a/(b+c)", "a/(b + c)"),
-    ("f(x):=x^2", "f(x) := x^2"),
-    # `NOT` is prefix, parenthesized only around looser-binding operands.
-    ("NOT p AND q", "NOT p AND q"),
-    ("NOT(p AND q)", "NOT (p AND q)"),
-    ("NOT(x=y)", "NOT x = y"),
-    # A chain of one word operator keeps only the parentheses the grammar needs: `AND`
-    # groups to the right and `IMP` to the left.
-    ("a OR b OR c", "a OR b OR c"),
-    ("(a OR b) OR c", "(a OR b) OR c"),
-    ("a AND (b OR c)", "a AND (b OR c)"),
-    ("a IMP b IMP c", "(a IMP b) IMP c"),
-    ("a IMP (b IMP c)", "a IMP (b IMP c)"),
-    # A Greek letter is stored as its glyph and written as its name.
-    ("alpha + 1", "alpha + 1"),
-]
-
-
-@pytest.mark.parametrize(
-    ("authored", "expected"), SPACINGS, ids=[authored for authored, _ in SPACINGS]
-)
-def test_the_printers_spelling_puts_the_blanks_back(authored: str, expected: str):
-    """`spaced` writes the text as a result line shows it."""
-    state = ParseState()
-    node = parse_expression(authored, state).node
-    assert write_expression(node, spaced=True) == expected
-
-
-def test_a_spaced_spelling_reads_back_as_what_was_written() -> None:
-    """Spaces don't change meaning: every corpus case reparses to the same tree."""
-    for case in CORPUS:
-        state = case.state()
-        node = parse_expression(case.text, state).node
-        written = write_expression(node, spaced=True)
-        again = parse_expression(written, state).node
-        assert to_sexpr(normalized(again)) == to_sexpr(normalized(node)), (
-            f"{case.text!r} was written {written!r}"
-        )
 
 
 def normalized(node: Node) -> Node:
@@ -310,4 +275,4 @@ def test_a_numeral_is_written_in_the_digits_it_was_typed_in() -> None:
     """
     state = ParseState()
     state.declare(SettingDeclaration("InputBase", "16"))
-    assert write_expression(parse_expression("0FF + 1", state).node) == "0FF+1"
+    assert write_expression(parse_expression("0FF + 1", state).node) == "0FF + 1"

@@ -85,6 +85,7 @@ from rederive.syntax import (
     source_lines,
     write_expression,
     write_source,
+    written,
 )
 from rederive.syntax.names import SETTINGS, YIELDING_FUNCTIONS
 from rederive.syntax.state import NameBinding
@@ -165,7 +166,6 @@ class Runner(Protocol):
         context: engine.Context,
         amount: engine.Amount = ...,
         variables: Sequence[str] = ...,
-        state: ParseState | None = ...,
     ) -> engine.Result: ...
 
     async def expand(
@@ -174,7 +174,6 @@ class Runner(Protocol):
         context: engine.Context,
         amount: engine.Amount = ...,
         variables: Sequence[str] = ...,
-        state: ParseState | None = ...,
     ) -> engine.Result: ...
 
     async def solve(
@@ -183,7 +182,6 @@ class Runner(Protocol):
         context: engine.Context,
         variables: Sequence[str] = ...,
         bounds: tuple[Node, Node] | None = ...,
-        state: ParseState | None = ...,
     ) -> tuple[engine.Result, ...]: ...
 
     async def expression_variables(
@@ -226,10 +224,9 @@ class _Here:
         context: engine.Context,
         amount: engine.Amount = engine.Amount.RATIONAL,
         variables: Sequence[str] = (),
-        state: ParseState | None = None,
     ) -> engine.Result:
         with _counted_steps():
-            return self._engine.factor(node, context, amount, variables, state)
+            return self._engine.factor(node, context, amount, variables)
 
     async def expand(
         self,
@@ -237,10 +234,9 @@ class _Here:
         context: engine.Context,
         amount: engine.Amount = engine.Amount.RATIONAL,
         variables: Sequence[str] = (),
-        state: ParseState | None = None,
     ) -> engine.Result:
         with _counted_steps():
-            return self._engine.expand(node, context, amount, variables, state)
+            return self._engine.expand(node, context, amount, variables)
 
     async def solve(
         self,
@@ -248,10 +244,9 @@ class _Here:
         context: engine.Context,
         variables: Sequence[str] = (),
         bounds: tuple[Node, Node] | None = None,
-        state: ParseState | None = None,
     ) -> tuple[engine.Result, ...]:
         with _counted_steps():
-            return self._engine.solve(node, context, variables, bounds, state)
+            return self._engine.solve(node, context, variables, bounds)
 
     async def expression_variables(
         self, node: Node, context: engine.Context | None = None, written: bool = False
@@ -622,13 +617,9 @@ class Session:
         return self._append(line, node, AUTHORED, exact)
 
     def _equated(self, shown: Node, value: Node) -> tuple[str, Node]:
-        """`shown = value` written out and read back, as one expression.
-
-        Written spaced, as answers are, since half of the line is an answer. It is read
-        back so the entry's spans index its text, which highlighting requires.
-        """
-        text = write_expression(Node(Kind.REL, 0, 0, (shown, value), "="), spaced=True)
-        return text, parse_expression(text, self.state).node
+        """`shown = value` as one expression, its text and its tree, the tree's spans
+        indexing the text, which highlighting requires."""
+        return written(Node(Kind.REL, 0, 0, (shown, value), "="))
 
     def _redrawn(self, result: ParseResult) -> ParseResult:
         """`result` written back out from its tree and read again.
@@ -646,9 +637,7 @@ class Session:
         tree, the typed line is kept, since faithfulness beats tidiness.
         """
         try:
-            written = parse_expression(
-                write_expression(result.node, greek_names=True), self.state
-            )
+            written = parse_expression(write_expression(result.node), self.state)
         except DeriveSyntaxError:
             return result
         return written if _same_tree(written.node, result.node) else result
@@ -935,7 +924,7 @@ class Session:
         def run(
             node: Node, context: engine.Context, state: ParseState
         ) -> Awaitable[engine.Result]:
-            return self.runner.factor(node, context, amount, variables, state)
+            return self.runner.factor(node, context, amount, variables)
 
         return await self._command(request, "Fctr", run)
 
@@ -955,7 +944,7 @@ class Session:
         def run(
             node: Node, context: engine.Context, state: ParseState
         ) -> Awaitable[engine.Result]:
-            return self.runner.expand(node, context, amount, variables, state)
+            return self.runner.expand(node, context, amount, variables)
 
         return await self._command(request, "Expd", run)
 
@@ -996,7 +985,6 @@ class Session:
             self.context,
             variables,
             interval,
-            self.state,
         )
         for result in results:
             self._perform(result)
@@ -1226,7 +1214,7 @@ class Session:
             pass
         return engine.PlotForm(
             target,
-            write_expression(target, spaced=True),
+            write_expression(target),
             variables=await self.runner.expression_variables(target, self.context),
             relation=await self.runner.relation_of(target, self.context),
             pointwise=True,
@@ -1846,7 +1834,7 @@ class Session:
     def _file_text(self, records: Iterable[worksheet.Record]) -> str:
         """Records as a math file, laid out the way the save settings ask for.
 
-        With the State option, the file starts with the settings, one `Name:=Value`
+        With the State option, the file starts with the settings, one `Name := Value`
         record each, in the order Derive 6 writes them, so that reading the file back
         restores them before reading the entries, as in Derive.
         """
@@ -1864,11 +1852,11 @@ class Session:
         records = []
         for setting in _SAVED_SETTINGS:
             if setting == state.ORDER:
-                value = "[" + ",".join(self.order) + "]"
+                value = "[" + ", ".join(self.order) + "]"
             else:
                 held = self.settings[setting]
                 value = _RADIX_NAMES.get(held, str(held)) if setting in _RADICES else held
-            records.append(worksheet.Record(f"{setting}:={value}"))
+            records.append(worksheet.Record(f"{setting} := {value}"))
         return records
 
     def _block(self, first: int | None, last: int | None) -> Iterator[Entry]:

@@ -4492,7 +4492,7 @@ class RederiveApp(App[None]):
         target, label = self.session.named_target(request)
         form = await self.session.plot_form(request)
         drawn = form.exact
-        text = write_expression(target, spaced=True)
+        text = write_expression(target)
         plotted = classify(drawn, form.variables, text, form.relation)
         kind = plotted.kind
         options = plotted.options
@@ -4501,10 +4501,7 @@ class RederiveApp(App[None]):
             # its own text.
             options = replace(
                 options,
-                texts=tuple(
-                    write_expression(element, spaced=True)
-                    for element in drawn.children
-                ),
+                texts=tuple(write_expression(element) for element in drawn.children),
             )
         if kind not in plots.DRAWN:
             raise PlotError(plots.UNDRAWN.format(kind=kind.value))

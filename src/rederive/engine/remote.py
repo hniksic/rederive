@@ -160,9 +160,8 @@ class RemoteEngine:
         context: Context,
         amount: Amount = Amount.RATIONAL,
         variables: Sequence[str] = (),
-        state: ParseState | None = None,
     ) -> Result:
-        arguments = (node, context, amount, tuple(variables), state)
+        arguments = (node, context, amount, tuple(variables))
         return await self._await("factor", arguments)
 
     async def expand(
@@ -171,9 +170,8 @@ class RemoteEngine:
         context: Context,
         amount: Amount = Amount.RATIONAL,
         variables: Sequence[str] = (),
-        state: ParseState | None = None,
     ) -> Result:
-        arguments = (node, context, amount, tuple(variables), state)
+        arguments = (node, context, amount, tuple(variables))
         return await self._await("expand", arguments)
 
     async def solve(
@@ -182,9 +180,8 @@ class RemoteEngine:
         context: Context,
         variables: Sequence[str] = (),
         bounds: tuple[Node, Node] | None = None,
-        state: ParseState | None = None,
     ) -> tuple[Result, ...]:
-        arguments = (node, context, tuple(variables), bounds, state)
+        arguments = (node, context, tuple(variables), bounds)
         return await self._await("solve", arguments)
 
     async def expression_variables(

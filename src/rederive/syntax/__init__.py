@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from rederive.model.expr import Kind, Node
 from rederive.syntax.errors import DeriveSyntaxError
 from rederive.syntax.languages import LANGUAGES, Language, write_source
-from rederive.syntax.lexer import Lexer, is_name
+from rederive.syntax.lexer import Lexer, is_name, numeral_value
 from rederive.syntax.names import PARSING_SETTINGS
 from rederive.syntax.parser import Parser
 from rederive.syntax.source import Source
@@ -35,7 +35,7 @@ from rederive.syntax.state import (
     VariableInfo,
     reserved,
 )
-from rederive.syntax.writer import write_expression
+from rederive.syntax.writer import write_expression, written
 
 __all__ = [
     "CaseMode",
@@ -58,12 +58,14 @@ __all__ = [
     "VariableDeclaration",
     "VariableInfo",
     "is_name",
+    "numeral_value",
     "parse_expression",
     "parse_source",
     "reserved",
     "source_lines",
     "write_expression",
     "write_source",
+    "written",
 ]
 
 

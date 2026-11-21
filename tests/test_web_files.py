@@ -387,7 +387,7 @@ def test_a_dropped_worksheet_is_kept_as_its_bytes_and_loads(page, storage):
     assert page.notices[-1] == gestures.ARRIVED.format(name=DFW.name)
     session = Session()
     session.load(DFW)
-    assert [entry.text for entry in session.entries] == ["x^2", "#1+1"]
+    assert [entry.text for entry in session.entries] == ["x^2", "#1 + 1"]
 
 
 def test_a_worksheet_is_remembered_by_the_next_visit(page, storage):
@@ -444,7 +444,7 @@ def test_a_dos_math_file_is_decoded_as_on_the_desktop(page, storage):
     assert storage.read(Path("old.mth")).decode("utf-8") == worksheet.decoded(raw)
     session = Session()
     session.load(Path("old.mth"))
-    assert [entry.text for entry in session.entries] == ["pi+1"]
+    assert [entry.text for entry in session.entries] == ["pi + 1"]
 
 
 def test_a_worksheet_is_linked_as_the_math_file_it_saves_as(page, storage):
@@ -488,7 +488,7 @@ async def test_load_opens_the_dialog_and_loads_the_file_picked(page, storage):
         assert message(app) == CHOOSING_FILE
         page.handlers["picked"]("theirs.mth", b"x^2\n#1 + 1\n")
         await pilot.pause()
-        assert [entry.text for entry in app.session.entries] == ["x^2", "#1+1"]
+        assert [entry.text for entry in app.session.entries] == ["x^2", "#1 + 1"]
         assert app.session.file == Path("theirs.mth")
         assert storage.read(Path("theirs.mth")) == b"x^2\n#1 + 1\n"
         assert not _prompted(app)
@@ -515,7 +515,7 @@ async def test_a_picked_file_without_an_extension_loads(page, storage):
         await pilot.press("t", "l", "d")
         page.handlers["picked"]("notes", b"x + 2\n")
         await pilot.pause()
-        assert [entry.text for entry in app.session.entries] == ["x+2"]
+        assert [entry.text for entry in app.session.entries] == ["x + 2"]
         assert not _prompted(app)
         assert message(app) == ENTER_OPTION
         assert storage.read(Path("notes.mth")) == b"x + 2\n"

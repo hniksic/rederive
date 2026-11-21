@@ -36,7 +36,7 @@ def part(session, *route):
 async def test_the_answer_is_appended_and_selected_as_a_whole(session):
     session.author("2 (8 + 7) / 3^2")
     answer = await session.simplify("#1")
-    assert texts(session) == ["2*(8+7)/3^2", "10/3"]
+    assert texts(session) == ["2*(8 + 7)/3^2", "10/3"]
     assert answer.number == 2
     assert session.selected == 1 and session.route == ()
     assert answer.annotation == "Simp(#1)"
@@ -73,7 +73,7 @@ async def test_a_greek_letter_is_named_in_the_line_and_its_answer_alike(session)
     """Like `pi`, a Greek letter is spelled out in the text and drawn as its glyph."""
     session.author("sigma^2 + θ")
     await session.simplify("#1")
-    assert texts(session) == ["sigma^2+theta", "theta + sigma^2"]
+    assert texts(session) == ["sigma^2 + theta", "theta + sigma^2"]
     for entry in session.entries:
         assert "".join(render(entry.node).lines).count("σ") == 1
 
@@ -103,7 +103,7 @@ async def test_a_trailing_equals_computes_with_what_the_lines_before_it_defined(
 
 async def test_a_line_without_a_trailing_equals_is_simply_authored(session):
     entry = await session.show_value("2 (8 + 7) / 3^2")
-    assert texts(session) == ["2*(8+7)/3^2"]
+    assert texts(session) == ["2*(8 + 7)/3^2"]
     assert entry.annotation == "User"
 
 
@@ -127,7 +127,7 @@ async def test_simplifying_part_of_an_entry_copies_the_rest_of_it(session):
     session.author("2 (8 + 7) / 3^2")
     assert part(session, "right", "right").value == "^"
     answer = await session.simplify("#1")
-    assert answer.text == "2*(8+7)/9"
+    assert answer.text == "2*(8 + 7)/9"
     # The quote is what says that only part of the entry was simplified.
     assert answer.annotation == "Simp(#1')"
 
@@ -145,7 +145,7 @@ async def test_a_spliced_line_reads_back_as_the_text_it_shows(session):
     part(session, "right")
     answer = await session.simplify("#1")
     # The typed fences stay in the text but are drawn as precedence requires.
-    assert answer.text == "(15)*(x+1)"
+    assert answer.text == "(15)*(x + 1)"
     assert answer.layout.lines == ("15·(x + 1)",)
     session.move_right()
     assert answer.text[session.selected_node.start : session.selected_node.end] == "15"
@@ -244,7 +244,7 @@ async def test_the_parameters_of_a_definition_become_known_names(session):
     session.author("InputMode := Character")
     assert set(session.state.variables) == {"a", "b", "c", "uu", "vv", "w"}
     assert not any(info.has_value for info in session.state.variables.values())
-    assert session.author("uu + vv + qq").text == "uu+vv+q*q"
+    assert session.author("uu + vv + qq").text == "uu + vv + q*q"
     assert (await session.simplify("CHR(1, 2, 3)")).text == "6"
     assert (await session.simplify("SS(2)")).text == "20"
 
@@ -414,7 +414,7 @@ async def test_the_precision_setting_reaches_the_command(session):
 async def test_a_factored_answer_is_appended_and_annotated(session):
     session.author("x^2 - 4")
     answer = await session.factor("#1")
-    assert texts(session) == ["x^2-4", "(x + 2)*(x - 2)"]
+    assert texts(session) == ["x^2 - 4", "(x + 2)*(x - 2)"]
     assert answer.annotation == "Fctr(#1)"
 
 
@@ -430,7 +430,7 @@ async def test_factoring_part_of_an_entry_copies_the_rest_of_it(session):
     # The part sat inside fences the line still has, so the answer goes back inside them
     # without adding a second pair. The drawing comes from the tree, where fences follow
     # precedence.
-    assert answer.text == "((x + 1)*(x - 1))+SIN(z)"
+    assert answer.text == "((x + 1)*(x - 1)) + SIN(z)"
     assert answer.layout.lines == ("(x + 1)·(x - 1) + SIN(z)",)
     assert answer.annotation == "Fctr(#1')"
 
@@ -512,7 +512,7 @@ def test_a_number_is_recognised_before_anything_is_asked(session):
 async def test_the_answer_is_appended_as_an_expansion(session):
     session.author("2 x (x - 3)^2")
     answer = await session.expand("#1")
-    assert texts(session) == ["2*x*(x-3)^2", "2*x^3 - 12*x^2 + 18*x"]
+    assert texts(session) == ["2*x*(x - 3)^2", "2*x^3 - 12*x^2 + 18*x"]
     assert answer.annotation == "Expd(#1)"
 
 
@@ -569,7 +569,7 @@ async def test_every_solution_is_an_entry_and_the_last_is_selected(session):
     session.author("x^2 - 5 x + 6 = 0")
     appended = await session.solve("#1")
     assert [entry.text for entry in appended] == ["x = 2", "x = 3"]
-    assert texts(session) == ["x^2-5*x+6=0", "x = 2", "x = 3"]
+    assert texts(session) == ["x^2 - 5*x + 6 = 0", "x = 2", "x = 3"]
     assert session.selected_entry is appended[-1]
     assert session.route == ()
 
@@ -585,7 +585,7 @@ async def test_no_solutions_appends_nothing_and_leaves_the_highlight(session):
     session.author("x = x + 1")
     session.select_entry(0)
     assert await session.solve("#2") == []
-    assert texts(session) == ["x^2-4", "x=x+1"]
+    assert texts(session) == ["x^2 - 4", "x = x + 1"]
     assert session.selected == 0
 
 
@@ -594,7 +594,7 @@ async def test_solving_the_same_equation_twice_appends_duplicates(session):
     session.author("2 x = 8")
     await session.solve("#1")
     await session.solve("#1")
-    assert texts(session) == ["2*x=8", "x = 4", "x = 4"]
+    assert texts(session) == ["2*x = 8", "x = 4", "x = 4"]
 
 
 async def test_a_system_appends_one_entry(session):
@@ -797,16 +797,16 @@ async def built(session, word, *requests):
 async def test_a_built_expression_is_appended_unsimplified(session):
     session.author("2 + 3")
     answer = await built(session, "*", "#1", "#1")
-    assert answer.text == "(2+3)*(2+3)"
+    assert answer.text == "(2 + 3)*(2 + 3)"
     assert answer.annotation == "#1*#1"
 
 
 @pytest.mark.parametrize(
     ("word", "expected"),
     [
-        ("+", "x^2*y+x^2*y"),
-        ("-", "x^2*y-x^2*y"),
-        ("=", "x^2*y=x^2*y"),
+        ("+", "x^2*y + x^2*y"),
+        ("-", "x^2*y - x^2*y"),
+        ("=", "x^2*y = x^2*y"),
         ("Minus", "-x^2*y"),
         ("Recip", "1/(x^2*y)"),
         ("Sin", "SIN(x^2*y)"),
@@ -818,7 +818,7 @@ async def test_a_built_expression_is_appended_unsimplified(session):
     ids=str,
 )
 async def test_each_operator_writes_what_the_original_writes(session, word, expected):
-    """The forms the original's own Transfer Save writes."""
+    """The forms the original's own Transfer Save writes, apart from the blanks."""
     session.author("x^2*y")
     operator = building.operator(word)
     requests = ["#1"] * operator.arity
@@ -867,7 +867,7 @@ async def test_operators_chain_left_to_right(session):
     operator = building.operator("*")
     node = operator.build(first.node, session.target("#3"))
     answer = await session.build(node, operator.annotate(first.annotation, "#3"))
-    assert answer.text == "(2+3)*4"
+    assert answer.text == "(2 + 3)*4"
     assert answer.annotation == "#1+#2*#3"
 
 
@@ -887,27 +887,28 @@ async def test_a_build_taken_with_ctrl_enter_appends_one_entry(session):
 @pytest.mark.parametrize(
     ("head", "prefix", "arguments", "expected"),
     [
-        ("DIF", "Dif", ("x",), "DIF(x^2*y,x)"),
-        ("DIF", "Dif", ("x", "3"), "DIF(x^2*y,x,3)"),
-        ("INT", "Int", ("x",), "INT(x^2*y,x)"),
-        ("INT", "Int", ("x", "0", "1"), "INT(x^2*y,x,0,1)"),
-        ("LIM", "Lim", ("x", "0", "0"), "LIM(x^2*y,x,0,0)"),
-        ("LIM", "Lim", ("x", "2", "-1"), "LIM(x^2*y,x,2,-1)"),
-        ("SUM", "Sum", ("x",), "SUM(x^2*y,x)"),
-        ("SUM", "Sum", ("x", "1", "n"), "SUM(x^2*y,x,1,n)"),
-        ("PRODUCT", "Product", ("x", "1", "n"), "PRODUCT(x^2*y,x,1,n)"),
-        ("TAYLOR", "Taylor", ("x", "1", "3"), "TAYLOR(x^2*y,x,1,3)"),
-        ("VECTOR", "Vector", ("x", "1", "5"), "VECTOR(x^2*y,x,1,5)"),
-        ("VECTOR", "Vector", ("x", "1", "5", "2"), "VECTOR(x^2*y,x,1,5,2)"),
-        ("TABLE", "Table", ("x", "1", "5"), "TABLE(x^2*y,x,1,5)"),
-        ("INT", "Int", ("x", "c"), "INT(x^2*y,x,c)"),
+        ("DIF", "Dif", ("x",), "DIF(x^2*y, x)"),
+        ("DIF", "Dif", ("x", "3"), "DIF(x^2*y, x, 3)"),
+        ("INT", "Int", ("x",), "INT(x^2*y, x)"),
+        ("INT", "Int", ("x", "0", "1"), "INT(x^2*y, x, 0, 1)"),
+        ("LIM", "Lim", ("x", "0", "0"), "LIM(x^2*y, x, 0, 0)"),
+        ("LIM", "Lim", ("x", "2", "-1"), "LIM(x^2*y, x, 2, -1)"),
+        ("SUM", "Sum", ("x",), "SUM(x^2*y, x)"),
+        ("SUM", "Sum", ("x", "1", "n"), "SUM(x^2*y, x, 1, n)"),
+        ("PRODUCT", "Product", ("x", "1", "n"), "PRODUCT(x^2*y, x, 1, n)"),
+        ("TAYLOR", "Taylor", ("x", "1", "3"), "TAYLOR(x^2*y, x, 1, 3)"),
+        ("VECTOR", "Vector", ("x", "1", "5"), "VECTOR(x^2*y, x, 1, 5)"),
+        ("VECTOR", "Vector", ("x", "1", "5", "2"), "VECTOR(x^2*y, x, 1, 5, 2)"),
+        ("TABLE", "Table", ("x", "1", "5"), "TABLE(x^2*y, x, 1, 5)"),
+        ("INT", "Int", ("x", "c"), "INT(x^2*y, x, c)"),
     ],
     ids=str,
 )
 async def test_each_head_is_written_as_the_original_writes_it(
     session, head, prefix, arguments, expected
 ):
-    """The linear forms come from the original's own Transfer Save."""
+    """The linear forms come from the original's own Transfer Save, apart from the
+    blanks."""
     session.author("x^2*y")
     assert (await session.calculus(head, prefix, "#1", arguments)).text == expected
 
@@ -916,7 +917,7 @@ async def test_nothing_is_computed(session):
     """The command only writes the expression; a later Simplify computes it."""
     session.author("x^2*y")
     await session.calculus("DIF", "Dif", "#1", ("x",))
-    assert texts(session) == ["x^2*y", "DIF(x^2*y,x)"]
+    assert texts(session) == ["x^2*y", "DIF(x^2*y, x)"]
     assert (await session.simplify("#2")).text == "2*x*y"
 
 
@@ -936,7 +937,7 @@ async def test_a_highlighted_part_is_taken_alone_and_carries_a_quote(session):
     session.author("SIN(a*x^2) + 5")
     part(session, "right", "down")
     answer = await session.calculus("DIF", "Dif", "#1", ("x",))
-    assert answer.text == "DIF(a*x^2,x)"
+    assert answer.text == "DIF(a*x^2, x)"
     assert answer.annotation == "Dif(#1',x)"
 
 
@@ -958,10 +959,10 @@ async def test_a_two_sided_limit_is_written_with_the_direction_the_menu_chose(se
     """`Calculus Limit` writes `0` for Both, and `0` is two-sided."""
     session.author("ABS(x)/x")
     both = await session.calculus("LIM", "Lim", "#1", ("x", "0", "0"))
-    assert both.text == "LIM(ABS(x)/x,x,0,0)"
+    assert both.text == "LIM(ABS(x)/x, x, 0, 0)"
     assert (await session.simplify("#2")).text == "±1"
     right = await session.calculus("LIM", "Lim", "#1", ("x", "0", "1"))
-    assert right.text == "LIM(ABS(x)/x,x,0,1)"
+    assert right.text == "LIM(ABS(x)/x, x, 0, 1)"
     assert (await session.simplify("#4")).text == "1"
 
 

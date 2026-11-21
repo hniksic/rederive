@@ -243,7 +243,7 @@ async def test_f1_opens_line_editing_and_gives_the_line_back(app):
         assert prompt(app) == ("AUTHOR expression:", "x^2+1")
         assert message(app) == "Enter expression (press F1 for help)"
         await pilot.press("enter")
-        assert [entry.text for entry in app.session.entries] == ["x^2+1"]
+        assert [entry.text for entry in app.session.entries] == ["x^2 + 1"]
 
 
 async def test_reading_the_editing_subject_through_ends_at_the_line(app):

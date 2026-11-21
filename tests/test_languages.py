@@ -227,7 +227,7 @@ def test_indexing_passes_through_rather_than_guessing_where_it_starts():
 
 
 def test_a_shape_with_no_form_at_all_stays_in_derive_notation():
-    assert written("x :epsilon Real (0, inf)", "C") == "x:epsilonReal (0, inf)"
+    assert written("x :epsilon Real (0, inf)", "C") == "x :epsilon Real (0, inf)"
     # No target has an `IMP` operator, so it is written as in Derive.
     assert written("a IMP b", "C") == "a IMP b"
 

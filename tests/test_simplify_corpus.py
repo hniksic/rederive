@@ -153,7 +153,7 @@ def _settles(text: str, state: ParseState) -> bool:
     context = Context(withdrawn=state.withdrawn)
     once = simplify(node, context, state)
     authored = authored_conditionals(once.node, context)
-    printed = from_sympy(to_sympy(once.node, context), context, state, authored).text
+    printed = from_sympy(to_sympy(once.node, context), context, authored).text
     return printed == once.text == simplify(once.node, context, state).text
 
 

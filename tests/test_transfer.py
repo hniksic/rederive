@@ -81,7 +81,7 @@ def texts(session):
 def test_a_file_is_an_expression_a_line_with_blanks_between(session, file):
     session.author("x^2 + 1")
     session.author("SIN(x)/2")
-    assert written(session, file) == "x^2+1\n\nSIN(x)/2\n"
+    assert written(session, file) == "x^2 + 1\n\nSIN(x)/2\n"
 
 
 def test_an_entry_is_written_from_its_tree_and_not_from_its_text(session, file):
@@ -92,7 +92,7 @@ def test_an_entry_is_written_from_its_tree_and_not_from_its_text(session, file):
     """
     session.author("x (x + 1)")
     session.author("2 (8 + 7) / 3^2")
-    assert written(session, file) == "x*(x+1)\n\n2*(8+7)/3^2\n"
+    assert written(session, file) == "x*(x + 1)\n\n2*(8 + 7)/3^2\n"
 
 
 async def test_an_annotation_is_the_comment_above_its_expression(session, file):
@@ -122,7 +122,9 @@ def test_the_range_option_writes_the_block_it_is_given(session, file):
 def test_a_long_line_is_broken_and_continued_with_a_tilde(session, file):
     session.author("(a+b)^3 (c+d)^3 (e+f)^3 (g+h)^3 (i+j)^3")
     session.settings.apply({"SaveLength": 30})
-    assert written(session, file) == "(a+b)^3*(c+d)^3*(e+f)^3*(g+h)~\n^3*(i+j)^3\n"
+    assert written(session, file) == (
+        "(a + b)^3*(c + d)^3*(e + f)^3~\n*(g + h)^3*(i + j)^3\n"
+    )
 
 
 def test_a_continued_line_reads_back_as_the_one_expression(session, file):
@@ -131,7 +133,7 @@ def test_a_continued_line_reads_back_as_the_one_expression(session, file):
     session.save(file)
     other = Session()
     other.load(file)
-    assert texts(other) == ["(a+b)^3*(c+d)^3*(e+f)^3*(g+h)^3*(i+j)^3"]
+    assert texts(other) == ["(a + b)^3*(c + d)^3*(e + f)^3*(g + h)^3*(i + j)^3"]
 
 
 def test_a_name_with_no_extension_is_a_math_file():
@@ -311,8 +313,8 @@ def test_a_file_is_read_in_word_mode(session, file):
     file.write_text("ab + y1\n")
     session.load(file)
     session.merge(file)
-    assert texts(session) == ["ab+y1", "ab+y1"]
-    assert session.author("ab + y1").text == "a*b+y*1"
+    assert texts(session) == ["ab + y1", "ab + y1"]
+    assert session.author("ab + y1").text == "a*b + y*1"
 
 
 def test_a_file_that_sets_the_input_mode_is_still_read_in_word_mode(session, file):
@@ -321,7 +323,7 @@ def test_a_file_that_sets_the_input_mode_is_still_read_in_word_mode(session, fil
     session.settings.assign("InputMode", "Word")
     file.write_text("ab\nInputMode := Character\nab\n")
     session.load(file)
-    assert texts(session) == ["ab", "InputMode:=Character", "ab"]
+    assert texts(session) == ["ab", "InputMode := Character", "ab"]
     assert session.settings["InputMode"] == "Character"
     assert session.author("ab").text == "a*b"
     file.write_text("InputMode := Word\n")
@@ -333,21 +335,21 @@ def test_a_parameter_from_a_utility_file_reads_whole_afterwards(session, file):
     """ODE.MTH's functions take `y1` as a parameter, and its demonstration types `y1`."""
     file.write_text("ODE(y1, u) := y1 + u + qq7\n")
     session.load_utility(file)
-    assert session.author("y1 + u + qq7").text == "y1+u+q*q*7"
+    assert session.author("y1 + u + qq7").text == "y1 + u + q*q*7"
 
 
 def test_blank_lines_separate_nothing(session, file):
     """There is one expression per line; blank lines are only spacing."""
     file.write_text("x+1\ny+2\nz+3\n")
     session.load(file)
-    assert texts(session) == ["x+1", "y+2", "z+3"]
+    assert texts(session) == ["x + 1", "y + 2", "z + 3"]
 
 
 def test_the_conventions_of_a_file_the_original_wrote_are_read(session, file):
     """CRLF line endings, a Ctrl-Z ending the file, and a tilde continuation."""
     file.write_bytes(b";Mine\r\na+~\r\nb\r\n\r\nc*d\r\n\x1a")
     assert not session.load(file)
-    assert texts(session) == ["a+b", "c*d"]
+    assert texts(session) == ["a + b", "c*d"]
     assert annotations(session) == ["Mine", "User"]
 
 
@@ -357,7 +359,7 @@ def test_a_file_written_in_code_page_437_reads(session, file):
     mode, so `Θn` is one name, shown as the original shows it."""
     file.write_bytes(b"\xe9n + 1\r\n\x1a")
     assert not session.load(file)
-    assert texts(session) == ["Θn+1"]
+    assert texts(session) == ["Θn + 1"]
 
 
 def test_a_dos_file_s_symbols_read_as_derive_for_dos_read_them(session, file):
@@ -365,10 +367,10 @@ def test_a_dos_file_s_symbols_read_as_derive_for_dos_read_them(session, file):
     0x19 for `SUB` and 0xD2 for the product sign, and use a bare `@` as a name."""
     file.write_bytes(b"\xa8:=v\x19i+\x9c\xf7\r\n\xd2(u\x19j,j,1,n)+@\r\n\x1a")
     assert not session.load(file)
-    assert texts(session) == ["¿:=v SUB i+£≈", "PRODUCT(u SUB j,j,1,n)+@"]
+    assert texts(session) == ["¿ := v SUB i + £≈", "PRODUCT(u SUB j, j, 1, n) + @"]
     session.save(file)
     assert not session.load(file)
-    assert texts(session) == ["¿:=v SUB i+£≈", "PRODUCT(u SUB j,j,1,n)+@"]
+    assert texts(session) == ["¿ := v SUB i + £≈", "PRODUCT(u SUB j, j, 1, n) + @"]
 
 
 def test_a_string_split_by_a_wrap_is_joined_before_comments_are_looked_for(session, file):
@@ -382,8 +384,8 @@ def test_a_string_split_by_a_wrap_is_joined_before_comments_are_looked_for(sessi
     assert not session.load(file)
     assert texts(session) == [
         '"drawing, labeling & numbering axes in the field X:-8..8; Y:-6..6 ==="',
-        "x+1",
-        'o1:=APPEND(o1,["s(x1-x2);","Z:"])',
+        "x + 1",
+        'o1 := APPEND(o1, ["s(x1-x2);", "Z:"])',
     ]
 
 
@@ -393,13 +395,15 @@ def test_what_follows_the_end_marker_is_not_read(session, file):
         b"\x1ajunk that is not Derive text\r\n"
     )
     assert not session.load(file)
-    assert texts(session) == ['names:=["#","$","@","[","\\","]","^","`","{","|","}","~"]']
+    assert texts(session) == [
+        'names := ["#", "$", "@", "[", "\\", "]", "^", "`", "{", "|", "}", "~"]'
+    ]
 
 
 def test_a_tilde_is_data_unless_it_ends_a_line(session, file):
     file.write_bytes(b'["~",[[1.6,7],[inf,~\r\ninf]]]\r\n')
     assert not session.load(file)
-    assert texts(session) == ['["~",[[1.6,7],[inf,inf]]]']
+    assert texts(session) == ['["~", [[1.6, 7], [inf, inf]]]']
 
 
 def test_the_last_annotation_line_before_an_expression_is_its_annotation(session, file):
@@ -420,7 +424,7 @@ def test_a_comment_after_an_expression_is_left_out(session, file):
     """DOS files write `expr ; comment`; a `;` in a string is data."""
     file.write_bytes(b'x+1 ; a DOS comment\r\n\r\n"a ; b"\r\n')
     assert not session.load(file)
-    assert texts(session) == ["x+1", '"a ; b"']
+    assert texts(session) == ["x + 1", '"a ; b"']
 
 
 def test_a_hand_broken_line_is_joined_with_the_indentation_of_its_tail(session, file):
@@ -432,13 +436,13 @@ def test_a_hand_broken_line_is_joined_with_the_indentation_of_its_tail(session, 
 def test_escapes_and_a_byte_order_mark_are_read(session, file):
     file.write_bytes(b"\xef\xbb\xbffl\x7f00e4che:=\x7fe7c2*r^2\r\n")
     assert not session.load(file)
-    assert texts(session) == ["fläche:=pi*r^2"]
+    assert texts(session) == ["fläche := pi*r^2"]
 
 
 def test_a_greek_letter_of_code_page_437_is_part_of_a_name(session, file):
     file.write_bytes(b"z\xe0:=1\r\n")
     assert not session.load(file)
-    assert texts(session) == ["zα:=1"]
+    assert texts(session) == ["zα := 1"]
 
 
 def test_an_escape_for_a_control_character_is_left_as_written(session, file):
@@ -471,9 +475,9 @@ def test_a_derive_setting_never_becomes_a_variable(session, file):
     )
     assert str(session.load(file)) == "1 setting ignored"
     assert texts(session) == [
-        "VariableOrder:=[y,x,z]",
-        "DisplaySteps:=false",
-        "ScientificThreshold:=5",
+        "VariableOrder := [y, x, z]",
+        "DisplaySteps := false",
+        "ScientificThreshold := 5",
     ]
     assert session.order == ("y", "x", "z")
     assert not session.assignments
@@ -492,7 +496,7 @@ def test_a_setting_name_in_another_case_with_no_value_is_a_variable(session, fil
     case spelling needs a value the setting takes."""
     file.write_bytes(b"angle:=\r\n\r\nbranch:=\r\n\r\nangle:=30\r\n")
     assert not session.load(file)
-    assert texts(session) == ["angle:=", "branch:=", "angle:=30"]
+    assert texts(session) == ["angle :=", "branch :=", "angle := 30"]
     assert session.settings["Angle"] == "Radian"
     assert session.settings["Branch"] == "Principal"
     assert "angle" in session.assignments
@@ -502,7 +506,7 @@ def test_a_built_in_word_may_stand_as_a_setting_value(session, file):
     # `GRAD` is a function, but here only a word that is no value of `Angle`.
     file.write_bytes(b"Angle:=Grad\r\n")
     assert str(session.load(file)) == "1 setting ignored"
-    assert texts(session) == ["Angle:=Grad"]
+    assert texts(session) == ["Angle := Grad"]
     assert session.settings["Angle"] == "Radian"
 
 
@@ -512,7 +516,7 @@ def test_a_definition_of_a_built_in_is_refused_and_reported(session, file):
     file.write_bytes(b"SORT(v):=v\r\n\r\nFIRST(v):=v SUB 1\r\n\r\nsort(v):=v\r\n")
     report = session.load(file)
     assert str(report) == "2 refused as built-in (SORT, FIRST)"
-    assert texts(session) == ['"SORT(v):=v"', '"FIRST(v):=v SUB 1"', "sort(v):=v"]
+    assert texts(session) == ['"SORT(v):=v"', '"FIRST(v):=v SUB 1"', "sort(v) := v"]
     assert set(session.functions) == {"sort"}
 
 
@@ -538,8 +542,8 @@ async def test_an_unknown_name_before_a_parenthesis_in_a_file_is_a_call(session,
     )
     assert not session.load(file)
     assert texts(session)[3:5] == [
-        'EXTR_DEC(a,s,r,h):=IF(DER_2ND(a,s,r,h)<0,"Maximum","Minimum")',
-        "AreaUnder(x^2,x,0,1)",
+        'EXTR_DEC(a, s, r, h) := IF(DER_2ND(a, s, r, h) < 0, "Maximum", "Minimum")',
+        "AreaUnder(x^2, x, 0, 1)",
     ]
     assert (await session.simplify("#3")).text == "d + 4"
     assert (await session.simplify("#5")).text == "AreaUnder(x^2, x, 0, 1)"
@@ -574,7 +578,7 @@ def test_character_mode_in_a_file_is_for_the_author_line_after_it(session, file)
     file.write_bytes(b"InputMode:=Character\r\n\r\nabc:=7\r\n\r\nabc\r\n")
     session.settings.assign("InputMode", "Word")
     assert not session.load(file)
-    assert texts(session) == ["InputMode:=Character", "abc:=7", "abc"]
+    assert texts(session) == ["InputMode := Character", "abc := 7", "abc"]
     assert session.settings["InputMode"] == "Character"
 
 
@@ -584,7 +588,7 @@ def test_a_line_that_does_not_parse_is_kept_as_a_string(session, file):
     the file loads."""
     file.write_text('x^2+1\n\n;Simp(#1)\ny + "a" +\n\n#3\n')
     report = session.load(file)
-    assert texts(session) == ["x^2+1", "\"y + 'a' +\"", "#3"]
+    assert texts(session) == ["x^2 + 1", "\"y + 'a' +\"", "#3"]
     assert annotations(session) == ["User", "Simp(#1)", "User"]
     assert str(report) == "1 line kept as strings (#2)"
 
@@ -637,7 +641,7 @@ async def test_a_merged_reference_still_means_the_expression_it_meant(session, f
     for text in ("a", "b", "c"):
         other.author(text)
     other.merge(file)
-    assert texts(other) == ["a", "b", "c", "p", "#4+2"]
+    assert texts(other) == ["a", "b", "c", "p", "#4 + 2"]
     assert (await other.simplify("#5")).text == "p + 2"
 
 
@@ -647,7 +651,7 @@ def test_loading_shifts_nothing(session, file):
     session.author("#1 + 2")
     session.save(file)
     session.load(file)
-    assert texts(session) == ["p", "#1+2"]
+    assert texts(session) == ["p", "#1 + 2"]
 
 
 # -- clearing ----------------------------------------------------------------
@@ -674,7 +678,7 @@ async def test_clearing_variables_leaves_the_expressions(session):
     session.author("v := 7")
     session.author("v + 1")
     session.clear_variables()
-    assert texts(session) == ["v:=7", "v+1"]
+    assert texts(session) == ["v := 7", "v + 1"]
     assert (await session.simplify("#2")).text == "v + 1"
 
 
@@ -749,27 +753,27 @@ async def test_loading_a_utility_file_leaves_the_input_mode_alone(session, file)
 def test_each_block_of_a_data_file_is_one_matrix(session, file):
     file.write_text("1 2 3\n4 5 6\n\n7 8\n9 10\n")
     assert session.load_data(file) == 0
-    assert texts(session) == ["[[1,2,3],[4,5,6]]", "[[7,8],[9,10]]"]
+    assert texts(session) == ["[[1, 2, 3], [4, 5, 6]]", "[[7, 8], [9, 10]]"]
 
 
 def test_a_block_of_one_line_is_a_vector(session, file):
     """As in the original, rather than a one-row matrix."""
     file.write_text("1 2 3\n")
     session.load_data(file)
-    assert texts(session) == ["[1,2,3]"]
+    assert texts(session) == ["[1, 2, 3]"]
 
 
 def test_a_data_file_appends_to_what_is_already_there(session, file):
     file.write_text("1 2\n")
     session.author("z")
     session.load_data(file)
-    assert texts(session) == ["z", "[1,2]"]
+    assert texts(session) == ["z", "[1, 2]"]
 
 
 def test_numbers_may_be_parted_by_spaces_or_commas_or_both(session, file):
     file.write_text("1, 2 3 ,4\n")
     session.load_data(file)
-    assert texts(session) == ["[1,2,3,4]"]
+    assert texts(session) == ["[1, 2, 3, 4]"]
 
 
 def test_an_exponent_becomes_the_power_it_means(session, file):
@@ -777,13 +781,13 @@ def test_an_exponent_becomes_the_power_it_means(session, file):
     ten."""
     file.write_text("-2.325E-7 1.5D3 4.5\n")
     session.load_data(file)
-    assert texts(session) == ["[-2.325*10^(-7),1.5*10^3,4.5]"]
+    assert texts(session) == ["[-2.325*10^-7, 1.5*10^3, 4.5]"]
 
 
 def test_a_block_that_is_not_numbers_is_left_out_and_counted(session, file):
     file.write_text("1 2\n\nx y\n\n3 4\n")
     assert session.load_data(file) == 1
-    assert texts(session) == ["[1,2]", "[3,4]"]
+    assert texts(session) == ["[1, 2]", "[3, 4]"]
 
 
 # -- the state file ----------------------------------------------------------
@@ -900,7 +904,7 @@ async def test_saving_asks_for_a_name_and_writes_the_file(app, file):
         assert prompt(app) == ("TRANSFER SAVE DERIVE file:", "")
         assert message(app) == "Enter filename (TAB completes, opens the list)"
         await pilot.press(*file.name, "enter")
-        assert file.read_text() == "x^2+1\n"
+        assert file.read_text() == "x^2 + 1\n"
         assert message(app) == "Enter option"
         # The command ran, so the menus return to the top.
         assert band(app)[0].startswith(" COMMAND:")
@@ -984,7 +988,7 @@ async def test_ctrl_enter_simplifies_every_expression_it_reads(app, file):
     async with app.run_test() as pilot:
         await pilot.press("t", "l", "d", *file.name)
         await pilot.press("ctrl+j")
-        assert entries(app) == ["2+3", "4*5", "5", "20"]
+        assert entries(app) == ["2 + 3", "4*5", "5", "20"]
         assert message(app).startswith("Compute time:")
 
 
@@ -1015,7 +1019,7 @@ async def test_a_file_with_a_line_that_will_not_parse_says_how_many(app, file):
     file.write_text("x^2+1\n\ny +\n\nz\n")
     async with app.run_test() as pilot:
         await pilot.press("t", "l", "d", *file.name, "enter")
-        assert entries(app) == ["x^2+1", '"y +"', "z"]
+        assert entries(app) == ["x^2 + 1", '"y +"', "z"]
         assert message(app) == "1 line kept as strings (#2)"
 
 
@@ -1038,7 +1042,7 @@ async def test_loading_a_data_file_puts_its_matrices_on_screen(app, tmp_path):
         await pilot.press("t", "l", "t")
         assert prompt(app) == ("TRANSFER LOAD DATA file:", "")
         await pilot.press(*numbers.name, "enter")
-        assert entries(app) == ["[[1,2],[3,4]]"]
+        assert entries(app) == ["[[1, 2], [3, 4]]"]
 
 
 async def test_a_name_with_no_extension_gets_the_one_its_command_reads(app, tmp_path):
@@ -1046,7 +1050,7 @@ async def test_a_name_with_no_extension_gets_the_one_its_command_reads(app, tmp_
     (tmp_path / "grid.dat").write_text("1 2\n")
     async with app.run_test() as pilot:
         await pilot.press("t", "l", "t", *"grid", "enter")
-        assert entries(app) == ["[1,2]"]
+        assert entries(app) == ["[1, 2]"]
 
 
 # -- completing a name on the line -------------------------------------------
@@ -1561,7 +1565,7 @@ async def test_clearing_variables_and_functions_asks_nothing(app):
     async with app.run_test() as pilot:
         await pilot.press("a", *"v:=7", "enter")
         await pilot.press("t", "c", "v")
-        assert entries(app) == ["v:=7"]
+        assert entries(app) == ["v := 7"]
         assert message(app) == "Enter option"
         await pilot.press("a", *"v+1", "enter")
         await pilot.press("s", "enter")
@@ -1587,10 +1591,10 @@ async def test_a_demonstration_authors_and_simplifies_a_step_at_a_time(app, demo
         # The comment replaces the menu band and waits for a key.
         assert band(app) == [" adds two numbers"]
         assert message(app) == "Press any key to continue, ESC to stop"
-        assert entries(app) == ["2+3", "5"]
+        assert entries(app) == ["2 + 3", "5"]
         await pilot.press("space")
         assert band(app) == [" and a symbolic one"]
-        assert entries(app) == ["2+3", "5", "(x+1)^2", "(x + 1)^2"]
+        assert entries(app) == ["2 + 3", "5", "(x + 1)^2", "(x + 1)^2"]
         # After the last step, the command ends.
         await pilot.press("space")
         assert band(app)[0].startswith(" COMMAND:")
@@ -1610,7 +1614,7 @@ async def test_a_demonstration_step_is_read_in_word_mode(app, tmp_path):
     path.write_text("; one name\nab + 1\n")
     async with app.run_test() as pilot:
         await pilot.press("t", "d", "o", *path.name, "enter")
-        assert entries(app) == ["ab+1", "ab + 1"]
+        assert entries(app) == ["ab + 1", "ab + 1"]
         await pilot.press("space")
     assert app.session.author("ab").text == "a*b"
 
@@ -1624,7 +1628,7 @@ async def test_escape_suspends_a_demonstration_where_it_stands(app, demo):
         await pilot.press("a", *"z", "enter")
         await pilot.press("t", "d", "o", *demo.name, "enter")
         assert band(app) == [" and a symbolic one"]
-        assert entries(app) == ["2+3", "5", "z", "(x+1)^2", "(x + 1)^2"]
+        assert entries(app) == ["2 + 3", "5", "z", "(x + 1)^2", "(x + 1)^2"]
 
 
 async def test_a_demonstration_that_has_run_out_starts_over(app, demo):
@@ -1643,7 +1647,7 @@ async def test_a_demonstration_can_start_from_anywhere_on_the_screen(app, demo):
         await pilot.pause()
         # The interrupted author line is gone, and the step is shown.
         assert band(app) == [" adds two numbers"]
-        assert entries(app) == ["2+3", "5"]
+        assert entries(app) == ["2 + 3", "5"]
         # The abandoned line isn't resumed: the demonstration ends at the command menu.
         await pilot.press("space", "space")
         assert band(app)[0].startswith(" COMMAND:")
@@ -1716,7 +1720,7 @@ async def test_a_demonstration_that_is_not_here_is_downloaded_and_remembered(
     async with app.run_test() as pilot:
         await pilot.press("t", "d", "a")
         assert await settled(pilot, lambda: band(app) == [" adds two numbers"])
-        assert entries(app) == ["2+3", "5"]
+        assert entries(app) == ["2 + 3", "5"]
         assert downloaded.asked == ["ARITH.DMO"]
         # Nothing is written: the user asked for a demonstration, not a file.
         assert not Path("ARITH.DMO").exists()
@@ -1793,7 +1797,7 @@ async def test_watching_a_demonstration_writes_nothing_anywhere(
     async with app.run_test() as pilot:
         await pilot.press("t", "d", "a")
         assert await settled(pilot, lambda: band(app) == [" adds two numbers"])
-        assert entries(app) == ["2+3", "5"]
+        assert entries(app) == ["2 + 3", "5"]
         assert list(Path().iterdir()) == []
 
 

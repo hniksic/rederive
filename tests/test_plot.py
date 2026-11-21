@@ -3691,7 +3691,7 @@ async def test_a_gallery_leaves_its_expressions_on_the_worksheet(app, gallery):
         app.demonstrate(str(gallery), plotting=True)
         await pilot.pause()
         await pilot.press("space", "space")
-        assert [entry.text for entry in app.session.entries] == ["2*SIN(x)", "y^2-x^2"]
+        assert [entry.text for entry in app.session.entries] == ["2*SIN(x)", "y^2 - x^2"]
 
 
 async def test_a_gallery_without_a_display_is_refused_as_a_plot_is(

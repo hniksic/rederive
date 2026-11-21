@@ -1018,14 +1018,14 @@ async def test_a_command_hands_back_what_it_did_in_order(monkeypatch):
     assert entry.text == "hd := 4"
     assert performed == [
         [
-            "hc:epsilonInteger",
-            "hf(x):=x+1",
-            "PrecisionDigits:=12",
-            "hb:=[5,2]",
-            "he:=",
-            "hg:=4",
-            "ha:=4",
-            "hd:=4",
+            "hc :epsilon Integer",
+            "hf(x) := x + 1",
+            "PrecisionDigits := 12",
+            "hb := [5, 2]",
+            "he :=",
+            "hg := 4",
+            "ha := 4",
+            "hd := 4",
         ]
     ]
     assert list(session.assignments) == ["ha", "hb", "hd", "hg"]

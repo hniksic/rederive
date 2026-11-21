@@ -71,6 +71,7 @@ from rederive.engine.printer import (
     logical_order,
     spelling,
     term_order,
+    tree,
 )
 from rederive.engine.sets import (
     MOST_TERMS,
@@ -715,7 +716,7 @@ def held(node: Node) -> sp.Basic:
     text = write_expression(node)
     cls = _HELD.get(text)
     if cls is None:
-        level = _HELD_PRECEDENCE[writer_precedence(node, " ")]
+        level = _HELD_PRECEDENCE[writer_precedence(node)]
         cls = _HELD[text] = UndefinedFunction(
             f"HELD_{len(_HELD)}",
             bases=(HeldBase,),
@@ -4691,12 +4692,10 @@ def string_parts(conv: Converter, value: sp.Basic) -> tuple[str, list[sp.Basic]]
     at its top as Rederive writes it, and its operands, which are values (see
     `_string_head`). Raises for a value with no operator, such as a name."""
     # The answer writer reads trees; it is imported here, since it imports this module.
-    from rederive.engine.from_sympy import parse_state_for
-    from rederive.syntax import parse_expression
+    from rederive.engine.from_sympy import written_tree
 
     exact = replace(conv.context, notation=Notation.RATIONAL)
-    text = author_text(value, exact)
-    node = parse_expression(text, parse_state_for(value, exact)).node
+    node = written_tree(value, exact)
     head, operands = _string_head(node)
     plain = Converter(exact)
     values = []
@@ -6167,16 +6166,16 @@ def authored_conditionals(
     context: Context,
     simplify_test: Callable[[sp.Basic], sp.Basic] | None = None,
     retested: Mapping[sp.Basic, sp.Basic] | None = None,
-) -> dict[sp.Basic, str]:
-    """Every conditional in `node`, as text keyed by its converted expression.
+) -> dict[sp.Basic, Node]:
+    """Every conditional in `node`, as a tree keyed by its converted expression.
 
     Derive shows an undecidable conditional exactly as typed: the test isn't rearranged
     and the arms aren't evaluated, so `IF(x > 0, 2 + 3, 4 + 5)` keeps its arithmetic.
-    The converted expression has already lost that (`2 + 3` is 5), so the text is taken
-    from the tree and given to the printer, which uses it wherever that expression
-    appears in an answer.
+    The converted expression has already lost that (`2 + 3` is 5), so the tree is
+    given to the printer, which puts it in wherever that expression appears in an
+    answer.
 
-    The text always converts back to its key, so this only changes spelling, never
+    The tree always converts back to its key, so this only changes spelling, never
     value. The one imprecision is that two conditionals converting to the same
     expression share one spelling.
 
@@ -6199,7 +6198,7 @@ def authored_conditionals(
     `simplify_test`, with the arms as written: with `f(x) := x^2`, `IF(f(a) = 4, 1 + 1,
     2)` is `IF(a^2 = 4, 1 + 1, 2)`.
     """
-    authored: dict[sp.Basic, str] = {}
+    authored: dict[sp.Basic, Node] = {}
     converter = Converter(context)
     # A conditional may be in a definition, whose parameters the built-ins that answer
     # from the form of a value leave standing.
@@ -6215,15 +6214,15 @@ def authored_conditionals(
             shown = None
             if simplify_test is not None:
                 shown = _with_test_simplified(found, converter, simplify_test)
-            authored[converted] = shown or write_expression(found, spaced=True)
+            authored[converted] = shown or found
         worked = _with_test_worked(found, converted, context)
         if worked is not None:
             authored.setdefault(*worked)
         if retested and converted in retested:
             shown = retested[converted]
-            text = _with_test_computed(found, shown, context, simplify_test)
-            if text is not None:
-                authored.setdefault(shown, text)
+            tested = _with_test_computed(found, shown, context, simplify_test)
+            if tested is not None:
+                authored.setdefault(shown, tested)
     return authored
 
 
@@ -6232,29 +6231,33 @@ def _with_test_computed(
     shown: sp.Basic,
     context: Context,
     simplify_test: Callable[[sp.Basic], sp.Basic] | None,
-) -> str | None:
-    """The text of the authored `IF` call `found` with the test of the conditional
-    `shown`, simplified by `simplify_test` if that leaves a relation, and its arms as
-    written."""
+) -> Node | None:
+    """The authored `IF` call `found` with the test of the conditional `shown`,
+    simplified by `simplify_test` if that leaves a relation, and its arms as written."""
     try:
         test = shown.args[0].cond if isinstance(shown, sp.Piecewise) else shown.args[0]
         if simplify_test is not None and isinstance(test, Relational):
             simplified = simplify_test(test)
             if isinstance(simplified, Relational):
                 test = simplified
-        arms = [write_expression(arm, spaced=True) for arm in found.children[2:]]
-        return f"IF({', '.join([author_text(test, context), *arms])})"
+        return _with_test(found, tree(test, context))
     except Exception:
         return None
+
+
+def _with_test(found: Node, test: Node) -> Node:
+    """The authored `IF` call `found` with the test `test` and its arms as written."""
+    head, _, *arms = found.children
+    return Node(Kind.CALL, found.start, found.end, (head, test, *arms))
 
 
 def _with_test_simplified(
     found: Node,
     converter: Converter,
     simplify_test: Callable[[sp.Basic], sp.Basic],
-) -> str | None:
-    """The text of the authored `IF` call `found` with its test simplified, or None if
-    simplifying changes nothing or decides it."""
+) -> Node | None:
+    """The authored `IF` call `found` with its test simplified, or None if simplifying
+    changes nothing or decides it."""
     if found.kind is not Kind.CALL or len(found.children) < 3:
         return None
     if found.children[1].kind is not Kind.REL:
@@ -6265,17 +6268,17 @@ def _with_test_simplified(
         return None
     if not isinstance(simplified, Relational):
         return None
-    text = author_text(simplified, converter.context)
-    if text == write_expression(found.children[1], spaced=True):
+    test = tree(simplified, converter.context)
+    shown = write_expression(test)
+    if shown == write_expression(found.children[1]):
         return None
-    arms = [write_expression(arm, spaced=True) for arm in found.children[2:]]
-    return f"IF({', '.join([text, *arms])})"
+    return _with_test(found, test)
 
 
 def _with_test_worked(
     found: Node, converted: sp.Basic, context: Context
-) -> tuple[sp.Basic, str] | None:
-    """The authored conditional `found` with its test worked out, and its text, or None
+) -> tuple[sp.Basic, Node] | None:
+    """The authored conditional `found` with its test worked out, and its tree, or None
     if its test has no calculus to work out."""
     if not converted.has(*CALCULUS_HEADS) or len(found.children) < 3:
         return None
@@ -6284,8 +6287,7 @@ def _with_test_worked(
         if worked == converted:
             return None
         test = worked.args[0].cond if isinstance(worked, sp.Piecewise) else worked.args[0]
-        arms = [write_expression(arm, spaced=True) for arm in found.children[2:]]
-        return worked, f"IF({', '.join([author_text(test, context), *arms])})"
+        return worked, _with_test(found, tree(test, context))
     except Exception:
         return None
 

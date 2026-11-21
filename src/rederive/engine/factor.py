@@ -25,7 +25,6 @@ from rederive.engine.printer import shadowing_built_ins
 from rederive.engine.approximation import approximated, noting_approximations
 from rederive.engine.pipeline import simplified, top_level_equation
 from rederive.model.expr import Node
-from rederive.syntax.state import ParseState
 
 __all__ = ["factor", "factored"]
 
@@ -38,16 +37,14 @@ def factor(
     context: Context | None = None,
     amount: Amount = DEFAULT_AMOUNT,
     variables: Sequence[str] = (),
-    state: ParseState | None = None,
 ) -> Result:
     """Derive's Factor: `node` written as a product.
 
     `variables` names the factorization variables in the order chosen, empty meaning
-    all. `state` is the symbol table used to reparse the answer; a session in a
-    non-default input or case mode must pass its own.
+    all.
     """
     context = (context or Context()).fresh()
-    return from_sympy(factored(node, context, amount, variables), context, state)
+    return from_sympy(factored(node, context, amount, variables), context)
 
 
 def factored(
@@ -58,8 +55,8 @@ def factored(
 ) -> sp.Basic:
     """The factored sympy expression, before it is written back out.
 
-    Like `simplified` for Simplify, this lets a caller keep computing without printing
-    and reparsing.
+    Like `simplified` for Simplify, this lets a caller keep computing without building
+    an answer.
     """
     context = context or Context()
     # A top-level equation keeps its form, so that it is expanded or factored as such.

@@ -34,7 +34,6 @@ from rederive.engine.pipeline import simplified
 from rederive.engine.solving import minting, solutions
 from rederive.engine.to_sympy import InOrder, Vector, in_degrees, to_sympy
 from rederive.model.expr import Node
-from rederive.syntax.state import ParseState
 
 __all__ = ["solve", "solved"]
 
@@ -47,19 +46,17 @@ def solve(
     context: Context | None = None,
     variables: Sequence[str] = (),
     bounds: tuple[Node, Node] | None = None,
-    state: ParseState | None = None,
 ) -> tuple[Result, ...]:
     """Derive's soLve: solve `node` for the given variables.
 
     Each `Result` is one worksheet entry, in append order; the empty tuple means no
     solutions were found. `variables` names what to solve for in the user's order,
     empty meaning determine it automatically. `bounds` limits a numeric search, used
-    only in Approximate mode. `state` is the symbol table used to reparse the answers;
-    a session in a non-default input or case mode must pass its own.
+    only in Approximate mode.
     """
     context = (context or Context()).fresh()
     return tuple(
-        from_sympy(answer, context, state)
+        from_sympy(answer, context)
         for answer in solved(node, context, variables, bounds)
     )
 

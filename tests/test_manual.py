@@ -275,7 +275,7 @@ def test_the_operators_group_the_way_the_manual_says(text, expected):
 async def test_the_manuals_first_arithmetic_is_not_simplified_until_asked(session):
     # 3.1 p.27: authoring `2 (8 + 7)/3^2` displays it built up, unsimplified.
     entry = session.author("2 (8 + 7) / 3^2")
-    assert entry.text == "2*(8+7)/3^2"
+    assert entry.text == "2*(8 + 7)/3^2"
     lines = (" 2·(8 + 7) ", "───────────", "      2    ", "     3     ")
     assert entry.layout.lines == lines
     # 3.2 p.28: Simplify answers 10/3, and says which line it came from.
@@ -1293,7 +1293,7 @@ async def test_simplifying_a_subexpression_leaves_the_rest_of_the_line_alone(ses
     session.select_entry(0)
     session.move_right()
     session.move_down()
-    assert session.highlighted_text == "5*x-3*x+1"
+    assert session.highlighted_text == "5*x - 3*x + 1"
     part = await session.simplify("#1")
     assert to_sexpr(part.node) == to_sexpr(parse("(2*x + 1)^7 - x"))
     assert part.annotation == "Simp(#1')"
@@ -1689,7 +1689,7 @@ BOOLEAN = [
     ("false IMP true", "true"),
     # 4.16 p.128: the forms for symbolic operands. The page parenthesizes the XOR form;
     # the program doesn't, since AND binds tighter than OR, and that is asserted.
-    ("p XOR q", "(NOT p AND q) OR (p AND NOT q)"),
+    ("p XOR q", "NOT p AND q OR p AND NOT q"),
     ("p IMP q", "NOT p OR q"),
     ("NOT NOT p", "p"),
     ("p AND (p AND q OR r)", "p AND (q OR r)"),
