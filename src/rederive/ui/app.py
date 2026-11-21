@@ -331,6 +331,9 @@ ALT_GLYPHS = {
 # keys that move the highlight, since Up and Down then move along the rows.
 ENTER_EXPRESSION = "Enter expression ({new_row}: new line, F1: help)"
 ENTER_ROWS = "Enter expression ({modifier}-Up/Down: highlight, F1: help)"
+#: The modifier the hint names for those keys: Alt on a Mac, where Ctrl-Up and Ctrl-Down
+#: are Mission Control's. Both work everywhere.
+HIGHLIGHT_MODIFIER = "Alt" if sys.platform == "darwin" else "Ctrl"
 #: Prompt for commands that derive an expression, without the Author line's help hint.
 ENTER_TO_DERIVE = "Enter expression"
 #: Asked by Quit and the two Clear commands that discard expressions.
@@ -2497,9 +2500,7 @@ class RederiveApp(App[None]):
         """The Author line's prompt: the key that starts a new row, and once there are
         several, the keys that move the highlight."""
         if self.query_one(AuthorText).rows > 1:
-            return ENTER_ROWS.format(
-                modifier="Alt" if sys.platform == "darwin" else "Ctrl"
-            )
+            return ENTER_ROWS.format(modifier=HIGHLIGHT_MODIFIER)
         return ENTER_EXPRESSION.format(
             new_row="Shift-Enter" if self.shift_enter else "Alt-Enter"
         )
