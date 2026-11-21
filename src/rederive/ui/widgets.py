@@ -799,9 +799,6 @@ class AuthorText(KillRing, TextArea):
 
     overwrite = False
 
-    class Reshaped(Message):
-        """The text went from one row to several, or back."""
-
     class Submitted(Message):
         """Enter on a complete expression."""
 
@@ -824,8 +821,6 @@ class AuthorText(KillRing, TextArea):
         )
         self._start_ring(kills)
         self.unfinished = unfinished
-        #: Whether the text has several rows, as last reported with `Reshaped`.
-        self._several = False
 
     @property
     def value(self) -> str:
@@ -843,10 +838,6 @@ class AuthorText(KillRing, TextArea):
 
     def _fit(self) -> None:
         """Size the field to its text, up to `MAX_ROWS`."""
-        several = self.rows > 1
-        if several != self._several:
-            self._several = several
-            self.post_message(self.Reshaped())
         self.styles.height = min(self.rows, self.MAX_ROWS)
 
     def edit(self, edit: Edit) -> EditResult:

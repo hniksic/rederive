@@ -30,7 +30,8 @@ command menu; Esc abandons the line and leaves the submenu up.
 The Author line is a widget of its own, which grows to several rows: Enter on an
 unfinished expression starts a new row, as do Shift-Enter and Alt-Enter on any. Once it
 has several rows, Up and Down move along them, while Ctrl-Up and Ctrl-Down (Alt on a
-Mac, where Ctrl-Up is Mission Control) move the highlight on every line. Tab indents.
+Mac, where Ctrl-Up is Mission Control) move the highlight on every line; the F1 help
+lists them. Tab indents.
 
 Ctrl-Enter is Enter followed by simplifying the entered expression, on every line that
 enters an expression. Terminals without the extended keyboard protocol send Ctrl-J for
@@ -325,15 +326,12 @@ ALT_GLYPHS = {
     "v": " SUB ",
 }
 
-# As in Derive, only the Author line mentions F1 help, although every line supports it.
-# It also names the key that starts a new row: Shift-Enter where the keyboard reports
-# it, and otherwise Alt-Enter. Once the line has several rows, it names instead the
-# keys that move the highlight, since Up and Down then move along the rows.
+# A prompt on the message line says what is expected, in a few words. It is not where
+# keys are documented: that is the F1 help, which every line offers. As in Derive, only
+# the Author line mentions F1, and besides it names just the key that starts a new row
+# (Shift-Enter where the keyboard reports it, otherwise Alt-Enter). Don't add more keys
+# here; a key named in passing explains nothing, and the line has room for one.
 ENTER_EXPRESSION = "Enter expression ({new_row}: new line, F1: help)"
-ENTER_ROWS = "Enter expression ({modifier}-Up/Down: highlight, F1: help)"
-#: The modifier the hint names for those keys: Alt on a Mac, where Ctrl-Up and Ctrl-Down
-#: are Mission Control's. Both work everywhere.
-HIGHLIGHT_MODIFIER = "Alt" if sys.platform == "darwin" else "Ctrl"
 #: Prompt for commands that derive an expression, without the Author line's help hint.
 ENTER_TO_DERIVE = "Enter expression"
 #: Asked by Quit and the two Clear commands that discard expressions.
@@ -2497,28 +2495,10 @@ class RederiveApp(App[None]):
         self._walk_prompt(movement)
 
     def _author_hint(self) -> str:
-        """The Author line's prompt: the key that starts a new row, and once there are
-        several, the keys that move the highlight."""
-        if self.query_one(AuthorText).rows > 1:
-            return ENTER_ROWS.format(modifier=HIGHLIGHT_MODIFIER)
+        """The Author line's prompt, naming the key that starts a new row."""
         return ENTER_EXPRESSION.format(
             new_row="Shift-Enter" if self.shift_enter else "Alt-Enter"
         )
-
-    def on_author_text_reshaped(self, event: AuthorText.Reshaped) -> None:
-        """Change the Author line's hint as it gains or loses its second row.
-
-        A message that isn't the hint, such as a syntax error, is left alone.
-        """
-        if self.mode == MODE_AUTHOR and self.message in self._author_hints():
-            self._set_message(self._author_hint())
-
-    def _author_hints(self) -> set[str]:
-        """Every form the Author line's hint takes."""
-        return {
-            *(ENTER_EXPRESSION.format(new_row=key) for key in ("Shift-Enter", "Alt-Enter")),
-            *(ENTER_ROWS.format(modifier=key) for key in ("Ctrl", "Alt")),
-        }
 
     def action_toggle_arrow_mode(self) -> None:
         """F6: toggle whether left/right keys go to the line or the highlight.

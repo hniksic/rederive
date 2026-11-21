@@ -25,7 +25,6 @@ from rederive.ui.app import (
     COPIED,
     COPIED_TEXT,
     CUT_TEXT,
-    HIGHLIGHT_MODIFIER,
     NOTHING_TO_CUT,
     RederiveApp,
 )
@@ -2512,18 +2511,6 @@ async def test_tab_and_shift_tab_indent_and_dedent(app):
         await pilot.press("shift+tab")
         assert prompt(app)[1] == "x\n  + y"
         assert app.query_one("#prompt-text").cursor_location == (1, 5)
-
-
-async def test_the_hint_names_the_highlight_keys_once_there_are_rows(app):
-    async with app.run_test() as pilot:
-        await pilot.press("a", *"(1", "enter")
-        await pilot.pause()
-        assert message(app) == (
-            f"Enter expression ({HIGHLIGHT_MODIFIER}-Up/Down: highlight, F1: help)"
-        )
-        await pilot.press("backspace", "backspace", "backspace")
-        await pilot.pause()
-        assert message(app) == "Enter expression (Alt-Enter: new line, F1: help)"
 
 
 async def test_the_hint_names_shift_enter_where_the_keyboard_reports_it(app):
