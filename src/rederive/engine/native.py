@@ -31,7 +31,7 @@ from typing import TYPE_CHECKING, Any
 
 import sympy as sp
 
-from rederive.engine.to_sympy import Assign
+from rederive.engine.to_sympy import SETTLED_ADDED, Assign, settled_since
 from rederive.engine.vectors import Vector
 
 from rederive.engine.context import Global
@@ -69,19 +69,28 @@ class NativeVector:
     vector as a value would unwrap: so its elements are those of `vector()` as an
     operand. `symbolic` counts the elements that are not native numbers or truth
     values; while it is zero, no substitution changes the vector.
+
+    `settled` is None, or for a vector made of one a program stored as it is under some
+    settings (see `SETTLED` in to_sympy.py), those settings and the values written into
+    it since, which `vector()` passes on (see `settled_since`).
     """
 
-    __slots__ = ("items", "made", "symbolic")
+    __slots__ = ("items", "made", "settled", "symbolic")
 
-    def __init__(self, items: list) -> None:
+    def __init__(self, items: list, settled: tuple[object, list] | None = None) -> None:
         self.items = items
         self.made: Vector | None = None
         self.symbolic = sum(1 for item in items if type(item) not in SCALARS)
+        self.settled = settled
 
     def vector(self) -> Vector:
         made = self.made
         if made is None:
             made = self.made = Vector.of(tuple(sympy_of(item) for item in self.items))
+            settled = self.settled
+            if settled is not None:
+                key, written = settled
+                settled_since(made, key, [sympy_of(item) for item in written])
         return made
 
     def put(self, place: int, value: object) -> None:
@@ -92,6 +101,16 @@ class NativeVector:
         )
         items[place] = value
         self.made = None
+        self.wrote(value)
+
+    def wrote(self, value: object) -> None:
+        """Record that `value` is now an element, for `settled`."""
+        settled = self.settled
+        if settled is not None and type(value) not in SCALARS:
+            if len(settled[1]) < SETTLED_ADDED:
+                settled[1].append(value)
+            else:
+                self.settled = None
 
 
 class NativeAssignment:

@@ -16,6 +16,7 @@ The benchmarks of the native values run here at a reduced size, for their answer
 """
 
 import pytest
+import sympy as sp
 from test_library import LIBRARY_CASES, _case_ids
 from test_library import test_a_library_function_computes_its_specified_results as _library
 from test_programs import *  # noqa: F403 - the program tests, run again uncompiled
@@ -696,6 +697,38 @@ CASES = {
         "> Precision := Approximate",
         "[tb1(2), tb2(2), tb3(2)]",
     ],
+    "settled tables": [
+        "> st1(n, t, k) := PROG(t := [[SQRT(2), x + 1]], k := 1, LOOP(IF(k > n, "
+        "RETURN(t)), t := APPEND(t, [[k, SIN(x)^2 + COS(x)^2]]), k :+ 1))",
+        "st1(3)",
+        "> st2(n, t, k) := PROG(t := [SIN(2*x), 2*pi], k := 1, LOOP(IF(k > n, "
+        "RETURN(t)), t := ADJOIN(k*SQRT(8), t), t SUB 2 := t SUB 2 + LN(#e^k), "
+        "k :+ 1))",
+        "st2(3)",
+        "> st3(n, t, k) := PROG(t := [[INT(x^2, x), 1], [2, SQRT(x^2)]], k := 1, "
+        "LOOP(IF(k > n, RETURN(t)), t SUB 1 SUB 2 := k*pi, t := APPEND(t, [[k, "
+        "(x^2 - 1)/(x - 1)]]), k :+ 1))",
+        "st3(3)",
+        "> st4(t) := PROG(t := [SIN(2*x), SQRT(z^2)], t := APPEND(t, [1]), "
+        "Trigonometry := Expand, t := APPEND(t, [2]), z :epsilon Real (0, inf), "
+        "t := APPEND(t, [3]), x := 2, t := APPEND(t, [x]), RETURN(t))",
+        "st4()",
+        "> st5(t) := PROG(t := [f(x), SQRT(3) + SQRT(12)], t := APPEND(t, [1]), "
+        "f(y) := y^2, t := APPEND(t, [f(2)]), t SUB 1 := f(x), t := REST(t), "
+        "t := APPEND(t, [t SUB 1]), RETURN(t))",
+        "st5()",
+        "PROG(gs := [SQRT(2), x + 1], gn := 1, LOOP(IF(gn > 3, RETURN(gs)), "
+        "gs := APPEND(gs, [gn*SQRT(2)]), gs SUB 1 :+ gn, gn :+ 1))",
+        # Simplified once, the first element takes a form a second pass changes.
+        "> st6(n, t, k) := PROG(t := [1536*(-4*w + #i)*#e^(3*w - 4*#i*w), 4096], "
+        "k := 1, LOOP(IF(k > n, RETURN([t, TERMS(t SUB 1)])), t := APPEND(t, [k]), "
+        "k :+ 1))",
+        "[st6(0), st6(1), st6(3)]",
+        "> Precision := Mixed",
+        "[st1(2), st2(2), st3(2)]",
+        "> Precision := Approximate",
+        "[st1(2), st2(2), st3(2)]",
+    ],
 }
 
 #: Programs at top level, whose variables are globals, and functions that change
@@ -1310,6 +1343,78 @@ async def test_extending_a_table_of_constants_simplifies_no_old_element(monkeypa
         calls[0] = 0
         assert (await session.simplify("tc(300)")).text == "301"
         assert calls[0] < 300
+
+
+@pytest.mark.parametrize(
+    "extension",
+    [
+        "t := APPEND(t, [[k, k]])",
+        "t := ADJOIN([k, k], t)",
+        "t SUB 1 SUB 2 := k, t := APPEND(t, [[k, k]])",
+        "t := APPEND(t, [[k, k*SQRT(k)]])",
+    ],
+)
+@pytest.mark.parametrize("compiled", [True, False])
+async def test_extending_a_table_of_expressions_simplifies_no_old_element(
+    monkeypatch, extension, compiled
+):
+    """A table of roots, multiples of `pi` or symbolic expressions that simplifying
+    leaves as it is remembers so, as the tables it is extended into do, so storing each
+    extension simplifies only what it adds: simplified anew at each pass, the table of
+    `n` points would take some `n^2/2` steps of Simplify."""
+    monkeypatch.setattr(evaluate, "COMPILED", compiled)
+    calls = [0]
+    transform = pipeline._transform
+
+    def counted(*args, **kwargs):
+        calls[0] += 1
+        return transform(*args, **kwargs)
+
+    monkeypatch.setattr(pipeline, "_transform", counted)
+    session = Session()
+    for head in ["[SQRT(2), 1]", "[2*pi, -pi]", "[x + 1, y]", "[SIN(x), 1]"]:
+        session.author(
+            f"te(n, t, k) := PROG(t := [{head}], k := 1, LOOP(IF(k > n, "
+            f"RETURN(DIM(t))), {extension}, k :+ 1))"
+        )
+        calls[0] = 0
+        assert (await session.simplify("te(300)")).text == "301"
+        assert calls[0] < 5 * 300
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        "Trigonometry := Expand",
+        "Branch := Real",
+        "z :epsilon Real (0, inf)",
+        "f(y) := y",
+    ],
+)
+async def test_a_settled_table_is_simplified_anew_under_other_settings(
+    monkeypatch, change
+):
+    """What a table is known to simplify to holds under the settings, declarations and
+    definitions it was simplified under: a program that changes them has its old
+    elements simplified again."""
+    seen = []
+    transform = pipeline._transform
+
+    def recorded(expression, *args, **kwargs):
+        seen.append(expression)
+        return transform(expression, *args, **kwargs)
+
+    monkeypatch.setattr(pipeline, "_transform", recorded)
+    session = Session()
+    session.author(
+        "ts(t) := PROG(t := [SIN(2*x), 1], t := APPEND(t, [2]), t := APPEND(t, [3]), "
+        f"{change}, t := APPEND(t, [4]), DIM(t))"
+    )
+    assert (await session.simplify("ts()")).text == "5"
+    element = sp.sin(2 * sp.Symbol("x", real=True))
+    old = sum(1 for expression in seen if expression == element)
+    # Stored first, then again after the change, and not at the passes between.
+    assert old == 2
 
 
 async def test_a_table_of_constants_keeps_its_answers():

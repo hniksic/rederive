@@ -277,6 +277,8 @@ class Store:
     cells: dict[str, Global] = field(default_factory=dict)
     """This dict is never replaced, only changed: evaluators hold it (see `restore`)."""
     functions: dict[str, Definition | None] = field(default_factory=dict)
+    """Replaced, not changed, by each definition, so that a reference to it is the
+    definitions in force when it was taken."""
     domains: dict[str, Domain] = field(default_factory=dict)
     """Replaced, not changed, by each declaration, so that a reference to it is the
     declarations in force when it was taken."""
@@ -332,7 +334,10 @@ class Store:
         """Perform the `FUNDEF` tree `node`."""
         name = str(node.value)
         definition = Definition.of(node)
-        self.functions[name] = None if definition.body is None else definition
+        self.functions = {
+            **self.functions,
+            name: None if definition.body is None else definition,
+        }
         self._effect(("define", name), node)
 
     def set(self, name: str, value: SettingValue) -> None:

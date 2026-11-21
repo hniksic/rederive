@@ -125,9 +125,9 @@ from rederive.engine.to_sympy import (
     DECOMPOSING,
     LOGICAL_WORDS,
     ON_FORM,
-    SIMPLE,
     Assign,
     ColumnsOf,
+    Commanded,
     Converter,
     Deeper,
     FunDef,
@@ -155,6 +155,10 @@ from rederive.engine.to_sympy import (
     is_conditional,
     is_plain,
     is_simple,
+    mark_settled,
+    settled_from,
+    settled_key,
+    unwrapped,
     simple_constants,
     iterated,
     multiplied,
@@ -1415,18 +1419,44 @@ class _Evaluator(Converter):
         The value is simplified exactly, and under Approximate rounded only as any value
         carried from one step to the next is (see `carried`): the precision's
         approximation is the last step of the command, and a statement after this one
-        may need the exact value, as a limit at a root of the denominator does."""
+        may need the exact value, as a limit at a root of the denominator does.
+
+        A vector that simplifying leaves as it is records the settings it was
+        simplified under, which list functions pass on to the vectors they make of its
+        elements (see `SETTLED`): a loop that extends a table then simplifies only the
+        elements it adds."""
         value = _value_of(value)
+        context = self.context
+        # What simplifying depends on besides the value (see `SETTLED`).
+        key = (context, context.store.domains, context.store.functions)
+        if isinstance(value, Vector):
+            known = settled_key(value)
+            if known is key or (known is not None and known == key):
+                return carried(value, context)
         if is_simple(value) or self._approximated(value):
-            return carried(value, self.context)
+            return carried(value, context)
         simplify = self.env.simplify
-        if simplify is not None and not self.env.writing:
-            try:
-                exact = self.context.with_precision(Precision.EXACT)
-                value = simplify(value, exact, top=top)
-            except Exception:
-                pass
-        return carried(value, self.context)
+        if simplify is None or self.env.writing:
+            return carried(value, context)
+        exact = context.with_precision(Precision.EXACT)
+        if isinstance(value, Vector):
+            remaining = settled_from(value)
+            if remaining is not None and (
+                remaining[0] == key
+                and all(
+                    _settles_as_it_is(item, simplify, exact) for item in remaining[1]
+                )
+            ):
+                return carried(mark_settled(value, key), context)
+        try:
+            simplified = simplify(value, exact, top=top)
+        except Exception:
+            return carried(value, context)
+        if isinstance(simplified, Vector) and _same(simplified, value):
+            # Simplifying it again would leave it as it is too, which holds of no
+            # vector simplifying changed: Simplify isn't idempotent on everything.
+            mark_settled(simplified, key)
+        return carried(simplified, context)
 
     def _approximated(self, value: sp.Basic) -> bool:
         """Whether `value` is a number that Approximate precision approximates as it
@@ -4486,7 +4516,7 @@ def _written_in_place(
             return _NO_VALUE
         if type(container) is NativeVector:
             items = container.items
-        elif isinstance(container, Vector) and _unwrapped(container):
+        elif isinstance(container, Vector) and unwrapped(container):
             items = container.args
         else:
             return _NO_VALUE
@@ -4524,6 +4554,7 @@ def _written_in_place(
         if type(element) is not NativeVector:
             element = _native_vector(element)
             container.items[place - 1] = element
+            container.wrote(element)
         container = element
     container.put(places[-1] - 1, value)
     if store is None:
@@ -4534,8 +4565,17 @@ def _written_in_place(
 
 
 def _native_vector(vector: Vector) -> NativeVector:
-    """The vector `vector`, which `_unwrapped` holds of, as a native one."""
-    return NativeVector([native_of(element) for element in vector.args])
+    """The vector `vector`, which `unwrapped` holds of, as a native one, which keeps
+    what is known of its being settled (see `SETTLED` in to_sympy.py)."""
+    settled = None
+    key = settled_key(vector)
+    if key is not None:
+        settled = (key, [])
+    else:
+        pending = settled_from(vector)
+        if pending is not None:
+            settled = (pending[0], list(pending[1]))
+    return NativeVector([native_of(element) for element in vector.args], settled)
 
 
 def _bound_variable(node: Node, counts: range) -> tuple[Node, str] | None:
@@ -5478,24 +5518,6 @@ def _worked_out(made: sp.Basic, standing: set[sp.Basic], work_out: WorkOut) -> s
         return made
 
 
-class Commanded(sp.Function):
-    """The answer of a `FACTOR`, `EXPAND` or `SOLVE` head, in the command's form.
-
-    A factorization is a form, not just a value: `FACTOR(12)` is `2^2*3`, which
-    Simplify's normal form would multiply back out. A solution is written as soLve
-    writes it, `x >= (3*y - 7)/2`, not as Simplify would. So the answer is wrapped
-    through the rest of the pipeline and unwrapped only at the end. A call taking it
-    as an argument gets the unwrapped value: `RHS(SOLVE(x^2 - 5*x + 6 = 0, x))` is
-    `[2, 3]`.
-    """
-
-    nargs = 1
-
-    def _eval_derivative(self, symbol: sp.Basic) -> sp.Basic:
-        # The answer is its value: `DIF(EXPAND(u)/2, x)` is the derivative of `u/2`.
-        return self.args[0].diff(symbol)
-
-
 def _uncommanded(test: sp.Basic) -> sp.Basic:
     """A test with a command's answer on a side of its relation taken as its value, so
     that `SOLVE(2 = 2) /= true` is decided as `true /= true`."""
@@ -6322,6 +6344,20 @@ def _defining(node: Node) -> bool:
 _ACTIVE = PROGRAM_FUNCTIONS | {"RANDOM"}
 
 
+def _settles_as_it_is(item: sp.Basic, simplify: Simplifier, exact: Context) -> bool:
+    """Whether `simplify` under `exact` leaves `item` as it is, as an element of a
+    vector `_Evaluator._settled` stores (see `SETTLED_FROM`)."""
+    try:
+        return _same(simplify(item, exact), item)
+    except Exception:
+        return False
+
+
+def _same(new: sp.Basic, old: sp.Basic) -> bool:
+    """Whether simplifying `old` to `new` left it as it is."""
+    return new is old or (type(new) is type(old) and new == old)
+
+
 def _mentions(value: sp.Basic, kind: object) -> bool:
     """`value.has(kind)`, without walking the sides of a relation that `is_simple`
     finds simple, which hold numbers, strings, truth values and variables only, and of
@@ -6463,26 +6499,9 @@ def _assigned_value(value: sp.Basic) -> sp.Basic:
         return value.args[2]
     if isinstance(value, FunDef) and len(value.args) == 3:
         return value.args[2]
-    if isinstance(value, Vector) and not _unwrapped(value):
+    if isinstance(value, Vector) and not unwrapped(value):
         return Vector(*(_assigned_value(element) for element in value.args))
     return value
-
-
-def _unwrapped(value: Vector | SetOf) -> bool:
-    """Whether no element of the vector or set `value` is an assignment, a definition
-    or a command's answer, which its use as a value unwraps; remembered on the value,
-    which a program may read element by element as often as it has elements."""
-    found = value.__dict__.get(_UNWRAPPED)
-    if found is None:
-        found = isinstance(value.__dict__.get(SIMPLE), frozenset) or not any(
-            isinstance(element, (Assign, FunDef, Commanded)) for element in value.args
-        )
-        value.__dict__[_UNWRAPPED] = found
-    return found
-
-
-#: The attribute `_unwrapped` remembers its answer in.
-_UNWRAPPED = "_unwrapped"
 
 
 def value_of(value: sp.Basic) -> sp.Basic:
@@ -6500,7 +6519,7 @@ def _value_of(value: sp.Basic) -> sp.Basic:
     vectors.
     """
     if isinstance(value, (Vector, SetOf)):
-        if _unwrapped(value) or not any(
+        if unwrapped(value) or not any(
             isinstance(element, Commanded) for element in value.args
         ):
             return value
