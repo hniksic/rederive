@@ -23,9 +23,10 @@ jobs:
   test:
     name: ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
-    # The suite takes about two minutes. Anything past ten is a hang, and a hang
-    # left alone runs into GitHub's six-hour ceiling rather than telling anyone.
-    timeout-minutes: 10
+    # The suite takes about seven minutes on a runner, longer on Windows. Anything
+    # past twenty is a hang, and a hang left alone runs into GitHub's six-hour ceiling
+    # rather than telling anyone.
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
