@@ -7,8 +7,10 @@ writes what they find in Derive 6's forms.
 = -1 OR x = 1`, one disjunct per solution, `x = 2 AND y = 1` for a solution of a system,
 `true` when every value solves `u` and `false` when none does. A disjunct may also be an
 interval of an inequality, an equation left unsolved, or a condition on the parameters
-under which every value is a solution (`R = 0`). With a vector of relations as its first
-argument the answer is the vector of those disjuncts instead.
+under which every value is a solution (`R = 0`). Solutions that hold under the same
+conditions on the parameters state them once: `(x = -2 OR x = 2) AND a = b`. With a
+vector of relations as its first argument the answer is the vector of the solutions,
+each with its conditions, instead.
 
 `SOLUTIONS(u, x)` is the vector of the values `SOLVE` finds for `x`, or with a vector of
 variables the matrix of the solutions, one row each; a free value is a new arbitrary
@@ -28,6 +30,7 @@ first argument as simplified, with equations not decided (see `pipeline._command
 
 from __future__ import annotations
 
+import itertools
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 
@@ -43,10 +46,13 @@ from rederive.engine.sets import is_set
 from rederive.engine.solving import (
     Outcome,
     arbitrary,
+    between,
+    confined,
     listed_in_order,
     numeric_roots,
     outcome,
     parameter_condition,
+    solved_range,
     unsolved_equation,
 )
 from rederive.engine.to_sympy import (
@@ -287,8 +293,9 @@ class _Found:
     #: constant.
     rows: list[tuple[sp.Basic, ...]] = field(default_factory=list)
     #: Disjuncts that are no explicit solution: intervals, unsolved relations,
-    #: conditions on parameters, reduced systems.
-    others: list[sp.Basic] = field(default_factory=list)
+    #: conditions on parameters, reduced systems, and solutions that hold under
+    #: conditions on the parameters.
+    others: list[sp.Basic | _Branch] = field(default_factory=list)
     #: Whether a disjunct holds an interval of values, which no vector of values lists.
     intervals: bool = False
     #: The constants minted for this answer.
@@ -305,12 +312,40 @@ class _Found:
             if row not in self.rows:
                 self.rows.append(row)
         for part in other.others:
+            if isinstance(part, _Branch):
+                same = next(
+                    (
+                        mine
+                        for mine in self.others
+                        if isinstance(mine, _Branch)
+                        and mine.conditions == part.conditions
+                    ),
+                    None,
+                )
+                if same is not None:
+                    # Solutions under the same conditions are one branch, in the order
+                    # of solutions, whichever conjunction they come from.
+                    same.found.merge(part.found)
+                    same.found.rows = listed_in_order(same.found.rows)
+                    continue
             if part not in self.others:
                 self.others.append(part)
         self.intervals = self.intervals or other.intervals
         self.minted = self.minted | other.minted
         self.arbitrary = self.arbitrary or other.arbitrary
         self.reduced.update(other.reduced)
+
+
+@dataclass
+class _Branch:
+    """Solutions that hold where conditions on the parameters do: `x^2 = 4 AND a = b`
+    solved for `x` is the solutions of `x^2 = 4` under `a = b`. They are kept apart from
+    their conditions so that they are bounded, polished and written as the same
+    solutions without the conditions are, and so that the answer states the conditions
+    once."""
+
+    conditions: tuple[sp.Basic, ...]
+    found: _Found
 
 
 def _solve_all(
@@ -377,6 +412,16 @@ def _solve_all(
         )
         found.merge(_classified(result, symbols, relations, context))
     found.rows = listed_in_order(found.rows)
+    # The conjunctions come in no fixed order, so neither would the branches.
+    places = [
+        index for index, part in enumerate(found.others) if isinstance(part, _Branch)
+    ]
+    branches = sorted(
+        (found.others[index] for index in places),
+        key=lambda branch: [sp.default_sort_key(c) for c in branch.conditions],
+    )
+    for index, branch in zip(places, branches, strict=True):
+        found.others[index] = branch
     return found
 
 
@@ -411,11 +456,8 @@ def _conditioned(
     `IF(conditions, value)`."""
     inner = _solve_all([relations], symbols, context, divisors, real, listing)
     found = _Found(minted=inner.minted)
-    if inner.everything:
-        found.others.append(sp.And(*conditions))
-        return found
-    for disjunct in _disjuncts(inner, symbols, context):
-        found.others.append(InOrder(*sp.And.make_args(disjunct), *conditions))
+    if inner.everything or inner.rows or inner.others:
+        found.others.append(_Branch(tuple(conditions), inner))
     found.intervals = inner.intervals
     return found
 
@@ -499,6 +541,10 @@ def _classified(
                     found.reduced[row] = sp.And(*relations)
                 found.rows.append(row)
             continue
+        branch = _conditional_entry(entry, symbols, result)
+        if branch is not None:
+            found.others.append(branch)
+            continue
         if isinstance(entry, Vector):
             entry = InOrder(*entry.args)
         found.others.append(entry)
@@ -526,6 +572,28 @@ def _row(entry: sp.Basic, names: list[str]) -> tuple[sp.Basic, ...] | None:
             return None
         values.append(relation.rhs)
     return tuple(values)
+
+
+def _conditional_entry(
+    entry: sp.Basic, symbols: tuple[sp.Symbol, ...], result: Outcome
+) -> _Branch | None:
+    """An entry of a system's solution that the solver found under conditions on the
+    parameters, its values followed by the conditions, as `[x = a, a - b = 0]` for `[x =
+    a, x = b]`, or None for any other entry. A solution with free values is left to
+    `_conditioned_underdetermined`."""
+    if not isinstance(entry, Vector) or len(entry.args) <= len(symbols):
+        return None
+    names = [symbol.name for symbol in symbols]
+    row = _row(Vector(*entry.args[: len(symbols)]), names)
+    conditions = entry.args[len(symbols) :]
+    if row is None or any(value.has(*result.minted) for value in row):
+        return None
+    if any(
+        not isinstance(condition, Relational) or condition.has(*symbols)
+        for condition in conditions
+    ):
+        return None
+    return _Branch(tuple(conditions), _Found(rows=[row]))
 
 
 def _is_interval(entry: sp.Basic, names: list[str]) -> bool:
@@ -644,15 +712,35 @@ def _solved(
         found = _bounded(found, symbols, call.bounds, context, call.real)
     if context.angle is Angle.DEGREE and formula.has(TrigonometricFunction):
         # The angles of a trigonometric equation are shown in degrees.
-        found.rows = [tuple(in_degrees(value) for value in row) for row in found.rows]
+        _in_degrees(found)
     disjuncts = _disjuncts(found, symbols, context)
     if vector:
-        return Vector(*disjuncts)
-    if disjuncts == [sp.true]:
+        return Vector(*(_conjoined(*disjunct) for disjunct in disjuncts))
+    if disjuncts == [(sp.true, ())]:
         return sp.true
     # Derive builds the disjunction back to front: SOLVE lists the solutions in the
     # reverse of the order of SOLUTIONS.
-    return InOrderOr(*reversed(disjuncts)) if disjuncts else sp.false
+    return _either(list(reversed(disjuncts)))
+
+
+def _conjoined(solution: sp.Basic, conditions: tuple[sp.Basic, ...]) -> sp.Basic:
+    """A solution and the conditions under which it holds, as one conjunction, the
+    solution's relations in their order."""
+    relations = solution.args if isinstance(solution, sp.And) else (solution,)
+    return InOrder(*relations, *conditions)
+
+
+def _either(disjuncts: list[tuple[sp.Basic, tuple[sp.Basic, ...]]]) -> sp.Basic:
+    """The disjunction of the solutions, in their order, each run of solutions under the
+    same conditions written with the conditions once: `(x = -2 OR x = 2) AND a = b`."""
+    written = []
+    for conditions, run in itertools.groupby(disjuncts, key=lambda pair: pair[1]):
+        solutions = [solution for solution, _ in run]
+        if conditions and len(solutions) > 1:
+            written.append(InOrder(InOrderOr(*solutions), *conditions))
+        else:
+            written.extend(_conjoined(solution, conditions) for solution in solutions)
+    return InOrderOr(*written)
 
 
 def _polish(found: _Found, simplified: Decider) -> None:
@@ -677,6 +765,17 @@ def _polish(found: _Found, simplified: Decider) -> None:
         )
         if polished != row and polished not in found.rows:
             found.rows[index] = polished
+    for part in found.others:
+        if isinstance(part, _Branch):
+            _polish(part.found, simplified)
+
+
+def _in_degrees(found: _Found) -> None:
+    """Write the angles of the solutions in degrees, as `Angle := Degree` asks."""
+    found.rows = [tuple(in_degrees(value) for value in row) for row in found.rows]
+    for part in found.others:
+        if isinstance(part, _Branch):
+            _in_degrees(part.found)
 
 
 def _root_of_quotient(value: sp.Basic) -> bool:
@@ -721,11 +820,12 @@ def _symbols(formula: sp.Basic, names: Sequence[str]) -> tuple[sp.Symbol, ...]:
 
 def _disjuncts(
     found: _Found, symbols: tuple[sp.Symbol, ...], context: Context
-) -> list[sp.Basic]:
-    """What `SOLVE` writes for `found`, one disjunct each: `[true]` for everything."""
+) -> list[tuple[sp.Basic, tuple[sp.Basic, ...]]]:
+    """What `SOLVE` writes for `found`, one disjunct each, as the solution and the
+    conditions on the parameters it holds under: `[(true, ())]` for everything."""
     if found.everything:
-        return [sp.true]
-    disjuncts: list[sp.Basic] = []
+        return [(sp.true, ())]
+    disjuncts: list[tuple[sp.Basic, tuple[sp.Basic, ...]]] = []
     reduced_done: list[sp.Basic] = []
     for row in found.rows:
         if any(value.has(*found.minted) for value in row):
@@ -733,7 +833,7 @@ def _disjuncts(
             if written is None:
                 continue
             if written is sp.true:
-                return [sp.true]
+                return [(sp.true, ())]
         elif len(row) == 1:
             written = _equated(symbols[0], row[0], context)
         else:
@@ -743,14 +843,20 @@ def _disjuncts(
                     for symbol, value in zip(symbols, row, strict=True)
                 )
             )
-        if written not in disjuncts:
-            disjuncts.append(written)
+        if (written, ()) not in disjuncts:
+            disjuncts.append((written, ()))
     for part in found.others:
+        if isinstance(part, _Branch):
+            for solution, conditions in _disjuncts(part.found, symbols, context):
+                disjunct = (solution, (*conditions, *part.conditions))
+                if disjunct not in disjuncts:
+                    disjuncts.append(disjunct)
+            continue
         if part is sp.true:
-            return [sp.true]
+            return [(sp.true, ())]
         part = _conditioned_underdetermined(part, symbols, found, context)
-        if part is not sp.false and part not in disjuncts:
-            disjuncts.append(part)
+        if part is not sp.false and (part, ()) not in disjuncts:
+            disjuncts.append((part, ()))
     return disjuncts
 
 
@@ -883,7 +989,11 @@ def _bounded(
 ) -> _Found:
     """`found` cut to the real solutions in `[a, b]`, each proved inside or outside
     exactly. A solution that is neither holds where it is inside: `x = SQRT(a) AND
-    SQRT(a) <= 1`.
+    SQRT(a) <= 1`. Where every value is a solution, the solutions are every value in
+    the bounds, `a <= x <= b`, and a range is cut to them: `x > 2` in `[0, 5]` is `2 <
+    x <= 5`. A range that can't be cut exactly holds where it is inside them. Solutions
+    under conditions on the parameters are cut as the same solutions without them
+    are.
 
     In Approximate and Mixed precision an equation left unsolved is searched in the
     interval numerically, as `NSOLVE` would.
@@ -892,6 +1002,16 @@ def _bounded(
     kept = _Found(minted=found.minted)
     if len(symbols) != 1:
         return found
+    (symbol,) = symbols
+    if found.everything:
+        if bounds == (-sp.oo, sp.oo):
+            return found
+        # Every value in the bounds, of which each other solution found is one.
+        everything = confined(None, symbol, bounds, context)
+        if everything is None:
+            everything = (InOrder(*between(symbol, bounds)),)
+        _cut(kept, everything, symbol)
+        return kept
     for row in found.rows:
         inside = _inside(row[0], low, high)
         if inside:
@@ -899,19 +1019,15 @@ def _bounded(
         elif inside is None:
             (value,) = row
             kept.others.append(
-                InOrder(
-                    _equated(symbols[0], value, context),
-                    *(
-                        relation
-                        for relation in (
-                            sp.Le(low, value, evaluate=False),
-                            sp.Le(value, high, evaluate=False),
-                        )
-                        if not relation.has(sp.oo, -sp.oo)
-                    ),
-                )
+                InOrder(_equated(symbol, value, context), *between(value, bounds))
             )
     for part in found.others:
+        if isinstance(part, _Branch):
+            inner = _bounded(part.found, symbols, bounds, context, real)
+            if inner.rows or inner.others:
+                kept.others.append(_Branch(part.conditions, inner))
+                kept.intervals = kept.intervals or inner.intervals
+            continue
         if context.precision is not Precision.EXACT and _searchable(part, symbols[0]):
             roots = numeric_roots(
                 part.lhs - part.rhs, symbols[0], context, True, (low, high)
@@ -919,9 +1035,27 @@ def _bounded(
             if roots is not None:
                 kept.rows.extend((root,) for root in roots)
                 continue
+        if _is_interval(part, [symbol.name]) and solved_range(part, symbol):
+            cut = confined(part, symbol, bounds, context)
+            if cut is None:
+                cut = (InOrder(*sp.And.make_args(part), *between(symbol, bounds)),)
+            _cut(kept, cut, symbol)
+            continue
         kept.others.append(part)
         kept.intervals = kept.intervals or found.intervals
     return kept
+
+
+def _cut(kept: _Found, entries: Sequence[sp.Basic], symbol: sp.Symbol) -> None:
+    """Add the entries of a range cut to bounds to `kept`: a value as a solution, a
+    range as one that holds an interval."""
+    for entry in entries:
+        if isinstance(entry, sp.Equality) and entry.lhs == symbol:
+            if (entry.rhs,) not in kept.rows:
+                kept.rows.append((entry.rhs,))
+        elif entry not in kept.others:
+            kept.others.append(entry)
+            kept.intervals = True
 
 
 def _inside(value: sp.Basic, low: sp.Basic, high: sp.Basic) -> bool | None:
@@ -999,13 +1133,40 @@ def _solutions(
         return Vector(row) if call.listed else Vector(constants[0])
     found_rows = list(found.rows)
     for part in found.others:
-        row = _conditional_row(part, symbols)
-        if row is not None and row not in found_rows:
-            found_rows.append(row)
+        for row in _conditional_rows(part, symbols, context):
+            if row not in found_rows:
+                found_rows.append(row)
     rows = [Vector(*row) for row in found_rows]
     if call.listed:
         return Vector(*rows)
     return Vector(*(row[0] for row in found_rows))
+
+
+def _conditional_rows(
+    part: sp.Basic | _Branch, symbols: tuple[sp.Basic, ...], context: Context
+) -> list[tuple[sp.Basic, ...]]:
+    """The values of a disjunct that is no explicit solution but holds explicit ones
+    under conditions on the parameters, each value `IF(condition, value)`, in the order
+    `SOLUTIONS` lists them. Every value under conditions is arbitrary constants under
+    them: `[IF(a = b, @1)]`."""
+    if not isinstance(part, _Branch):
+        row = _conditional_row(part, symbols)
+        return [] if row is None else [row]
+    condition = sp.And(*part.conditions)
+    if part.found.everything:
+        constants = part.found.arbitrary or tuple(arbitrary(context) for _ in symbols)
+        return [tuple(sp.Piecewise((value, condition)) for value in constants)]
+    rows = [
+        tuple(sp.Piecewise((value, condition)) for value in row)
+        for row in part.found.rows
+    ]
+    for inner in part.found.others:
+        if isinstance(inner, _Branch):
+            inner = _Branch((*inner.conditions, *part.conditions), inner.found)
+        else:
+            inner = _conjoined(inner, part.conditions)
+        rows.extend(_conditional_rows(inner, symbols, context))
+    return rows
 
 
 def _conditional_row(

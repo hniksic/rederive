@@ -1255,9 +1255,230 @@ def test_an_equation_without_the_variables_is_a_condition_on_the_solutions():
     """Such an equation is neither dropped nor taken for "no solutions": the solutions
     hold where it does. One decided false leaves none."""
     assert simp("SOLVE([x + y = 1, a = 0], [x, y])") == "[x + y = 1 AND a = 0]"
-    assert simp("SOLVE(x^2 = 4 AND a = b, x)") == "x = -2 AND a = b OR x = 2 AND a = b"
+    assert simp("SOLVE(x^2 = 4 AND a = b, x)") == "(x = -2 OR x = 2) AND a = b"
     assert simp("SOLVE(x = x AND a = b, x)") == "a = b"
     assert simp("SOLUTIONS(x = 2 AND a = b, x)") == "[IF(a = b, 2)]"
+
+
+SHARED_CONDITIONS = [
+    # Derive 4.11 states a condition every solution shares once, `(x = 2 OR x = -2) AND
+    # a = b`; the solutions keep this engine's order.
+    ("SOLVE(x^2 = 4 AND a > 0, x)", "(x = -2 OR x = 2) AND a > 0"),
+    ("SOLVE(x^2 > 4 AND a = b, x)", "(x > 2 OR x < -2) AND a = b"),
+    ("SOLVE(4 < x^2 AND x^2 < 9 AND a = b, x)", "(2 < x < 3 OR -3 < x < -2) AND a = b"),
+    ("SOLVE(x^2 = 4 AND a = b AND c > 0, x)", "(x = -2 OR x = 2) AND a = b AND c > 0"),
+    ("SOLVE((x - 1)*(x^5 + x + 3) = 0 AND a = b, x)", "(x^5 + x = -3 OR x = 1) AND a = b"),
+    ("SOLVE(a*x^2 = a AND b = c, x)", "(a = 0 OR x = -1 OR x = 1) AND b = c"),
+    (
+        "SOLVE(x^2 + y^2 = 2 AND x = y AND a = b, [x, y])",
+        "(x = -1 AND y = -1 OR x = 1 AND y = 1) AND a = b",
+    ),
+    # Solutions under the same conditions are one group, whichever conjunction of the
+    # first argument they come from, in the order they have without the conditions,
+    # `x = 3 OR x = -2 OR x = 2`.
+    ("SOLVE((x^2 = 4 OR x = 3) AND a = b, x)", "(x = 3 OR x = -2 OR x = 2) AND a = b"),
+    # A condition only some solutions share is stated for those.
+    ("SOLVE(x^2 = 4 AND a = b OR x = 3, x)", "(x = -2 OR x = 2) AND a = b OR x = 3"),
+    (
+        "SOLVE(x^2 = 4 AND a = b OR x^2 = 9 AND c = d, x)",
+        "(x = -3 OR x = 3) AND c = d OR (x = -2 OR x = 2) AND a = b",
+    ),
+    # A single solution keeps its conditions beside it, its equations in order.
+    ("SOLVE(x = 2 AND a = b, x)", "x = 2 AND a = b"),
+    ("SOLVE(x + y = 3 AND x - y = 1 AND a = b, [x, y])", "x = 2 AND y = 1 AND a = b"),
+    ("SOLVE(x^2 /= 4 AND a = b, x)", "x /= -2 AND x /= 2 AND a = b"),
+    # The answer is equivalent to the first argument, and reads back as it is written.
+    ("SOLVE(SOLVE(x^2 = 4 AND a = b, x), x)", "(x = -2 OR x = 2) AND a = b"),
+    ("(x = -2 OR x = 2) AND a = b", "(x = -2 OR x = 2) AND a = b"),
+]
+
+
+@pytest.mark.parametrize(("text", "expected"), SHARED_CONDITIONS, ids=str)
+def test_a_condition_the_solutions_share_is_stated_once(text, expected):
+    assert simp(text) == expected
+
+
+def test_a_factored_answer_keeps_one_solution_per_element_and_listing():
+    """The vector form has one element per solution and SOLUTIONS one value each, the
+    condition with each."""
+    assert elements("SOLVE([x^2 = 4, a = b], x)") == {
+        "x = 2 AND a = b",
+        "x = -2 AND a = b",
+    }
+    assert simp("SOLUTIONS(x^2 = 4 AND a = b, x)") == "[IF(a = b, 2), IF(a = b, -2)]"
+    assert simp("SOLUTIONS(SOLVE(x^2 = 4 AND a = b, x), x)") == (
+        "[IF(a = b, 2), IF(a = b, -2)]"
+    )
+    assert simp("SOLUTIONS(x^2 + y^2 = 2 AND x = y AND a = b, [x, y])") == (
+        "[[IF(a = b, 1), IF(a = b, 1)], [IF(a = b, -1), IF(a = b, -1)]]"
+    )
+    # A free value under a condition is listed as it is without one.
+    assert simp("SOLUTIONS(x + y = 1, [x, y])") == "[[@1, 1 - @1]]"
+    assert simp("SOLUTIONS(x + y = 1 AND a = b, [x, y])") == (
+        "[[IF(a = b, @1), IF(a = b, 1 - @1)]]"
+    )
+
+
+def test_the_sides_of_a_factored_answer_are_the_solutions_and_the_conditions():
+    assert simp("LHS(SOLVE(x^2 = 4 AND a = b, x))") == "x = -2 OR x = 2"
+    assert simp("RHS(SOLVE(x^2 = 4 AND a = b, x))") == "a = b"
+
+
+def test_conditioned_angles_are_shown_in_the_angle_unit():
+    assert simp("SOLVE(SIN(x) = 1/2 AND a = b, x)", DEGREES) == (
+        "(x = 150 DEG OR x = 30 DEG) AND a = b"
+    )
+
+
+BOUNDED_CONDITIONS = [
+    # A solution under a condition is inside or outside the bounds as it is without it.
+    ("SOLVE(x^2 = 4 AND a = b, x, 1, 3)", "x = 2 AND a = b"),
+    ("SOLVE(x^2 = 4 AND a = b, x, 3, 5)", "false"),
+    ("SOLVE(x^2 = 4 AND a = b AND c > 0, x, -3, 0)", "x = -2 AND a = b AND c > 0"),
+    ("SOLVE([x^2 = 4, a = b], x, 1, 3)", "[x = 2 AND a = b]"),
+    ("SOLUTIONS(x^2 = 4 AND a = b, x, 1, 3)", "[IF(a = b, 2)]"),
+    ("SOLUTIONS(x^2 = 4 AND a = b, x, 3, 5)", "[]"),
+    # One not known to be inside holds where it is, besides the condition.
+    (
+        "SOLVE(x^2 = a AND a > 0, x, 1, 2)",
+        "(x = -SQRT(a) AND 1 <= -SQRT(a) AND -SQRT(a) <= 2"
+        " OR x = SQRT(a) AND 1 <= SQRT(a) AND SQRT(a) <= 2) AND a > 0",
+    ),
+    (
+        "SOLUTIONS(x^2 = a AND a > 0, x, 1, 2)",
+        "[IF(a > 0 AND SQRT(a) >= 1 AND SQRT(a) <= 2, SQRT(a)),"
+        " IF(a > 0 AND SQRT(a) >= -2 AND SQRT(a) <= -1, -SQRT(a))]",
+    ),
+    # So does one under a condition the solver found.
+    ("SOLVE(x = a AND x = b, x, 0, 1)", "x = a AND 0 <= a AND a <= 1 AND a - b = 0"),
+]
+
+
+@pytest.mark.parametrize(("text", "expected"), BOUNDED_CONDITIONS, ids=str)
+def test_bounds_apply_to_solutions_under_conditions(text, expected):
+    assert simp(text) == expected
+
+
+BOUNDED_EVERYTHING = [
+    # Without bounds every value is a solution; with them, every value in them is.
+    ("SOLVE(x = x, x)", "true"),
+    ("SOLVE(x = x, x, 1, 3)", "1 <= x <= 3"),
+    ("SOLVE(x + 1 = 1 + x, x, 1, 3)", "1 <= x <= 3"),
+    ("SOLVE(x/x = 1, x, 1, 3)", "1 <= x <= 3"),
+    ("SOLVE(SIN(x)^2 + COS(x)^2 = 1, x, 0, 1)", "0 <= x <= 1"),
+    ("SOLVE(x = x, x, SQRT(2), pi)", "SQRT(2) <= x <= pi"),
+    ("SOLVE([x = x], x, 1, 3)", "[1 <= x <= 3]"),
+    # An inequality that holds everywhere.
+    ("SOLVE(x^2 + 1 > 0, x, 1, 3)", "1 <= x <= 3"),
+    ("SOLVE(x^2 >= 0, x, 1, 3)", "1 <= x <= 3"),
+    # Every other solution found is one of these.
+    ("SOLVE(x^2 = 4 OR x = x, x, 1, 3)", "1 <= x <= 3"),
+    # An infinite bound bounds nothing, and bounds that meet hold one value.
+    ("SOLVE(x = x, x, -inf, 3)", "x <= 3"),
+    ("SOLVE(x = x, x, -inf, inf)", "true"),
+    ("SOLVE(x = x, x, 1, 1)", "x = 1"),
+    ("SOLVE(x = x, x, 3, 1)", "false"),
+    # Under a condition on the parameters, every value in the bounds is a solution
+    # where the condition holds.
+    ("SOLVE(x = x AND a = b, x)", "a = b"),
+    ("SOLVE(x = x AND a = b, x, 1, 3)", "1 <= x AND x <= 3 AND a = b"),
+    ("SOLVE([x = x, a = b], x, 1, 3)", "[1 <= x AND x <= 3 AND a = b]"),
+    # A vector lists no interval of values, so `SOLUTIONS` stays as written, but
+    # without bounds every value under a condition is an arbitrary one under it.
+    ("SOLUTIONS(x = x, x)", "[@1]"),
+    ("SOLUTIONS(x = x, x, 1, 3)", "SOLUTIONS(true, x, 1, 3)"),
+    ("SOLUTIONS(x = x, x, 1, 1)", "[1]"),
+    ("SOLUTIONS(x = x AND a = b, x)", "[IF(a = b, @1)]"),
+    ("SOLUTIONS(x = x AND a = b, x, 1, 3)", "SOLUTIONS(a = b, x, 1, 3)"),
+]
+
+
+@pytest.mark.parametrize(("text", "expected"), BOUNDED_EVERYTHING, ids=str)
+def test_every_value_in_the_bounds_solves_an_identity(text, expected):
+    assert simp(text) == expected
+
+
+BOUNDED_RANGES = [
+    ("SOLVE(x^2 > 4, x, 0, 5)", "2 < x <= 5"),
+    ("SOLVE(x^2 > 4, x, -5, 5)", "2 < x <= 5 OR -5 <= x < -2"),
+    ("SOLVE(x^2 > 4, x, -1, 1)", "false"),
+    ("SOLVE(x^2 > 4, x, 0, inf)", "x > 2"),
+    ("SOLVE(x > 0, x, 1, 3)", "1 <= x <= 3"),
+    ("SOLVE(x^2 > 2, x, 0, 5)", "SQRT(2) < x <= 5"),
+    ("SOLVE(x^5 + x > 3, x, 0, 2)", "ROOT_OF(x^5 + x - 3, x, 0) < x <= 2"),
+    ("SOLVE(x /= 2, x, 0, 5)", "2 < x <= 5 OR 0 <= x < 2"),
+    ("SOLVE([x^2 > 4], x, 0, 5)", "[2 < x <= 5]"),
+    # A range cut to a single value is that solution.
+    ("SOLVE(x^2 >= 4, x, 0, 2)", "x = 2"),
+    ("SOLUTIONS(x^2 >= 4, x, 0, 2)", "[2]"),
+    ("SOLVE(x^2 > 4 AND a = b, x, 0, 5)", "2 < x AND x <= 5 AND a = b"),
+    # A range with an end at a parameter holds where it is inside the bounds.
+    ("SOLVE(x > a, x, 0, 5)", "x > a AND 0 <= x AND x <= 5"),
+]
+
+
+@pytest.mark.parametrize(("text", "expected"), BOUNDED_RANGES, ids=str)
+def test_bounds_cut_a_range_of_solutions(text, expected):
+    assert simp(text) == expected
+
+
+@pytest.mark.parametrize("context", [EXACT, APPROXIMATE], ids=["Exact", "Approximate"])
+def test_solve_command_bounds_an_identity_and_a_range(context):
+    def bounded(text, bounds):
+        return sol(text, context=context, bounds=bounds)
+
+    assert sol("x = x", context=context) == ["x = @1"]
+    assert bounded("x = x", ("1", "3")) == ["1 <= x <= 3"]
+    assert bounded("x + 1 = 1 + x", ("1", "3")) == ["1 <= x <= 3"]
+    assert bounded("x/x = 1", ("1", "3")) == ["1 <= x <= 3"]
+    assert bounded("x^2 + 1 > 0", ("1", "3")) == ["1 <= x <= 3"]
+    assert bounded("x = x", ("-inf", "inf")) == ["x = @1"]
+    assert bounded("x^2 > 4", ("0", "5")) == ["2 < x <= 5"]
+    assert bounded("x^2 > 4", ("-1", "1")) == []
+    assert bounded("x^2 >= 4", ("0", "2")) == ["x = 2"]
+    assert bounded("x /= 2", ("0", "5")) == ["0 <= x < 2", "2 < x <= 5"]
+    assert bounded("x > a", ("0", "5")) == ["x > a AND 0 <= x AND x <= 5"]
+
+
+def test_bounds_search_an_unsolved_equation_under_conditions():
+    assert simp("SOLVE(x^5 + x + 3 = 0, x, -2, 0)", APPROXIMATE) == "x = -1.132997565"
+    assert simp("SOLVE(x^5 + x + 3 = 0 AND a = b, x, -2, 0)", APPROXIMATE) == (
+        "x = -1.132997565 AND a = b"
+    )
+
+
+SOLVED_UNDER_CONDITIONS = [
+    # soLve writes each solution on its own line, with the conditions as given, as
+    # SOLVE does.
+    ("x^2 = 4 AND a = b", ("x",), ["x = -2 AND a = b", "x = 2 AND a = b"]),
+    ("x^2 = 4 AND a > 0", ("x",), ["x = -2 AND a > 0", "x = 2 AND a > 0"]),
+    ("x^2 = a AND a > 0", ("x",), ["x = -SQRT(a) AND a > 0", "x = SQRT(a) AND a > 0"]),
+    ("x^2 > 4 AND a > 0", ("x",), ["x > 2 AND a > 0", "x < -2 AND a > 0"]),
+    (
+        "x^2 = 4 AND a = b AND c > 0",
+        ("x",),
+        ["x = -2 AND a = b AND c > 0", "x = 2 AND a = b AND c > 0"],
+    ),
+    ("x > 1 AND a = b AND c > 0", ("x",), ["x > 1 AND a = b AND c > 0"]),
+    ("x + y = 3 AND x - y = 1 AND a > 0", ("x", "y"), ["x = 2 AND y = 1 AND a > 0"]),
+    # A condition decided is dropped, or leaves no solution.
+    ("x^2 = 4 AND 2 < 3", ("x",), ["x = -2", "x = 2"]),
+    ("x^2 = 4 AND 2 < 1", ("x",), []),
+    # A condition the solver finds is written as an unsolved equation.
+    ("x = a AND x = b", ("x",), ["x = a AND a - b = 0"]),
+]
+
+
+@pytest.mark.parametrize(("text", "variables", "expected"), SOLVED_UNDER_CONDITIONS)
+def test_solve_command_solves_under_conditions(text, variables, expected):
+    assert sol(text, variables) == expected
+
+
+def test_solve_command_bounds_the_equation_beside_conditions():
+    bounds = ("1", "3")
+    assert sol("x^2 = 4", ("x",), APPROXIMATE, bounds) == ["x = 2"]
+    assert sol("x^2 = 4 AND a = b", ("x",), APPROXIMATE, bounds) == ["x = 2 AND a = b"]
+    assert sol("x^2 = 4 AND a > 0", ("x",), APPROXIMATE, bounds) == ["x = 2 AND a > 0"]
 
 
 # A call matching none of SOLVE's forms stays as written; ignoring a misspelled domain

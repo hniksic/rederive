@@ -69,7 +69,9 @@ were found, an identity answers `x = @1` (an arbitrary value from
 `x^5 + x = -3`. None raises.
 
 `variables` defaults to the single variable of a scalar or the most main of a system;
-`bounds` limits a numeric search to an interval and applies only in Approximate mode.
+`bounds` (asked in Approximate mode) confine the solutions of one equation or inequality
+to an interval: an equation is searched numerically in it, and an identity or a range is
+cut to it, so `x^2 > 4` between 0 and 5 is `2 < x <= 5`.
 Solve always works on a whole entry, since a solved subexpression can't be spliced back.
 
 Factoring, expanding and solving live below the pipeline, because `FACTOR(u, amount, x,

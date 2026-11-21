@@ -51,8 +51,9 @@ def solve(
 
     Each `Result` is one worksheet entry, in append order; the empty tuple means no
     solutions were found. `variables` names what to solve for in the user's order,
-    empty meaning determine it automatically. `bounds` limits a numeric search, used
-    only in Approximate mode.
+    empty meaning determine it automatically. `bounds` confine the solutions of one
+    equation or inequality to an interval: an equation is searched numerically in it,
+    and an identity or a range is cut to it.
     """
     context = (context or Context()).fresh()
     return tuple(

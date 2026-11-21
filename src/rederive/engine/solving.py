@@ -53,6 +53,7 @@ from rederive.engine.to_sympy import (
     UNIT_CIRCLE,
     Assign,
     FunDef,
+    InOrder,
     Modulo,
     PlusMinus,
     Vector,
@@ -61,12 +62,15 @@ from rederive.engine.to_sympy import (
 __all__ = [
     "Outcome",
     "arbitrary",
+    "between",
+    "confined",
     "equations_of",
     "listed_in_order",
     "numeric_roots",
     "oriented",
     "outcome",
     "parameter_condition",
+    "solved_range",
     "solutions",
     "solution_variables",
     "unsolved_equation",
@@ -155,10 +159,11 @@ def solutions(
     """The entries `expression` solves to, one per worksheet line.
 
     `variables` lists the variables to solve for; if empty, the most main ones are
-    used, one per equation. `bounds` confines a numeric search (Approximate precision);
-    None leaves it to the precision mode. `divisors` are what the equation divided by
-    before Simplify cancelled anything: a value making one zero is not a solution.
-    `real` drops solutions known to have an imaginary component.
+    used, one per equation. `bounds` confines the solutions of one equation or
+    inequality: an equation is searched for numerically, and an identity or a range is
+    cut to them. None leaves the search to the precision mode. `divisors` are what the
+    equation divided by before Simplify cancelled anything: a value making one zero is
+    not a solution. `real` drops solutions known to have an imaginary component.
 
     A solution written with a function the notation has no name for, such as sympy's
     inverse error function, is no answer, since it couldn't be typed back: the
@@ -305,7 +310,7 @@ def _solutions(
         if parted is not None:
             return parted
     if equations is not None:
-        return _system(equations, context, variables, constants, real)
+        return _system(equations, context, variables, constants, real, bounds)
     return _scalar(expression, context, variables, bounds, divisors, constants, real)
 
 
@@ -411,13 +416,17 @@ def _scalar(
     """One equation or inequality, solved for one variable.
 
     Inequalities are already solved over the reals, so `real` has no effect on them.
+    With `bounds` their ranges are cut to them.
     """
     chosen = _chosen(expression, context, variables, 1)
     if not chosen:
         return _unsolvable(expression, context)
     variable = chosen[0]
     if isinstance(expression, Relational) and not isinstance(expression, sp.Equality):
-        return _inequality(expression, variable, context, constants)
+        found = _inequality(expression, variable, context, constants)
+        if bounds is None:
+            return found
+        return _bounded_ranges(found, variable, bounds, context, constants)
     sides = (
         (expression.lhs, expression.rhs)
         if isinstance(expression, Relational)
@@ -605,9 +614,10 @@ def _equation(
 ) -> tuple[sp.Basic, ...]:
     """`residual = 0` solved for `variable`, by whatever the precision allows.
 
-    Bounds mean a numeric search (Approximate). Otherwise an exact solution is tried
-    first, and Mixed and Approximate then search for a real root over a widening
-    interval: under Approximate, `SOLVE(ERF(x) + x = 1, x)` is `[x = 0.489116]`.
+    With bounds an identity is every value in them, and anything else is searched for
+    numerically (Approximate). Otherwise an exact solution is tried first, and Mixed
+    and Approximate then search for a real root over a widening interval: under
+    Approximate, `SOLVE(ERF(x) + x = 1, x)` is `[x = 0.489116]`.
 
     A solution written with a function the notation has no name for is no answer (see
     `solutions`), so under Approximate `SOLVE(ERF(x) = 0.3, x)` is searched for too.
@@ -617,10 +627,12 @@ def _equation(
     with `real`, it is known to be non-real (`_imaginary`). If nothing remains, the
     answer is "no solutions found".
     """
+    if residual.is_zero or _cancels(residual, variable):
+        if bounds is not None and bounds != (-sp.oo, sp.oo):
+            return _everything_within(variable, bounds, context, constants)
+        return (_equated(variable, constants.fresh(), context),)
     if bounds is not None:
         return _numeric(residual, variable, bounds[0], bounds[1], context)
-    if residual.is_zero or _cancels(residual, variable):
-        return (_equated(variable, constants.fresh(), context),)
     if residual.free_symbols and not residual.has(variable):
         # Whether it holds depends on the other variables only, so it is the condition
         # on them: `SOLVE(v = 2*u + 1, y)` isn't "no solutions".
@@ -2514,6 +2526,142 @@ def _span(
     )
 
 
+def confined(
+    entry: sp.Basic | None,
+    variable: sp.Symbol,
+    bounds: tuple[sp.Basic, sp.Basic],
+    context: Context,
+    constants: _Constants | None = None,
+) -> tuple[sp.Basic, ...] | None:
+    """The entries of a range or value of `variable` cut to `[low, high]`, None for
+    `entry` standing for every value: `x > 2` in `[0, 5]` is `2 < x <= 5`, and every
+    value in `[1, 3]` is `1 <= x <= 3`. A value or a range that ends at a parameter, or
+    an end that can't be compared with a bound exactly, gives None. Every value between
+    infinite bounds is `x = @n`, from `constants`."""
+    low, high = bounds
+    try:
+        found = sp.Interval(low, high)
+        if entry is not None:
+            region = _region(entry, variable)
+            if region is None:
+                return None
+            found = region.intersect(found)
+    except Exception:
+        return None
+    if found.has(sp.Min, sp.Max):
+        return None
+    constants = constants or _Constants(context.arbitrary_index)
+    entries = _ranges(found, variable, context, constants)
+    if entries is None:
+        return None
+    # A range between two ends is written from its lower end, beside other relations
+    # too: `2 < x AND x <= 5 AND a = b`.
+    return tuple(
+        InOrder(*sorted(entry.args, key=lambda relation: relation.lhs == variable))
+        if isinstance(entry, sp.And)
+        else entry
+        for entry in entries
+    )
+
+
+def between(value: sp.Basic, bounds: tuple[sp.Basic, sp.Basic]) -> list[sp.Basic]:
+    """The relations that put `value` in `[low, high]`, `low <= value` and `value <=
+    high`, without one at an infinite bound."""
+    low, high = bounds
+    return [
+        relation
+        for relation in (
+            sp.Le(low, value, evaluate=False),
+            sp.Le(value, high, evaluate=False),
+        )
+        if not relation.has(sp.oo, -sp.oo)
+    ]
+
+
+def _bounded_ranges(
+    entries: tuple[sp.Basic, ...],
+    variable: sp.Symbol,
+    bounds: tuple[sp.Basic, sp.Basic],
+    context: Context,
+    constants: _Constants,
+) -> tuple[sp.Basic, ...]:
+    """The entries solving an inequality cut to the bounds. A range that can't be cut
+    exactly holds where it is inside them; a relation left unsolved stays as it is."""
+    bounded: list[sp.Basic] = []
+    for entry in entries:
+        if _is_identity(entry, variable, constants):
+            cut = (
+                (entry,)
+                if bounds == (-sp.oo, sp.oo)
+                else _everything_within(variable, bounds, context, constants)
+            )
+        elif solved_range(entry, variable):
+            cut = confined(entry, variable, bounds, context, constants)
+            if cut is None:
+                cut = (InOrder(*sp.And.make_args(entry), *between(variable, bounds)),)
+        else:
+            cut = (entry,)
+        bounded.extend(part for part in cut or () if part not in bounded)
+    return tuple(bounded)
+
+
+def _everything_within(
+    variable: sp.Symbol,
+    bounds: tuple[sp.Basic, sp.Basic],
+    context: Context,
+    constants: _Constants,
+) -> tuple[sp.Basic, ...]:
+    """Every value of `variable` in `[low, high]`, as the range of the bounds: `1 <= x
+    <= 3`."""
+    cut = confined(None, variable, bounds, context, constants)
+    return (InOrder(*between(variable, bounds)),) if cut is None else cut
+
+
+def solved_range(entry: sp.Basic, variable: sp.Symbol) -> bool:
+    """Whether `entry` is a value or a range of `variable` as solving writes one: each
+    relation has the variable alone on one side, `x > a`, `-2 < x < 2`, `x /= 2`."""
+    return all(
+        isinstance(relation, Relational)
+        and (
+            relation.lhs == variable
+            and not relation.rhs.has(variable)
+            or relation.rhs == variable
+            and not relation.lhs.has(variable)
+        )
+        for relation in sp.And.make_args(entry)
+    )
+
+
+def _region(entry: sp.Basic, variable: sp.Symbol) -> sp.Set | None:
+    """The real values of `variable` a value or a range of it with number ends holds
+    at, or None."""
+    region: sp.Set = sp.S.Reals
+    for relation in sp.And.make_args(entry):
+        if not isinstance(relation, Relational):
+            return None
+        if relation.rhs == variable:
+            relation = relation.reversed
+        end = relation.rhs
+        if relation.lhs != variable or end.free_symbols or not end.is_extended_real:
+            return None
+        if isinstance(relation, sp.Equality):
+            part: sp.Set = sp.FiniteSet(end)
+        elif isinstance(relation, sp.Unequality):
+            part = sp.Union(sp.Interval.open(-sp.oo, end), sp.Interval.open(end, sp.oo))
+        elif isinstance(relation, sp.StrictLessThan):
+            part = sp.Interval.open(-sp.oo, end)
+        elif isinstance(relation, sp.LessThan):
+            part = sp.Interval(-sp.oo, end)
+        elif isinstance(relation, sp.StrictGreaterThan):
+            part = sp.Interval.open(end, sp.oo)
+        elif isinstance(relation, sp.GreaterThan):
+            part = sp.Interval(end, sp.oo)
+        else:
+            return None
+        region = region.intersect(part)
+    return region
+
+
 def _reduced(
     reduced: sp.Basic,
     variable: sp.Symbol,
@@ -2561,6 +2709,7 @@ def _system(
     variables: tuple[str, ...],
     constants: _Constants,
     real: bool,
+    bounds: tuple[sp.Basic, sp.Basic] | None = None,
 ) -> tuple[sp.Basic, ...]:
     """A vector of equations, solved for as many variables as there are equations.
 
@@ -2570,21 +2719,47 @@ def _system(
     follow as the vector of their reduced equations, one per factor of the eliminating
     polynomial without radical roots, as a single equation keeps such a factor (see
     `_split`).
+
+    A relation in none of the variables is a condition on the parameters, which each
+    solution of the others carries. `bounds` confine the search for a single equation
+    left beside such conditions, as they do for an equation on its own.
     """
     joined = Vector(*equations)
     chosen = _chosen(joined, context, variables, len(equations))
     if not chosen:
         return _unsolvable(joined, context)
+    names = tuple(variable.name for variable in chosen)
+    if bounds is not None and len(equations) == 1:
+        return _scalar(equations[0], context, names, bounds, (), constants, real)
     if not all(isinstance(equation, sp.Equality) for equation in equations):
-        return _inequalities(equations, chosen, context, constants)
+        sides = [relation for relation in equations if not relation.has(*chosen)]
+        # The inequalities are taken apart first, so that equations left in the
+        # parameters are conditions as in a system of equations.
+        split = [
+            relation for relation in sides if not isinstance(relation, sp.Equality)
+        ] or sides
+        if not split or len(split) == len(equations):
+            return _inequalities(equations, chosen, context, constants)
+        conditions = []
+        for relation in split:
+            truth = _side_truth(relation)
+            if truth is False:
+                return ()
+            if truth is None:
+                conditions.append(relation)
+        rest = tuple(relation for relation in equations if relation not in split)
+        found = _system(rest, context, names, constants, real, bounds)
+        return tuple(Vector(*_conjuncts(entry), *conditions) for entry in found)
     residuals = [_residual(equation) for equation in equations]
     conditions: list[sp.Basic] = []
     if any(residual.has(*chosen) for residual in residuals):
         # An equation in none of the variables is a condition on the parameters that
-        # every solution carries: `[2*y*COS(t) = 3*SIN(2*t), SIN(2*t) = 0]` solved for
-        # `y` is `y = 3*SIN(t)/COS(t) AND SIN(2*t) = 0`. One that is false has none.
+        # every solution carries, written as given: `[2*y*COS(t) = 3*SIN(2*t), SIN(2*t)
+        # = 0]` solved for `y` is `y = 3*SIN(t)/COS(t) AND SIN(2*t) = 0`. One that is
+        # false has none.
         kept = []
-        for residual in residuals:
+        rearranged: list[sp.Basic] = []
+        for equation, residual in zip(equations, residuals, strict=True):
             if residual.has(*chosen):
                 kept.append(residual)
                 continue
@@ -2592,9 +2767,10 @@ def _system(
             if zero is False:
                 return ()
             if zero is not True and not _cancels(residual, chosen[0]):
-                conditions.append(unsolved_equation(residual, context))
+                conditions.append(equation)
+                rearranged.append(unsolved_equation(residual, context))
         if conditions and _inconsistent(
-            [condition.lhs - condition.rhs for condition in conditions], ()
+            [condition.lhs - condition.rhs for condition in rearranged], ()
         ):
             return ()
         if conditions:
@@ -2602,7 +2778,7 @@ def _system(
             # the value replaces the parameter in the other equations.
             fixed = {
                 condition.lhs: condition.rhs
-                for condition in conditions
+                for condition in rearranged
                 if isinstance(condition, sp.Equality)
                 and isinstance(condition.lhs, sp.Symbol)
                 and not condition.rhs.has(condition.lhs, *chosen)
@@ -2613,9 +2789,10 @@ def _system(
             found = _system(
                 tuple(_relation(sp.Eq, residual, 0) for residual in kept),
                 context,
-                tuple(variable.name for variable in chosen),
+                names,
                 constants,
                 real,
+                bounds,
             )
             return tuple(
                 Vector(*_conjuncts(entry), *dict.fromkeys(conditions)) for entry in found
@@ -2640,11 +2817,15 @@ def _system(
         if not left:
             return _unsolvable(joined, context)
         return _system(
-            tuple(_relation(sp.Eq, residual, 0) for residual in independent + left),
+            (
+                *(_relation(sp.Eq, residual, 0) for residual in independent),
+                *(unsolved_equation(residual, context) for residual in left),
+            ),
             context,
-            tuple(variable.name for variable in chosen),
+            names,
             constants,
             real,
+            bounds,
         )
     remaining: list[_Unwritten] = []
     if solved is None:
@@ -2691,6 +2872,19 @@ def _system(
             )
         )
     return tuple(answers)
+
+
+def _side_truth(relation: Relational) -> bool | None:
+    """Whether a relation in none of the variables holds for every value of the
+    parameters (True), for none (False), or is a condition on them (None)."""
+    if isinstance(relation, sp.Equality):
+        return _vanishes_identically(_residual(relation))
+    evaluated = _evaluated(relation)
+    if evaluated is sp.true:
+        return True
+    if evaluated is sp.false:
+        return False
+    return None
 
 
 def _conjuncts(entry: sp.Basic) -> tuple[sp.Basic, ...]:
