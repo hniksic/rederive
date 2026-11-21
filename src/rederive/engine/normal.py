@@ -112,22 +112,27 @@ class _Writer:
     """One walk of the normal form, with a memo of what it has written.
 
     The memo is purely a cache, so a coefficient appearing in several places is
-    written once.
+    written once. It is keyed by equality, and equal expressions need not be the same
+    object (sympy does not intern its numbers), so an expression written as it is
+    comes back as the very object asked about: a caller rebuilds an expression whose
+    parts are not the ones it has, with evaluation, which decides `0 > 4`.
     """
 
     def __init__(self, order: tuple[str, ...], over_numbers: bool) -> None:
         self.order = order
         self.over_numbers = over_numbers
-        self.memo: dict[sp.Basic, sp.Basic] = {}
+        self.memo: dict[sp.Basic, sp.Basic | None] = {}
 
     def written(self, expression: sp.Basic) -> sp.Basic:
         try:
-            return self.memo[expression]
+            found = self.memo[expression]
         except (KeyError, TypeError):
             pass
+        else:
+            return expression if found is None else found
         answer = self._written(expression)
         try:
-            self.memo[expression] = answer
+            self.memo[expression] = None if answer is expression else answer
         except TypeError:
             pass
         return answer

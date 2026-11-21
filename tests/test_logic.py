@@ -84,6 +84,10 @@ def test_a_relation_that_decides_is_decided_and_one_that_does_not_stands():
         # A relation in arithmetic is decided and stays a truth value there.
         ("(2 < 3) - 2", "true - 2"),
         ("(x^2 >= 0)*5", "5*true"),
+        # So is one that is an argument of a call that stands, as a truth value.
+        ("MOD(0 > 4, 0)", "MOD(false, 0)"),
+        ("SIN(1 + 1 > 1)", "SIN(true)"),
+        ("MOD(x > 4, 0)", "MOD(x > 4, 0)"),
     ],
     ids=str,
 )

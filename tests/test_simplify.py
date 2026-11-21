@@ -640,6 +640,25 @@ def test_an_exponential_common_to_the_terms_is_taken_out_once():
     assert sp.expand(written - (y2 - y1 - a * y1**2) * power) == 0
 
 
+def test_the_normal_form_does_not_depend_on_which_equal_numbers_are_shared():
+    # Sympy does not intern its numbers: after its cache is cleared, `Integer(4)` is a
+    # new object, equal to the old one. A product whose coefficient and the side of a
+    # relation inside it are two such objects is the same expression as one where they
+    # are one object, and is written the same. The relation stays as it is; deciding
+    # it is up to Simplify.
+    mod = sp.Function("MOD")
+    four = sp.Integer(4)
+    sp.core.cache.clear_cache()
+    other = sp.Integer(4)
+    assert four is not other
+    call = mod(sp.StrictGreaterThan(0, other, evaluate=False), 0)
+    shared = sp.Mul._from_args((other, call))
+    apart = sp.Mul._from_args((four, call))
+    assert sp.srepr(shared) == sp.srepr(apart)
+    assert sp.srepr(normal_form(apart)) == sp.srepr(normal_form(shared))
+    assert sp.srepr(normal_form(apart)) == sp.srepr(shared)
+
+
 # -- domains: the whole of "don't guess" --------------------------------------
 
 DOMAINS = [

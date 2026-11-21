@@ -533,18 +533,32 @@ def _transformed(
         )
     if isinstance(expression, Boolean):
         return _boolean(expression, context, decide)
-    if isinstance(expression, sp.Basic) and expression.has(Truth):
+    if isinstance(expression, sp.Basic) and expression.has(Truth, AppliedUndef):
         expression = _truths_decided(expression, context, decide)
     return _expression(expression, context, decide)
 
 
 def _truths_decided(expression: sp.Basic, context: Context, decide: bool) -> sp.Basic:
-    """`expression` with each relation or logical expression used in its arithmetic
-    simplified, so decided where it can be: `(2 < 3) - 2` is `true - 2`. The truth value
-    stays in the arithmetic as it is."""
+    """`expression` with each relation or logical expression used in its arithmetic, or
+    as an argument of a call that stands, simplified, so decided where it can be: `(2 <
+    3) - 2` is `true - 2` and `MOD(0 > 4, 0)` is `MOD(false, 0)`. The truth value stays
+    in the arithmetic or the call as it is."""
+
+    def statement_argument(e: sp.Basic) -> bool:
+        return isinstance(e, AppliedUndef) and any(is_statement(a) for a in e.args)
+
+    def arguments_decided(e: sp.Basic) -> sp.Basic:
+        return e.func(
+            *(_transform(a, context, decide) if is_statement(a) else a for a in e.args)
+        )
+
     return expression.replace(
-        lambda e: isinstance(e, Truth),
-        lambda e: Truth(_transform(e.args[0], context, decide)),
+        lambda e: isinstance(e, Truth) or statement_argument(e),
+        lambda e: (
+            Truth(_transform(e.args[0], context, decide))
+            if isinstance(e, Truth)
+            else arguments_decided(e)
+        ),
     )
 
 
