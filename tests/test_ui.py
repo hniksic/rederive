@@ -11,6 +11,7 @@ from screen import (
     highlighted_expression,
     highlighted_rows,
     laid_out,
+    line,
     message,
     prompt,
     resized,
@@ -69,7 +70,7 @@ async def test_the_opening_notice_stands_across_the_empty_pane(app):
             "R E D E R I V E",
             "A Mathematical Assistant",
             f"Version {__version__}",
-            "Press H for help, T D for demos",
+            "Press Enter to type an expression, H for help, T D for demos",
         ]
         # Centered, with blank rows at the top and bottom.
         width = app.query_one("#panes").size.width
@@ -109,7 +110,7 @@ async def test_a_menu_and_a_dialog_leave_the_opening_notice_standing(app):
         await pilot.press("w", "escape")
         await pilot.press("o", "n", "enter")
         await pilot.press("a", "escape")
-        assert "Press H for help" in "\n".join(work_area(app))
+        assert "H for help" in "\n".join(work_area(app))
 
 
 async def test_escape_on_the_command_menu_returns_the_highlight_to_author(app):
@@ -289,7 +290,7 @@ async def test_a_syntax_error_leaves_the_author_line_up(app):
         await pilot.press("enter")
         assert app.session.entries == []
         assert message(app) == "Syntax error detected at cursor"
-        author_input = app.query_one("#prompt-input")
+        author_input = line(app)
         assert author_input.value == "12.34.5"
         # Positioned where Derive stops reading: the second decimal point.
         assert author_input.cursor_position == 5
@@ -452,6 +453,18 @@ async def test_quit_asks_before_abandoning_expressions(app):
         assert highlighted_menu_option(app) == "Author"
         assert app.is_running
         await pilot.press("q", "y")
+        await pilot.pause()
+        assert not app.is_running
+
+
+async def test_shift_alone_answers_no_question(app):
+    # Terminals with the kitty keyboard protocol report Shift pressed on its own, on
+    # the way to a capital Y.
+    async with app.run_test() as pilot:
+        authored(app, "x")
+        await pilot.press("q", "left_shift", "caps_lock")
+        assert message(app) == "Abandon expressions (Y/N)?"
+        await pilot.press("Y")
         await pilot.pause()
         assert not app.is_running
 
@@ -1939,11 +1952,12 @@ async def test_ctrl_v_pastes_the_system_clipboard_where_it_is_read(app, monkeypa
     async with app.run_test() as pilot:
         authored(app, "y")
         await pilot.press("ctrl+c")
+        # The Author line takes every line of it, as rows.
         await pilot.press("a", "ctrl+v")
-        assert prompt(app)[1] == "a + b"
+        assert prompt(app)[1] == "a + b\nsecond line"
         held[0] = None
         await pilot.press("ctrl+v")
-        assert prompt(app)[1] == "a + by"
+        assert prompt(app)[1] == "a + b\nsecond liney"
 
 
 async def test_ctrl_c_copies_only_the_highlighted_part(app):
@@ -2354,6 +2368,177 @@ async def test_overwrite_replaces_what_is_selected_as_inserting_does(app):
         assert prompt(app)[1] == "#2"
         await pilot.press("1")
         assert prompt(app)[1] == "#1"
+
+
+# -- the Author line on several rows -------------------------------------------
+#
+# Enter on an unfinished expression starts a new row, and Shift-Enter or Alt-Enter
+# starts one on any. The line grows up to five rows, then scrolls. With several rows
+# the vertical keys move along them, and Tab hands the keys to the worksheet.
+
+
+def rows_shown(app):
+    """How many rows the Author line takes on screen."""
+    return app.query_one("#prompt-text").size.height
+
+
+async def test_enter_on_an_unfinished_expression_starts_a_new_row(app):
+    async with app.run_test() as pilot:
+        await pilot.press("a", *"LOOP(IF(n = 1, RETURN k)", "enter")
+        assert entries(app) == []
+        assert prompt(app)[1] == "LOOP(IF(n = 1, RETURN k)\n  "
+        await pilot.pause()
+        assert rows_shown(app) == 2
+        assert app.query_one("#prompt-band").size.height == 3
+        await pilot.press(*"n :- n - 1)", "enter")
+        assert len(entries(app)) == 1
+        # The next line starts with one row again.
+        await pilot.press("a")
+        await pilot.pause()
+        assert prompt(app)[1] == ""
+        assert rows_shown(app) == 1
+
+
+async def test_a_trailing_operator_leaves_the_expression_unfinished(app):
+    async with app.run_test() as pilot:
+        await pilot.press("a", *"23 +", "enter", *"45", "enter")
+        assert entries(app) == ["23 + 45"]
+
+
+async def test_a_mistake_before_the_end_is_refused_rather_than_continued(app):
+    async with app.run_test() as pilot:
+        await pilot.press("a", *"1 +* 2", "enter")
+        assert message(app) == "Syntax error detected at cursor"
+        assert prompt(app)[1] == "1 +* 2"
+
+
+async def test_shift_enter_and_alt_enter_start_a_row_on_a_finished_expression(app):
+    async with app.run_test() as pilot:
+        await pilot.press("a", *"23", "shift+enter", *"+ 45", "alt+enter", *"+ 1")
+        assert prompt(app)[1] == "23\n+ 45\n+ 1"
+        await pilot.press("enter")
+        assert entries(app) == ["23 + 45 + 1"]
+
+
+async def test_enter_inside_several_rows_starts_another(app):
+    async with app.run_test() as pilot:
+        await pilot.press("a", *"x", "shift+enter", *"+ y")
+        await pilot.press("up", "end", "enter", *"+ z")
+        assert prompt(app)[1] == "x\n+ z\n+ y"
+        await pilot.press("ctrl+end", "enter")
+        assert entries(app) == ["x + z + y"]
+
+
+async def test_ctrl_enter_takes_an_unfinished_expression_and_refuses_it(app):
+    async with app.run_test() as pilot:
+        await pilot.press("a", *"f(x", "ctrl+enter")
+        assert entries(app) == []
+        assert prompt(app)[1] == "f(x"
+        assert message(app) == "Syntax error detected at cursor"
+        assert app.query_one("#prompt-text").cursor_position == 3
+
+
+async def test_the_line_grows_to_five_rows_and_then_scrolls(app):
+    async with app.run_test() as pilot:
+        await pilot.press("a", "[", "1", *[",", "enter", "1"] * 6, "]")
+        await pilot.pause()
+        assert prompt(app)[1].count("\n") == 6
+        assert rows_shown(app) == 5
+        # The scrollbar takes a column; a long row adds no horizontal one.
+        line = app.query_one("#prompt-text")
+        assert line.scrollable_content_region.width == line.size.width - 1
+        await pilot.press(*"x" * 100)
+        await pilot.pause()
+        assert rows_shown(app) == 5
+        await pilot.press(*["backspace"] * 100)
+        await pilot.press("enter")
+        assert entries(app) == ["[1, 1, 1, 1, 1, 1, 1]"]
+
+
+async def test_up_and_down_move_along_several_rows_and_not_the_highlight(app):
+    async with app.run_test() as pilot:
+        authored(app, "x", "y")
+        await pilot.press("a", "up")
+        # One row: the vertical keys move the highlight, as on every line.
+        assert highlighted_expression(app) == "x"
+        await pilot.press("down", *"(1", "enter", *"+ 2)", "up")
+        assert highlighted_expression(app) == "y"
+        await pilot.press("z")
+        assert prompt(app)[1] == "(1z\n  + 2)"
+
+
+async def test_ctrl_up_and_down_move_the_highlight_however_many_rows(app):
+    async with app.run_test() as pilot:
+        authored(app, "x", "y", "z")
+        await pilot.press("a", *"(1", "enter", *"+ 2)")
+        await pilot.press("ctrl+up", "ctrl+up")
+        assert highlighted_expression(app) == "x"
+        # Overshooting by one is undone by one key, and Alt works the same.
+        await pilot.press("alt+down")
+        assert highlighted_expression(app) == "y"
+        # Paging still moves the highlight; a few rows have nothing to page.
+        await pilot.press("pagedown")
+        assert highlighted_expression(app) == "z"
+        await pilot.press("ctrl+up", "f3")
+        assert prompt(app)[1] == "(1\n  + 2)y"
+
+
+async def test_a_new_row_is_indented_for_each_open_bracket(app):
+    async with app.run_test() as pilot:
+        await pilot.press("a", *"IF(true,", "enter")
+        assert prompt(app)[1] == "IF(true,\n  "
+        await pilot.press(*"[1, (2", "shift+enter")
+        assert prompt(app)[1] == "IF(true,\n  [1, (2\n      "
+
+
+
+async def test_a_bracket_in_a_string_is_no_reason_to_indent(app):
+    async with app.run_test() as pilot:
+        await pilot.press("a", *'["(",', "enter")
+        assert prompt(app)[1] == '["(",\n  '
+
+
+async def test_tab_and_shift_tab_indent_and_dedent(app):
+    async with app.run_test() as pilot:
+        await pilot.press("a", *"x", "shift+enter", "tab", "tab", *"+ y")
+        assert prompt(app)[1] == "x\n    + y"
+        await pilot.press("shift+tab")
+        assert prompt(app)[1] == "x\n  + y"
+        assert app.query_one("#prompt-text").cursor_location == (1, 5)
+
+
+async def test_the_hint_names_the_highlight_keys_once_there_are_rows(app):
+    async with app.run_test() as pilot:
+        await pilot.press("a", *"(1", "enter")
+        await pilot.pause()
+        assert message(app) == "Enter expression (Ctrl-Up/Down: highlight, F1: help)"
+        await pilot.press("backspace", "backspace", "backspace")
+        await pilot.pause()
+        assert message(app) == "Enter expression (Alt-Enter: new line, F1: help)"
+
+
+async def test_the_hint_names_shift_enter_where_the_keyboard_reports_it(app):
+    async with app.run_test() as pilot:
+        app.shift_enter = True
+        await pilot.press("a")
+        assert message(app) == "Enter expression (Shift-Enter: new line, F1: help)"
+
+
+async def test_ctrl_k_at_the_end_of_a_row_joins_the_next_one(app):
+    async with app.run_test() as pilot:
+        await pilot.press("a", *"x", "shift+enter", *"+ y", "up", "end", "ctrl+k")
+        assert prompt(app)[1] == "x+ y"
+        await pilot.press("end", "ctrl+y")
+        assert prompt(app)[1] == "x+ y\n"
+
+
+async def test_a_paste_onto_the_author_line_keeps_its_rows(app):
+    async with app.run_test() as pilot:
+        await pilot.press("a")
+        line = app.query_one("#prompt-text")
+        line.post_message(events.Paste("f(x) :=\n  x + 1"))
+        await pilot.pause()
+        assert prompt(app)[1] == "f(x) :=\n  x + 1"
 
 
 # -- the kill ring: what a deletion took out, and Ctrl-Y putting it back ------

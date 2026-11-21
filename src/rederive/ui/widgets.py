@@ -7,8 +7,10 @@ render.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+import re
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
+from functools import partial
 from typing import Any
 
 from rich.cells import cell_len
@@ -22,7 +24,8 @@ from textual.geometry import Offset, Region, Size
 from textual.message import Message
 from textual.strip import Strip
 from textual.widget import Widget
-from textual.widgets import Input, Static
+from textual.widgets import Input, Static, TextArea
+from textual.widgets.text_area import Edit, EditResult, Location
 
 from rederive import memory
 from rederive.model.session import Entry
@@ -69,6 +72,31 @@ _NUMBER_WIDTH = 5
 
 #: Status line column showing the file the session last read or wrote.
 _FILE_COLUMN = 22
+
+#: The start of a word, where the word movements and deletions on a line stop. This is
+#: Textual's input's rule, which the Author line follows too.
+_WORD_START = re.compile(r"(?<=\W)\w")
+
+#: Brackets that open and close, which the Author line indents by.
+_OPENERS = "([{"
+_CLOSERS = ")]}"
+
+
+def _open_brackets(text: str) -> int:
+    """How many brackets are open at the end of `text`, ignoring those in strings."""
+    depth = 0
+    quoted = False
+    for character in text:
+        if character == '"':
+            quoted = not quoted
+        elif quoted:
+            continue
+        elif character in _OPENERS:
+            depth += 1
+        elif character in _CLOSERS:
+            depth = max(0, depth - 1)
+    return depth
+
 
 #: Number of kills the prompt line keeps for Ctrl-Y, as in Bash. Plenty for a line of
 #: algebra, and bounded so a long session doesn't keep every deleted scrap.
@@ -515,20 +543,137 @@ class MessageLine(Band):
         self.update(Text(f" {message}", style=self.colors["prompt"]))
 
 
-class PromptLine(Input):
-    """The input line used by every command that reads a line.
+class KillRing:
+    """An Emacs-style kill ring, for the two widgets that edit a line.
+
+    Ctrl-U, Ctrl-K, Ctrl-W and Alt-Backspace save what they delete, Ctrl-Y yanks the
+    last kill, and Alt-Y right after Ctrl-Y cycles back through earlier kills.
+    Consecutive kills join into one, so a line deleted word by word comes back whole.
+    The ring is shared by the line widgets, which last for the whole session, so text
+    deleted from one Author line can be yanked into the next one or into a Substitute
+    value.
+
+    The widget supplies the text, the cursor and the selection as offsets into it, and
+    a way to replace a range; the ring works in those terms.
+    """
+
+    def _start_ring(self, kills: list[str]) -> None:
+        #: Killed text, oldest first, shared with the other line widget.
+        self.kills = kills
+        #: Direction of the kill in progress: -1 for text before the cursor, 1 for text
+        #: after it, or None if the current deletion isn't a kill.
+        self._killing: int | None = None
+        #: The text and cursor after the last kill, to tell whether the next kill
+        #: continues it.
+        self._killed_at: tuple[str, int] | None = None
+        #: The last yank: kill index, start, end, and resulting text. Alt-Y uses these
+        #: to check that the yanked text hasn't been edited since.
+        self._yanked: tuple[int, int, int, str] | None = None
+
+    def _contents(self) -> str:
+        raise NotImplementedError
+
+    def _caret(self) -> int:
+        raise NotImplementedError
+
+    def _marked(self) -> tuple[int, int]:
+        """The selection as offsets, start first; empty at the cursor."""
+        raise NotImplementedError
+
+    def _write(self, text: str, start: int, end: int) -> None:
+        """Replace the text between two offsets, leaving the cursor after `text`."""
+        raise NotImplementedError
+
+    def _kill(self, direction: int, delete: Callable[[], object]) -> None:
+        """Run `delete`, saving whatever it removes as a kill in `direction`.
+
+        The base class decides how much each action deletes (and some delegate to
+        others), so this only sets a flag that the deletion checks.
+        """
+        was, self._killing = self._killing, direction
+        try:
+            delete()
+        finally:
+            self._killing = was
+
+    async def _kill_async(
+        self, direction: int, delete: Callable[[], Awaitable[object]]
+    ) -> None:
+        """`_kill` for an action that runs other actions."""
+        was, self._killing = self._killing, direction
+        try:
+            await delete()
+        finally:
+            self._killing = was
+
+    def _capture(self, start: int, end: int, delete: Callable[[], object]) -> None:
+        """Run `delete`, which removes the text between two offsets, keeping the text.
+
+        All deletions pass through the widget's `delete`, making it the one place to
+        capture killed text; it calls this only while a kill is in progress.
+        """
+        text = self._contents()
+        start, end = sorted((max(0, start), min(len(text), end)))
+        taken = text[start:end]
+        before = (text, self._caret())
+        delete()
+        if not taken or self._contents() == before[0]:
+            # An empty kill, such as Ctrl-K at the end of the line, doesn't break the
+            # run, so kills on either side still join.
+            return
+        self._keep(taken, joins=before == self._killed_at)
+        self._killed_at = (self._contents(), self._caret())
+
+    def _keep(self, taken: str, joins: bool) -> None:
+        """Add `taken` to the ring, or append it to the previous kill if `joins`.
+
+        A kill that starts where the last one ended continues it. Text killed leftwards
+        is prepended, and text killed rightwards appended.
+        """
+        if joins and self.kills:
+            last = self.kills[-1]
+            self.kills[-1] = last + taken if self._killing == 1 else taken + last
+            return
+        self.kills.append(taken)
+        del self.kills[:-_KILLS_KEPT]
+
+    def action_yank(self) -> None:
+        """Ctrl-Y: insert the last kill at the cursor, replacing any selection.
+
+        The cursor ends up after the inserted text.
+        """
+        if self.kills:
+            self._put(len(self.kills) - 1, *self._marked())
+
+    def action_yank_pop(self) -> None:
+        """Alt-Y: replace the text just yanked with the previous kill.
+
+        Works only right after a yank, while the yanked text is unchanged and the cursor
+        is at its end. Repeating it cycles back through the ring, wrapping from oldest
+        to newest.
+        """
+        if self._yanked is None:
+            return
+        index, start, end, text = self._yanked
+        if text != self._contents() or self._caret() != end:
+            self._yanked = None
+            return
+        self._put((index - 1) % len(self.kills), start, end)
+
+    def _put(self, index: int, start: int, end: int) -> None:
+        """Write kill `index` over the text between `start` and `end`."""
+        text = self.kills[index]
+        self._write(text, start, end)
+        self._yanked = (index, start, start + len(text), self._contents())
+
+
+class PromptLine(KillRing, Input):
+    """The input line used by every command that reads a line, except Author.
 
     Textual's input only inserts, so this adds Derive's overwrite mode: with
     `overwrite` set, a typed character replaces the one at the cursor. The key is
     intercepted before the base class would insert it. Typing over a selection replaces
-    it in either mode, as the base class already does.
-
-    It also adds an Emacs-style kill ring. Ctrl-U, Ctrl-K, Ctrl-W and Alt-Backspace save
-    what they delete, Ctrl-Y yanks the last kill, and Alt-Y right after Ctrl-Y cycles
-    back through earlier kills. Consecutive kills join into one, so a line deleted word
-    by word comes back whole. The ring belongs to the line, which is a single widget for
-    the whole session, so text deleted from one Author line can be yanked into the next
-    one or into a Substitute value.
+    it in either mode, as the base class already does. It also has the kill ring.
     """
 
     BINDINGS = [
@@ -538,19 +683,9 @@ class PromptLine(Input):
 
     overwrite = False
 
-    def __init__(self, **arguments: Any) -> None:
+    def __init__(self, kills: list[str], **arguments: Any) -> None:
         super().__init__(**arguments)
-        #: Killed text, oldest first.
-        self.kills: list[str] = []
-        #: Direction of the kill in progress: -1 for text before the cursor, 1 for text
-        #: after it, or None if the current deletion isn't a kill.
-        self._killing: int | None = None
-        #: The line and cursor after the last kill, to tell whether the next kill
-        #: continues it.
-        self._killed_at: tuple[str, int] | None = None
-        #: The last yank: kill index, start, end, and resulting line. Alt-Y uses these to
-        #: check that the yanked text hasn't been edited since.
-        self._yanked: tuple[int, int, int, str] | None = None
+        self._start_ring(kills)
 
     class Pasted(Message):
         """Text pasted from the terminal or browser, for the app to insert."""
@@ -581,7 +716,24 @@ class PromptLine(Input):
         at = self.cursor_position
         self.replace(event.character, at, at + 1)
 
+    def write(self, text: str) -> None:
+        """Insert `text` at the cursor, replacing any selection."""
+        self._write(text, *self._marked())
+
     # -- kill and yank -------------------------------------------------------
+
+    def _contents(self) -> str:
+        return self.value
+
+    def _caret(self) -> int:
+        return self.cursor_position
+
+    def _marked(self) -> tuple[int, int]:
+        start, end = sorted(self.selection)
+        return start, end
+
+    def _write(self, text: str, start: int, end: int) -> None:
+        self.replace(text, start, end)
 
     def action_delete_left_all(self) -> None:
         """Ctrl-U: kill the text before the cursor."""
@@ -599,79 +751,271 @@ class PromptLine(Input):
         """Alt-Backspace: kill the word after the cursor."""
         self._kill(1, super().action_delete_right_word)
 
-    def _kill(self, direction: int, delete: Callable[[], None]) -> None:
-        """Run `delete`, saving whatever it removes as a kill in `direction`.
-
-        The base class decides how much each action deletes (and some delegate to
-        others), so this only sets a flag that `delete` checks.
-        """
-        was, self._killing = self._killing, direction
-        try:
-            delete()
-        finally:
-            self._killing = was
-
     def delete(self, start: int, end: int) -> None:
         """Delete the text between `start` and `end`, saving it if it's a kill.
 
-        All deletions pass through here, making it the one place to capture killed
-        text. Backspace and Delete pass through without saving anything.
+        Backspace and Delete pass through without saving anything.
         """
         if self._killing is None:
             super().delete(start, end)
             return
-        start, end = sorted((max(0, start), min(len(self.value), end)))
-        taken = self.value[start:end]
-        before = (self.value, self.cursor_position)
-        super().delete(start, end)
-        if not taken or self.value == before[0]:
-            # An empty kill, such as Ctrl-K at the end of the line, doesn't break the
-            # run, so kills on either side still join.
+        self._capture(start, end, partial(Input.delete, self, start, end))
+
+
+class AuthorText(KillRing, TextArea):
+    """The Author line, which grows to several rows for a long expression.
+
+    Enter enters the expression when it is complete, and otherwise starts a new row, so
+    a program is typed the way it is laid out: `LOOP(` followed by Enter continues on
+    the next row. Once the text has several rows, Enter also continues while the cursor
+    is before the end, so a row can be added in the middle. Shift-Enter and Alt-Enter
+    always start a new row, to break a complete expression. Whether the text is
+    complete is up to `unfinished`, which parses it.
+
+    A new row is indented by `INDENT` for each bracket still open before the cursor, so
+    the arguments of a call line up under it. Tab and Shift-Tab adjust it.
+
+    The field grows with its text up to `MAX_ROWS` rows, then scrolls. It has the same
+    overwrite mode and kill ring as the other lines. Ctrl-K at the end of a row kills
+    the line break, joining the rows.
+    """
+
+    BINDINGS = [
+        Binding("ctrl+y", "yank", "Restore deleted text", show=False),
+        Binding("alt+y", "yank_pop", "Restore an earlier deletion", show=False),
+        Binding("shift+enter,alt+enter", "new_row", "New row", show=False),
+        Binding("tab", "indent", "Indent", show=False),
+        Binding("shift+tab", "dedent", "Dedent", show=False),
+        Binding("ctrl+home", "text_start", "Start of text", show=False),
+        Binding("ctrl+end", "text_end", "End of text", show=False),
+    ]
+
+    #: Rows the field grows to before it scrolls: room for a short program, while the
+    #: expressions it is built from stay in view.
+    MAX_ROWS = 5
+
+    #: One level of indentation.
+    INDENT = "  "
+
+    overwrite = False
+
+    class Reshaped(Message):
+        """The text went from one row to several, or back."""
+
+    class Submitted(Message):
+        """Enter on a complete expression."""
+
+        def __init__(self, value: str) -> None:
+            super().__init__()
+            self.value = value
+
+    #: A paste goes to the app, as from the other line.
+    Pasted = PromptLine.Pasted
+
+    def __init__(
+        self, kills: list[str], unfinished: Callable[[str], bool], **arguments: Any
+    ) -> None:
+        super().__init__(
+            soft_wrap=False,
+            compact=True,
+            highlight_cursor_line=False,
+            tab_behavior="focus",
+            **arguments,
+        )
+        self._start_ring(kills)
+        self.unfinished = unfinished
+        #: Whether the text has several rows, as last reported with `Reshaped`.
+        self._several = False
+
+    @property
+    def value(self) -> str:
+        return self.text
+
+    @value.setter
+    def value(self, text: str) -> None:
+        self.load_text(text)
+        self.move_cursor(self.document.end)
+        self._fit()
+
+    @property
+    def rows(self) -> int:
+        return self.document.line_count
+
+    def _fit(self) -> None:
+        """Size the field to its text, up to `MAX_ROWS`."""
+        several = self.rows > 1
+        if several != self._several:
+            self._several = several
+            self.post_message(self.Reshaped())
+        self.styles.height = min(self.rows, self.MAX_ROWS)
+
+    def edit(self, edit: Edit) -> EditResult:
+        """Make an edit and resize to the result; every change of the text ends here."""
+        result = super().edit(edit)
+        self._fit()
+        return result
+
+    async def _on_key(self, event: events.Key) -> None:
+        if event.key == "enter":
+            event.stop()
+            event.prevent_default()
+            if self._submits():
+                self.post_message(self.Submitted(self.text))
+            else:
+                self.action_new_row()
             return
-        self._keep(taken, joins=before == self._killed_at)
-        self._killed_at = (self.value, self.cursor_position)
+        if event.is_printable and self.overwrite and self.selection.is_empty:
+            event.stop()
+            event.prevent_default()
+            assert event.character is not None
+            self.type_character(event.character)
+            return
+        await super()._on_key(event)
 
-    def _keep(self, taken: str, joins: bool) -> None:
-        """Add `taken` to the ring, or append it to the previous kill if `joins`.
+    async def _on_paste(self, event: events.Paste) -> None:
+        """Forward a paste from the terminal or browser to the app, like Ctrl-V."""
+        event.prevent_default()
+        event.stop()
+        self.post_message(self.Pasted(event.text))
 
-        A kill that starts where the last one ended continues it. Text killed leftwards
-        is prepended, and text killed rightwards appended.
+    def _submits(self) -> bool:
+        """Whether Enter enters the text, rather than starting a new row."""
+        text = self.text
+        if self.unfinished(text):
+            return False
+        return self.rows == 1 or not text[self._caret() :].strip()
+
+    def action_new_row(self) -> None:
+        """Start a new row at the cursor, indented, replacing any selection."""
+        start, _ = self._marked()
+        self.write("\n" + self.INDENT * _open_brackets(self.text[:start]))
+
+    def action_indent(self) -> None:
+        """Tab: indent to the next level at the cursor, replacing any selection."""
+        _, column = self.cursor_location
+        width = len(self.INDENT)
+        self.write(" " * (width - column % width))
+
+    def action_dedent(self) -> None:
+        """Shift-Tab: take a level of indentation off the cursor's row."""
+        row, column = self.cursor_location
+        line = self.document[row]
+        taken = min(len(self.INDENT), len(line) - len(line.lstrip(" ")))
+        if taken:
+            self.delete((row, 0), (row, taken), maintain_selection_offset=False)
+            self.move_cursor((row, max(0, column - taken)))
+
+    def get_cursor_word_left_location(self) -> Location:
+        """Where Ctrl-Left and Ctrl-W stop: the start of a word, as on the other lines."""
+        before = self.text[: self._caret()]
+        starts = [hit.start() for hit in _WORD_START.finditer(before)]
+        return self.document.get_location_from_index(starts[-1] if starts else 0)
+
+    def get_cursor_word_right_location(self) -> Location:
+        """Where Ctrl-Right stops: the start of the next word, as on the other lines."""
+        caret = self._caret()
+        hit = _WORD_START.search(self.text[caret:])
+        return self.document.get_location_from_index(
+            len(self.text) if hit is None else caret + hit.start()
+        )
+
+    def action_text_start(self) -> None:
+        self.move_cursor((0, 0))
+
+    def action_text_end(self) -> None:
+        self.move_cursor(self.document.end)
+
+    def type_character(self, character: str) -> None:
+        """Type one character, over the one at the cursor in overwrite mode.
+
+        In overwrite mode a character at the end of a row is added, rather than replacing
+        the line break.
         """
-        if joins and self.kills:
-            last = self.kills[-1]
-            self.kills[-1] = last + taken if self._killing == 1 else taken + last
+        if not (self.overwrite and self.selection.is_empty):
+            self.write(character)
             return
-        self.kills.append(taken)
-        del self.kills[:-_KILLS_KEPT]
+        row, column = self.cursor_location
+        end = (row, column + 1) if column < len(self.document[row]) else (row, column)
+        self.replace(character, (row, column), end, maintain_selection_offset=False)
 
-    def action_yank(self) -> None:
-        """Ctrl-Y: insert the last kill at the cursor, replacing any selection.
+    def write(self, text: str) -> None:
+        """Insert `text` at the cursor, replacing any selection."""
+        self._write(text, *self._marked())
 
-        The cursor ends up after the inserted text.
-        """
-        if self.kills:
-            self._put(len(self.kills) - 1, *sorted(self.selection))
+    @property
+    def cursor_position(self) -> int:
+        """The cursor as an offset into the text, as the other lines give it."""
+        return self._caret()
 
-    def action_yank_pop(self) -> None:
-        """Alt-Y: replace the text just yanked with the previous kill.
+    @cursor_position.setter
+    def cursor_position(self, offset: int) -> None:
+        self.move_cursor(self.document.get_location_from_index(offset))
 
-        Works only right after a yank, while the yanked text is unchanged and the cursor
-        is at its end. Repeating it cycles back through the ring, wrapping from oldest
-        to newest.
-        """
-        if self._yanked is None:
-            return
-        index, start, end, line = self._yanked
-        if line != self.value or self.cursor_position != end:
-            self._yanked = None
-            return
-        self._put((index - 1) % len(self.kills), start, end)
+    def delete_selection(self) -> None:
+        """Delete the selected text."""
+        self._write("", *self._marked())
 
-    def _put(self, index: int, start: int, end: int) -> None:
-        """Write kill `index` over the text between `start` and `end`."""
-        text = self.kills[index]
-        self.replace(text, start, end)
-        self._yanked = (index, start, start + len(text), self.value)
+    # -- kill and yank -------------------------------------------------------
+
+    def _contents(self) -> str:
+        return self.text
+
+    def _caret(self) -> int:
+        return self.document.get_index_from_location(self.cursor_location)
+
+    def _marked(self) -> tuple[int, int]:
+        index = self.document.get_index_from_location
+        start, end = sorted(map(index, self.selection))
+        return start, end
+
+    def _write(self, text: str, start: int, end: int) -> None:
+        place = self.document.get_location_from_index
+        self.replace(text, place(start), place(end), maintain_selection_offset=False)
+
+    def action_delete_to_start_of_line(self) -> None:
+        """Ctrl-U: kill the text before the cursor on its row."""
+        self._kill(-1, super().action_delete_to_start_of_line)
+
+    def action_delete_word_left(self) -> None:
+        """Ctrl-W and Alt-Backspace: kill the word before the cursor."""
+        self._kill(-1, super().action_delete_word_left)
+
+    def action_delete_word_right(self) -> None:
+        """Alt-Delete: kill the word after the cursor."""
+        self._kill(1, super().action_delete_word_right)
+
+    def action_delete_to_end_of_line(self) -> None:
+        self._kill(1, super().action_delete_to_end_of_line)
+
+    async def action_delete_to_end_of_line_or_delete_line(self) -> None:
+        """Ctrl-K: kill to the end of the row, or the line break at its end."""
+        await self._kill_async(
+            1, super().action_delete_to_end_of_line_or_delete_line
+        )
+
+    def action_delete_line(self) -> None:
+        """Ctrl-Shift-K: kill the row."""
+        self._kill(1, super().action_delete_line)
+
+    def delete(
+        self, start: Location, end: Location, *, maintain_selection_offset: bool = True
+    ) -> EditResult:
+        """Delete the text between two locations, saving it if it's a kill."""
+        if self._killing is None:
+            return super().delete(
+                start, end, maintain_selection_offset=maintain_selection_offset
+            )
+        index = self.document.get_index_from_location
+        done: list[EditResult] = []
+        delete = partial(
+            TextArea.delete,
+            self,
+            start,
+            end,
+            maintain_selection_offset=maintain_selection_offset,
+        )
+        self._capture(index(start), index(end), lambda: done.append(delete()))
+        return done[0]
 
 
 class CompletionList(Band):

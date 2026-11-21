@@ -114,6 +114,19 @@ def test_a_trailing_equals_is_what_shows_a_value(session):
         session.shows_value("2^3 +")
 
 
+@pytest.mark.parametrize(
+    "text", ["f(x", "LOOP(IF(n = 1, RETURN k)", "23 +", "[1, 2;\n3", "2^"]
+)
+def test_a_line_that_runs_out_before_it_parses_is_unfinished(session, text):
+    assert session.unfinished(text)
+
+
+@pytest.mark.parametrize("text", ["", "  \n", "f(x)", "1 +* 2", "\"abc", "\"ab\n"])
+def test_a_complete_line_or_an_earlier_mistake_is_not_unfinished(session, text):
+    # An unterminated string closes at the end, and a line break can't be in one.
+    assert not session.unfinished(text)
+
+
 async def test_a_trailing_equals_that_does_not_parse_appends_nothing(session):
     with pytest.raises(DeriveSyntaxError):
         await session.show_value("2^3 +=")

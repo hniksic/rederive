@@ -27,6 +27,11 @@ Transfer commands) show the prompt band, an Input with a label. The mode says wh
 command the line belongs to and what Enter does. A completed command returns to the
 command menu; Esc abandons the line and leaves the submenu up.
 
+The Author line is a widget of its own, which grows to several rows: Enter on an
+unfinished expression starts a new row, as do Shift-Enter and Alt-Enter on any. Once it
+has several rows, Up and Down move along them, while Ctrl-Up and Ctrl-Down (Alt on a
+Mac, where Ctrl-Up is Mission Control) move the highlight on every line. Tab indents.
+
 Ctrl-Enter is Enter followed by simplifying the entered expression, on every line that
 enters an expression. Terminals without the extended keyboard protocol send Ctrl-J for
 it.
@@ -115,6 +120,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from textual import events
+from textual._keyboard_protocol import MODIFIER_FUNCTIONAL_KEYS
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal
@@ -151,6 +157,7 @@ from rederive.ui import menu as menus
 from rederive.ui.menu import ALGEBRA, COLORS, ENTER_OPTION, Menu, MenuCursor
 from rederive.ui.theme import COLOR_SETTINGS, Palette
 from rederive.ui.widgets import (
+    AuthorText,
     CompletionList,
     FieldBand,
     Frame,
@@ -283,6 +290,9 @@ EXPRESSION_LINES = (
     tuple(mode for mode in ENTERING_MODES if mode != MODE_FILE) + LABELLED_MODES
 )
 
+#: Keys reported on their own that only modify or lock other keys.
+LONE_KEYS = MODIFIER_FUNCTIONAL_KEYS | {"caps_lock", "num_lock", "scroll_lock"}
+
 #: What each Alt key inserts, a shortcut for typing the name out (as in Derive, whose
 #: table used the IBM PC character set).
 #:
@@ -316,7 +326,11 @@ ALT_GLYPHS = {
 }
 
 # As in Derive, only the Author line mentions F1 help, although every line supports it.
-ENTER_EXPRESSION = "Enter expression (press F1 for help)"
+# It also names the key that starts a new row: Shift-Enter where the keyboard reports
+# it, and otherwise Alt-Enter. Once the line has several rows, it names instead the
+# keys that move the highlight, since Up and Down then move along the rows.
+ENTER_EXPRESSION = "Enter expression ({new_row}: new line, F1: help)"
+ENTER_ROWS = "Enter expression ({modifier}-Up/Down: highlight, F1: help)"
 #: Prompt for commands that derive an expression, without the Author line's help hint.
 ENTER_TO_DERIVE = "Enter expression"
 #: Asked by Quit and the two Clear commands that discard expressions.
@@ -487,12 +501,13 @@ GREETING = (
     "",
     f"Version {__version__}",
 )
-#: The notice's footer line. It mentions the demos, which nothing else on screen
-#: would.
-GREETING_FOOTER = "Press H for help, T D for demos"
+#: The notice's footer line. It says how to start typing, for users who don't know
+#: Derive's menu (Enter invokes Author, the highlighted word), and mentions the demos,
+#: which nothing else on screen would.
+GREETING_FOOTER = "Press Enter to type an expression, H for help, T D for demos"
 #: The footer when the demos are already offered elsewhere, such as a button on a web
 #: page.
-GREETING_HELP = "Press H for help"
+GREETING_HELP = "Press Enter to type an expression, H for help"
 
 
 class FileNames(Suggester):
@@ -904,6 +919,9 @@ CURSOR_MOVES = {
 #: Movements that navigate the history, even on a prompt line or a dialog whose fields
 #: name expressions. Other movements move the cursor of whatever is shown.
 ENTRY_MOVES = ("up", "down", "page_up", "page_down", "first_entry", "last_entry")
+#: The entry moves whose keys move along the Author line's text once it has several
+#: rows. Paging stays with the highlight, since the line is at most a few rows.
+TEXT_MOVES = ("up", "down", "first_entry", "last_entry")
 
 #: Movements that depend on the pane height.
 PAGE_MOVES = ("page_up", "page_down")
@@ -1114,6 +1132,13 @@ class RederiveApp(App[None]):
         Binding("escape", "menu_escape", "Go back", priority=True, show=False),
         Binding("up", "nav('up')", "Up", priority=True, show=False),
         Binding("down", "nav('down')", "Down", priority=True, show=False),
+        # The same on a line, where Up and Down may move along the Author line's rows.
+        # Alt is for a Mac, where Ctrl-Up and Ctrl-Down are Mission Control's.
+        *[
+            Binding(f"{modifier}+{key}", f"walk({key!r})", key, priority=True, show=False)
+            for modifier in ("ctrl", "alt")
+            for key in ("up", "down")
+        ],
         Binding("left", "nav('left')", "Left", priority=True, show=False),
         Binding("right", "nav('right')", "Right", priority=True, show=False),
         Binding("home", "nav('first_sibling')", "Home", priority=True, show=False),
@@ -1243,6 +1268,10 @@ class RederiveApp(App[None]):
         self.offering: tuple[str, Selection] | None = None
         #: The action for Y while a command asks a yes/no question.
         self.confirm: Callable[[], None] | None = None
+        #: Whether the keyboard reports Shift-Enter apart from Enter, so the Author
+        #: line's hint can offer it. The terminal driver sets this when the terminal
+        #: answers its query; otherwise the hint offers Alt-Enter.
+        self.shift_enter = False
         #: Whether that question was asked over a dialog, which the answer must close.
         self.confirmed_over = False
         #: The dialog `_ask` last showed, so a command can redisplay it with its answer.
@@ -1399,10 +1428,16 @@ class RederiveApp(App[None]):
         yield MenuRule(id="rule")
         yield MenuBand(id="menu")
         yield FieldBand(id="fields")
+        # The two line widgets share the kill ring, so text killed on one can be yanked
+        # into the other.
+        kills: list[str] = []
         yield Horizontal(
             Static(AUTHOR_PROMPT, id="prompt-label"),
             # The prompt chooses its own selection: the label number without the `#`.
-            PromptLine(id="prompt-input", select_on_focus=False),
+            PromptLine(kills, id="prompt-input", select_on_focus=False),
+            AuthorText(
+                kills, lambda text: self.session.unfinished(text), id="prompt-text"
+            ),
             id="prompt-band",
         )
         yield MessageLine(id="message")
@@ -1418,6 +1453,7 @@ class RederiveApp(App[None]):
 
     def on_mount(self) -> None:
         self.query_one("#prompt-band").display = False
+        self.query_one("#prompt-text").display = False
         self.query_one("#fields").display = False
         self.query_one("#completions").display = False
         self.refresh_screen()
@@ -1726,6 +1762,8 @@ class RederiveApp(App[None]):
             return False
         if action == "complete_file":
             return self.mode == MODE_FILE
+        if action == "walk":
+            return self.mode in WALKED_MODES
         if action.startswith("browse_"):
             return self.browsing
         if action.startswith("menu_"):
@@ -1756,7 +1794,9 @@ class RederiveApp(App[None]):
             if self.mode not in WALKED_MODES:
                 return False
             if parameters[0] in ENTRY_MOVES:
-                return True
+                # Several rows on the Author line take the keys that move along text;
+                # Ctrl-Up and Ctrl-Down still move the highlight.
+                return not (self._several_rows and parameters[0] in TEXT_MOVES)
             return self.mode in EXPRESSION_LINES and not self.line_edit
         if action == "enter_and_simplify":
             return self.mode == MODE_MENU or self.mode in PROMPT_MODES
@@ -1779,7 +1819,13 @@ class RederiveApp(App[None]):
         During a computation only Esc (abort) works. Other keys are discarded rather
         than queued, so keys pressed at a seemingly frozen screen don't all fire when
         the answer arrives.
+
+        A modifier or lock key pressed alone, which terminals with the kitty keyboard
+        protocol report, isn't a key here: Shift on the way to a capital Y doesn't
+        answer a question, and doesn't step a demo.
         """
+        if event.key in LONE_KEYS:
+            return
         if self.mode == MODE_COMPUTE:
             event.stop()
             event.prevent_default()
@@ -1942,7 +1988,10 @@ class RederiveApp(App[None]):
         dialog choices can be clicked, so they don't count. A touch screen uses this to
         decide whether to show its on-screen keyboard.
         """
-        if isinstance(self.focused, PromptLine) or self.mode == MODE_CONFIRM:
+        if (
+            isinstance(self.focused, (PromptLine, AuthorText))
+            or self.mode == MODE_CONFIRM
+        ):
             return True
         editor = self.editor
         return self.mode == MODE_MENU and editor is not None and editor.text is not None
@@ -2166,7 +2215,7 @@ class RederiveApp(App[None]):
         if self.mode == MODE_MENU:
             self.action_menu_invoke()
         else:
-            self._submitted(self.query_one("#prompt-input", Input).value)
+            self._submitted(self._line.value)
 
     def _enters_expression(self) -> bool:
         """Whether Enter on the current menu or dialog appends an unsimplified expression.
@@ -2290,7 +2339,7 @@ class RederiveApp(App[None]):
         """
         if self.mode not in PROMPT_MODES:
             return None
-        line = self.query_one("#prompt-input", PromptLine)
+        line = self._line
         if line.selection.is_empty or self.offering == (line.value, line.selection):
             return None
         return line.selected_text
@@ -2357,7 +2406,7 @@ class RederiveApp(App[None]):
             if self.mode in PROMPT_MODES:
                 self._set_message(NOTHING_TO_CUT)
             return
-        line = self.query_one("#prompt-input", PromptLine)
+        line = self._line
         self.copy_to_clipboard(text)
         line.delete_selection()
         self._set_message(CUT_TEXT)
@@ -2383,8 +2432,14 @@ class RederiveApp(App[None]):
             self._paste_on_line(event.text)
 
     def _paste_on_line(self, text: str) -> None:
-        """Write the first line of `text` onto the line, replacing a prefilled label."""
+        """Write `text` onto the line, replacing a prefilled label.
+
+        The Author line takes all of it, row by row; the others only its first line.
+        """
         lines = text.splitlines()
+        if self.mode == MODE_AUTHOR and any(lines):
+            self._write_on_line("\n".join(lines))
+            return
         if not lines or not lines[0]:
             return
         self._take_offered_label()
@@ -2421,8 +2476,48 @@ class RederiveApp(App[None]):
 
     def _write_on_line(self, text: str) -> None:
         """Insert `text` at the cursor, replacing any selection."""
-        line = self.query_one("#prompt-input", PromptLine)
-        line.replace(text, *sorted(line.selection))
+        self._line.write(text)
+
+    @property
+    def _line(self) -> PromptLine | AuthorText:
+        """The line being typed: the Author line, or the one the other commands share."""
+        author = self.query_one(AuthorText)
+        return author if author.display else self.query_one("#prompt-input", PromptLine)
+
+    @property
+    def _several_rows(self) -> bool:
+        """Whether the Author line is up with more than one row."""
+        return self.mode == MODE_AUTHOR and self.query_one(AuthorText).rows > 1
+
+    def action_walk(self, movement: str) -> None:
+        """Ctrl-Up and Ctrl-Down: move the highlight under a line, whatever its rows."""
+        self._walk_prompt(movement)
+
+    def _author_hint(self) -> str:
+        """The Author line's prompt: the key that starts a new row, and once there are
+        several, the keys that move the highlight."""
+        if self.query_one(AuthorText).rows > 1:
+            return ENTER_ROWS.format(
+                modifier="Alt" if sys.platform == "darwin" else "Ctrl"
+            )
+        return ENTER_EXPRESSION.format(
+            new_row="Shift-Enter" if self.shift_enter else "Alt-Enter"
+        )
+
+    def on_author_text_reshaped(self, event: AuthorText.Reshaped) -> None:
+        """Change the Author line's hint as it gains or loses its second row.
+
+        A message that isn't the hint, such as a syntax error, is left alone.
+        """
+        if self.mode == MODE_AUTHOR and self.message in self._author_hints():
+            self._set_message(self._author_hint())
+
+    def _author_hints(self) -> set[str]:
+        """Every form the Author line's hint takes."""
+        return {
+            *(ENTER_EXPRESSION.format(new_row=key) for key in ("Shift-Enter", "Alt-Enter")),
+            *(ENTER_ROWS.format(modifier=key) for key in ("Ctrl", "Alt")),
+        }
 
     def action_toggle_arrow_mode(self) -> None:
         """F6: toggle whether left/right keys go to the line or the highlight.
@@ -2436,7 +2531,8 @@ class RederiveApp(App[None]):
     def action_toggle_inserting(self) -> None:
         """Ins: toggle insert and overwrite modes."""
         self.inserting = not self.inserting
-        self.query_one("#prompt-input", PromptLine).overwrite = not self.inserting
+        self.query_one(PromptLine).overwrite = not self.inserting
+        self.query_one(AuthorText).overwrite = not self.inserting
         self._show_flags()
 
     def _move_selection(self, movement: str) -> bool:
@@ -2605,7 +2701,7 @@ class RederiveApp(App[None]):
     # -- commands ----------------------------------------------------------
 
     def _command_author(self) -> None:
-        self._prompt(MODE_AUTHOR, AUTHOR_PROMPT, "", ENTER_EXPRESSION)
+        self._prompt(MODE_AUTHOR, AUTHOR_PROMPT, "", self._author_hint())
 
     def _command_simplify(self) -> None:
         """Ask which expression to simplify, offering the highlighted one."""
@@ -2645,14 +2741,20 @@ class RederiveApp(App[None]):
         self.query_one("#fields").display = False
         self.query_one("#prompt-band").display = True
         self.query_one("#prompt-label", Static).update(label)
-        line = self.query_one("#prompt-input", PromptLine)
-        # File prompts set their own suggester afterwards.
-        line.suggester = None
+        author = mode == MODE_AUTHOR
+        self.query_one(AuthorText).display = author
+        self.query_one(PromptLine).display = not author
+        line = self._line
         line.overwrite = not self.inserting
         self._close_list()
         line.value = offered
-        line.selection = Selection(min(keep, len(offered)), len(offered))
-        self.offering = (line.value, line.selection)
+        if isinstance(line, PromptLine):
+            # File prompts set their own suggester afterwards.
+            line.suggester = None
+            line.selection = Selection(min(keep, len(offered)), len(offered))
+            self.offering = (line.value, line.selection)
+        else:
+            self.offering = None
         line.focus()
         self._set_message(message)
         self._show_flags()
@@ -2767,7 +2869,7 @@ class RederiveApp(App[None]):
         if resume in PROMPT_MODES:
             # The line comes back exactly as it was left, cursor included.
             self.query_one("#prompt-band").display = True
-            self.query_one("#prompt-input", Input).focus()
+            self._line.focus()
         else:
             self._restart_menu()
         self.message = message
@@ -4825,6 +4927,11 @@ class RederiveApp(App[None]):
         event.stop()
         self._submitted(event.value)
 
+    def on_author_text_submitted(self, event: AuthorText.Submitted) -> None:
+        """Enter on a complete Author expression submits all its rows."""
+        event.stop()
+        self._submitted(event.value)
+
     def _submitted(self, value: str) -> None:
         """Dispatch the submitted line to the command for the current mode."""
         if self.mode == MODE_SIMPLIFY:
@@ -4946,14 +5053,15 @@ class RederiveApp(App[None]):
         """
         self._beep()
         self._set_message(str(error))
-        line = self.query_one("#prompt-input", Input)
+        line = self._line
         line.focus()
         line.cursor_position = error.offset
 
     def _hide_prompt(self) -> None:
         """Hide the prompt band and show the menu band."""
         self._close_list()
-        self.query_one("#prompt-input", Input).value = ""
+        self.query_one(PromptLine).value = ""
+        self.query_one(AuthorText).value = ""
         self.query_one("#prompt-band").display = False
         self.query_one("#menu").display = True
         self.set_focus(None)

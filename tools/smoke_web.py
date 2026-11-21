@@ -5,7 +5,8 @@
     ... --directory build/web --browser chromium --shots build/shots
 
 It opens the page, waits for the menu, authors `(x + 1)^2 - (x - 1)^2`, simplifies
-it, and reads `4·x` off the screen. That exercises the whole build (two Pyodide
+it, and reads `4·x` off the screen. Then it authors an expression on two rows, broken
+with Shift-Enter, which checks that the key reaches the program as itself. That exercises the whole build (two Pyodide
 instances, the Textual driver, xterm.js, the engine worker and the pickles between
 them), and a failure reports which step it stopped at.
 
@@ -35,6 +36,11 @@ ROOT = Path(__file__).resolve().parent.parent
 #: its answer fits on one line, so the test doesn't depend on 2D rendering.
 AUTHORED = "(x+1)^2-(x-1)^2"
 ANSWER = "4·x"
+
+#: An expression typed on two rows, split by Shift-Enter where the first row is
+#: complete, and how it is entered.
+ROWS = ("23", "+ 45")
+JOINED = "23 + 45"
 
 #: A word from the opening menu, whose appearance means the program is up.
 MENU = "Author"
@@ -152,12 +158,22 @@ def _asked(page, url: str, name: str, shots: Path | None, troubles: list[str]) -
     if not _waiting(page, ANSWER, ANSWER_SECONDS):
         return _failed(name, f"Simplify never answered {ANSWER}", page, shots, troubles)
 
+    # Shift-Enter after a complete expression starts a new row rather than entering it.
+    page.keyboard.press("a")
+    page.wait_for_timeout(500)
+    page.keyboard.type(ROWS[0])
+    page.keyboard.press("Shift+Enter")
+    page.keyboard.type(ROWS[1])
+    page.keyboard.press("Enter")
+    if not _waiting(page, JOINED, 30):
+        return _failed(name, "Shift-Enter did not start a row", page, shots, troubles)
+
     if shots is not None:
         page.screenshot(path=str(shots / f"{name}.png"))
     if troubles:
         return _failed(name, "the page reported errors", page, shots, troubles)
-    print(f"{name}: authored, simplified, and read {ANSWER} off the screen",
-          file=sys.stderr)
+    print(f"{name}: authored, simplified, and read {ANSWER} off the screen, and "
+          f"entered {JOINED} from two rows", file=sys.stderr)
     return True
 
 

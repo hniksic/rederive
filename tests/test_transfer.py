@@ -1332,8 +1332,8 @@ async def test_a_name_being_saved_completes_too(app, file):
 
 async def test_tab_on_a_line_that_names_no_file_leaves_it_alone(app):
     async with app.run_test() as pilot:
-        await pilot.press("a", *"x+1", "tab")
-        assert prompt(app) == ("AUTHOR expression:", "x+1")
+        await pilot.press("a", *"x+1", "enter", "s", "tab")
+        assert prompt(app) == ("SIMPLIFY expression:", "#1")
 
 
 async def test_the_line_offers_the_completion_as_it_is_typed(app, file):
@@ -1599,6 +1599,16 @@ async def test_a_demonstration_authors_and_simplifies_a_step_at_a_time(app, demo
         await pilot.press("space")
         assert band(app)[0].startswith(" COMMAND:")
         assert message(app) == "Enter option"
+
+
+async def test_a_modifier_alone_does_not_step_a_demonstration(app, demo):
+    # Terminals with the kitty keyboard protocol report modifiers pressed on their own.
+    async with app.run_test() as pilot:
+        await pilot.press("t", "d", "o", *demo.name, "enter")
+        await pilot.press("left_shift", "right_control", "left_alt")
+        assert band(app) == [" adds two numbers"]
+        await pilot.press("space")
+        assert band(app) == [" and a symbolic one"]
 
 
 def test_a_demonstration_is_read_as_a_math_file_is():

@@ -281,6 +281,9 @@ function terminal() {
     // modified drag, as in a desktop terminal: Shift everywhere, and Option on a
     // Mac, where xterm.js only honors it with this set.
     macOptionClickForcesSelection: true,
+    // The kitty keyboard protocol, which the program turns on to tell keys
+    // apart that a plain terminal sends alike, such as Shift-Enter and Enter.
+    vtExtensions: { kittyKeyboard: true },
     theme: { background: '#000000', foreground: '#d0d0d0' },
   });
   // Ctrl-C over a selection copies it, which is what a page has taught everyone

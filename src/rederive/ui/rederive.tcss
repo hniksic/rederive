@@ -79,8 +79,14 @@ Screen {
     overflow: hidden;
 }
 
+/* Two rows like the menu band, the line and a blank row below it, and more
+   as the Author line grows. */
 #prompt-band {
-    height: 2;
+    height: auto;
+}
+
+#prompt-input, #prompt-text {
+    margin-bottom: 1;
 }
 
 /* The prompt label takes the Option color, not the Prompt color: in the
@@ -102,6 +108,28 @@ Screen {
 }
 
 #prompt-input > .input--cursor {
+    background: $rd-selection-background;
+    color: $rd-work-background;
+}
+
+/* The Author line, styled like the other lines. Its height follows its rows,
+   up to a limit past which it scrolls; a long row scrolls sideways, as the
+   other lines do, without a scrollbar. */
+#prompt-text {
+    width: 1fr;
+    height: 1;
+    border: none;
+    padding: 0;
+    background: $rd-work-background;
+    background-tint: $rd-work-background;
+    color: $rd-work-foreground;
+    scrollbar-size-vertical: 1;
+    scrollbar-size-horizontal: 0;
+    scrollbar-background: $rd-work-background;
+    scrollbar-color: $rd-frame;
+}
+
+#prompt-text > .text-area--cursor {
     background: $rd-selection-background;
     color: $rd-work-background;
 }

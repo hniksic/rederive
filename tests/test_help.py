@@ -241,7 +241,7 @@ async def test_f1_opens_line_editing_and_gives_the_line_back(app):
         await pilot.press("n", "escape")
         assert app.helping is None
         assert prompt(app) == ("AUTHOR expression:", "x^2+1")
-        assert message(app) == "Enter expression (press F1 for help)"
+        assert message(app) == "Enter expression (Alt-Enter: new line, F1: help)"
         await pilot.press("enter")
         assert [entry.text for entry in app.session.entries] == ["x^2 + 1"]
 

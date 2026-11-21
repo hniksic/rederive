@@ -140,6 +140,22 @@ async def test_a_click_on_an_expression_selects_that_expression(app):
         assert highlighted_expression(app) == "x + 1"
 
 
+async def test_a_click_moves_the_highlight_under_an_author_line_of_rows(app):
+    """The keyboard stays on the line, so what was clicked can be copied onto it."""
+    async with app.run_test() as pilot:
+        await author(pilot, "x+1")
+        await author(pilot, "y+2")
+        await pilot.press("a")
+        await pilot.press(*"(1", "enter")
+        # The work area moves up a row for the line's, a turn after it grows.
+        await pilot.pause()
+        await click_on(pilot, app, "x")
+        assert highlighted_expression(app) == "x + 1"
+        await pilot.press("f3", ")")
+        assert prompt(app)[1] == "(1\n  x + 1)"
+        assert app.focused is app.query_one("#prompt-text")
+
+
 async def test_a_click_inside_the_selected_expression_goes_one_level_in(app):
     """Lets the user reach a term without hitting its exact character."""
     async with app.run_test() as pilot:
@@ -664,7 +680,7 @@ async def test_a_sweep_over_the_line_being_typed_is_the_lines_own(app):
         await pilot.press("a")
         await pilot.press(*"2 x")
         await pilot.pause()
-        line = app.query_one("#prompt-input")
+        line = app.query_one("#prompt-text")
         await pilot.mouse_down(line, offset=(2, 0))
         await pilot.hover(line, offset=(3, 0))
         await pilot.mouse_up(line, offset=(3, 0))

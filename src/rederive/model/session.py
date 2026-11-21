@@ -590,6 +590,22 @@ class Session:
         """
         return parse_expression(text, self.state).node.kind is Kind.SHOWVALUE
 
+    def unfinished(self, text: str) -> bool:
+        """Whether `text` is the start of an expression, still to be continued.
+
+        It is if parsing runs out of input: an unclosed bracket, a trailing operator.
+        A mistake before the end, or a blank line, is not unfinished, since typing more
+        can't fix it. The author line uses this to continue on a new row rather than
+        refuse the line.
+        """
+        if not text.strip():
+            return False
+        try:
+            parse_expression(text, self.state)
+        except DeriveSyntaxError as error:
+            return error.offset >= len(text)
+        return False
+
     async def show_value(self, text: str) -> Entry:
         """Enter `text`, whose trailing `=` asks for its value beside it.
 

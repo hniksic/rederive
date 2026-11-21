@@ -71,11 +71,15 @@ DISTRIBUTED = ("sympy", "mpmath", "numpy")
 #: pixel-identical fallback when WebGL is unavailable. uPlot (21 kB) draws the axes,
 #: tick labels and grid, while `plot2d.js` draws the curves on its canvas. three.js
 #: (190 kB compressed) renders 3D surfaces.
+#:
+#: xterm.js and the addons released with it are pinned to the 6.1 beta, the first with
+#: the kitty keyboard protocol, without which Shift-Enter arrives as Enter. Move them to
+#: the 6.1 release once there is one.
 NPM = (
-    "@xterm/xterm@^6.0.0",
-    "@xterm/addon-fit@^0.11.0",
-    "@xterm/addon-unicode11@^0.9.0",
-    "@xterm/addon-webgl@^0.19.0",
+    "@xterm/xterm@6.1.0-beta.338",
+    "@xterm/addon-fit@0.12.0-beta.334",
+    "@xterm/addon-unicode11@0.10.0-beta.332",
+    "@xterm/addon-webgl@0.20.0-beta.331",
     "@xterm/addon-canvas@^0.7.0",
     "uplot@^1.6.32",
     "three@^0.185.0",

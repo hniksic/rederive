@@ -124,10 +124,16 @@ def flags(app):
     return [word for word in ("Ovr", "Lin") if f" {word}" in said]
 
 
+def line(app):
+    """The line widget being typed on: the Author line, or the one other lines share."""
+    author = app.query_one("#prompt-text")
+    return author if author.display else app.query_one("#prompt-input")
+
+
 def prompt(app):
     """The prompt band: what it asks for, and what is on the line."""
     label = text_of(app.query_one("#prompt-label")).plain
-    return label.strip(), app.query_one("#prompt-input").value
+    return label.strip(), line(app).value
 
 
 def completions(app):

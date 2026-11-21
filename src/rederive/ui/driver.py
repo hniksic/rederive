@@ -10,6 +10,9 @@ Textualize/textual#6690.
 This driver treats end of input as the end of the session: it asks the app to exit, as
 a confirmed Quit does, and ends the thread. The rest is a copy of upstream's input loop,
 needed in full because the read that must be checked sits in the middle of it.
+
+The loop also screens input before parsing it (see `keyboard`): it asks the terminal
+whether it reports Shift-Enter, and tells the app when the answer is yes.
 """
 
 from __future__ import annotations
@@ -22,6 +25,8 @@ from textual._parser import ParseError
 from textual._xterm_parser import XTermParser
 from textual.drivers.linux_driver import LinuxDriver
 
+from rederive.ui import keyboard
+
 __all__ = ["TerminalDriver"]
 
 #: How long each wait for input lasts before checking whether to stop (as upstream).
@@ -33,6 +38,16 @@ _CHUNK = 4096
 
 class TerminalDriver(LinuxDriver):
     """The Linux and macOS driver, treating a terminal hangup as Quit."""
+
+    def start_application_mode(self) -> None:
+        """Start as upstream does, then ask whether the keyboard reports Shift-Enter.
+
+        Upstream has just turned the kitty keyboard protocol on, so the answer is about
+        the protocol in effect.
+        """
+        super().start_application_mode()
+        self.write(keyboard.QUERY)
+        self.flush()
 
     def run_input_thread(self) -> None:
         """Wait for input and dispatch events, until asked to stop or hung up on."""
@@ -57,6 +72,13 @@ class TerminalDriver(LinuxDriver):
                 if not data:
                     return False
                 text = decode(data, final=final and at == len(ready) - 1)
+                text, flags = keyboard.screened(text)
+                if flags:
+                    self._app.shift_enter = True
+                # Input that was only a reply leaves nothing, and the parser takes an
+                # empty feed for the end of input.
+                if not text:
+                    continue
                 for event in parser.feed(text):
                     self.process_message(event)
             for event in parser.tick():

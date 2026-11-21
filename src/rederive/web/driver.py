@@ -28,6 +28,8 @@ from textual._xterm_parser import XTermParser
 from textual.driver import Driver
 from textual.geometry import Size
 
+from rederive.ui import keyboard
+
 __all__ = ["BrowserDriver"]
 
 #: How often to check the parser for timed-out input: fast enough for Esc to feel
@@ -95,6 +97,8 @@ class BrowserDriver(Driver):
         self._enable_mouse()
         self.write("\x1b[?25l")  # hide the cursor
         self.write("\x1b[?2004h")  # bracketed paste
+        self.write(keyboard.PROTOCOL_ON)
+        self.write(keyboard.QUERY)
         self._ticker = asyncio.get_running_loop().create_task(self._ticking())
 
     def disable_input(self) -> None:
@@ -113,6 +117,7 @@ class BrowserDriver(Driver):
     def stop_application_mode(self) -> None:
         """Restore the screen so whatever the page shows next is legible."""
         self.disable_input()
+        self.write(keyboard.PROTOCOL_OFF)
         self.write("\x1b[?2004l")
         self.write("\x1b[?1049l")
         self.write("\x1b[?25h")
@@ -134,6 +139,13 @@ class BrowserDriver(Driver):
     def _typed(self, data: str) -> None:
         """Parse a string of terminal input into events."""
         try:
+            data, flags = keyboard.screened(data)
+            if flags:
+                self._app.shift_enter = True
+            # Input that was only a reply leaves nothing, and the parser takes an empty
+            # feed for the end of input.
+            if not data:
+                return
             for event in self._parser.feed(data):
                 self.process_message(event)
         except Exception:

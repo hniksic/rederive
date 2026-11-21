@@ -116,6 +116,8 @@ Expression highlighting commands. These keep working while a line is being
 typed, so an expression can be highlighted and then copied onto the line; only
 the variable line of Factor and Expand keeps the highlight where it is:
   Up, Down            the previous, the next expression
+  Ctrl-Up, Ctrl-Down  the same, also on an Author line of several rows (Alt on
+                      a Mac)
   PgUp, PgDn          a screenful back, a screenful forward
   Ctrl-Home, Ctrl-End the first, the last expression
   Ctrl-PgUp, Ctrl-PgDn  the same as Ctrl-Home and Ctrl-End
