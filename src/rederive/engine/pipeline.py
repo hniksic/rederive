@@ -4553,6 +4553,23 @@ def _fewer_terms(expression: sp.Basic, rewrite: Rewrite) -> sp.Basic:
         return expression
     if pays(candidate, expression):
         return candidate
+    return _with_fewer_terms(candidate, expression)
+
+
+def _cancelling(expression: sp.Basic, rewrite: Rewrite) -> sp.Basic:
+    """`rewrite`, if the result has fewer terms once multiplied out and is no longer:
+    `_fewer_terms` without its test of simplicity, which would also take a rewrite
+    that only cancels a quotient sympy leaves standing, as in `(3*SIN(x) -
+    4*SIN(x)^3)/SIN(x)`, and so pick a form in which nothing cancelled."""
+    candidate = attempt(expression, rewrite)
+    if candidate is None or _unchanged(candidate, expression):
+        return expression
+    return _with_fewer_terms(candidate, expression)
+
+
+def _with_fewer_terms(candidate: sp.Basic, expression: sp.Basic) -> sp.Basic:
+    """`candidate` if it has fewer terms than `expression` once multiplied out and is
+    no longer, otherwise `expression`."""
     try:
         if any(
             power.base.is_Add and power.exp.is_Integer and abs(power.exp) > 2
@@ -8499,11 +8516,19 @@ _DIRECTED: dict[str, dict[str, tuple[_Rule, ...]]] = {
             _Rule("TR8", TR8, forced, "products of calls written as sums"),
             _Rule("TR7", TR7, forced, "powers of cosines reduced to multiple angles"),
         ),
+        # The identity runs on both sides of the expansion: before it, so that a call
+        # of `SIN(x)^2 + COS(x)^2` is a call of 1 rather than of a sum to expand, and
+        # after it, so that `COS(2*x) - COS(x)^2 + SIN(x)^2` cancels once written over
+        # the single angle.
         Direction.EXPAND: (
+            _Rule("pythagorean", _pythagorean, _fewer_terms,
+                  "SIN(z)^2 + COS(z)^2 is 1, in sums of any size"),
             _Rule("expand_trig", sp.expand_trig, forced,
                   "calls of sums and multiples written over single angles"),
             _Rule("special angles", lambda e: e.rewrite(sp.sqrt), _gated,
                   "the algebraic values of the special angles that come with it"),
+            _Rule("expanded pythagorean", _pythagorean, _cancelling,
+                  "the expansion reduced by SIN(z)^2 + COS(z)^2 = 1"),
         ),
     },
     "trigpower": {
