@@ -129,6 +129,7 @@ from rederive.engine.to_sympy import (
     is_statement,
     floors_as_residues,
     is_simple,
+    simple_constants,
     residues_as_floors,
 )
 from rederive.engine.vocabulary import INVERSE_HYPERBOLIC, in_vocabulary
@@ -505,11 +506,19 @@ def _transform(
     expression = _degrees_beside_pi(expression)
     if is_simple(expression):
         # Plain data: numbers, strings, truth values, variables, and vectors and sets of
-        # them. No step of Simplify changes it; only Approximate rounds its numbers.
+        # them. No step of Simplify changes it; only Approximate rounds its numbers,
+        # and Mixed its `pi` and `#e`, which the steps for Mixed approximate.
         if context.precision is Precision.APPROXIMATE:
             return approximated(expression, context)
-        return expression
+        if context.precision is not Precision.MIXED or not (
+            simple_constants(expression) & _MIXED_APPROXIMATES
+        ):
+            return expression
     return _transformed(expression, context, decide, top)
+
+
+#: The constants `is_simple` takes as simple that Mixed precision approximates.
+_MIXED_APPROXIMATES = frozenset({sp.pi, sp.E})
 
 
 def _transformed(

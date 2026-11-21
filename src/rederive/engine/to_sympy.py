@@ -145,6 +145,7 @@ __all__ = [
     "added",
     "as_condition",
     "is_simple",
+    "simple_constants",
     "vector_from",
     "authored_conditionals",
     "chosen_from",
@@ -4368,29 +4369,54 @@ def is_plain(value: sp.Basic) -> bool:
 
 
 def is_simple(value: sp.Basic) -> bool:
-    """Whether `value` is as simple as it gets: a rational number, a string, a truth
-    value, `?`, a variable, or a vector or set of those.
+    """Whether `value` is as simple as it gets: a rational number, `pi`, `#e`, an
+    infinity, a string, a truth value, `?`, a variable, or a vector or set of those.
 
     A vector or set remembers the answer (under the attribute `SIMPLE`), since a program
     asks it of the list it builds at every step, which holds the lists it built before;
     `vector_from` passes it on to the vectors list functions make.
     """
-    if type(value) in _SIMPLE_TYPES:
-        return True
+    return type(value) in _SIMPLE_TYPES or simple_constants(value) is not None
+
+
+def simple_constants(value: sp.Basic) -> frozenset[sp.Basic] | None:
+    """The constants (`pi`, `#e` and the infinities) the simple `value` holds, or None
+    if it isn't simple (see `is_simple`). A test that holds `±inf` is decided for both
+    its signs, so a program testing a long list asks this, remembered on the list,
+    rather than looking through it for one."""
+    kind = type(value)
+    if kind in _SIMPLE_TYPES:
+        return _NO_CONSTANTS
+    if kind in _CONSTANT_SETS:
+        return _CONSTANT_SETS[kind]
     if not isinstance(value, (Vector, SetOf)):
-        return isinstance(value, _SIMPLE)
+        return _NO_CONSTANTS if isinstance(value, _SIMPLE) else None
     known = value.__dict__.get(SIMPLE)
     if known is None:
         try:
-            known = all(is_simple(element) for element in value.args)
+            known = _constants_of(value.args)
         except RecursionError:
             known = _simple_walk(value)
         value.__dict__[SIMPLE] = known
-    return known
+    return None if known is False else known
 
 
-def _simple_walk(value: sp.Basic) -> bool:
-    """`is_simple` without recursion, for vectors nested too deep for it."""
+def _constants_of(items: Iterable[sp.Basic]) -> frozenset[sp.Basic] | bool:
+    """The constants `items` hold if each is simple, or False."""
+    found = _NO_CONSTANTS
+    for item in items:
+        held = simple_constants(item)
+        if held is None:
+            return False
+        if held:
+            found = found | held
+    return found
+
+
+def _simple_walk(value: sp.Basic) -> frozenset[sp.Basic] | bool:
+    """`_constants_of` the elements of `value` without recursion, for vectors nested
+    too deep for it."""
+    found = set()
     pending = [value]
     while pending:
         part = pending.pop()
@@ -4398,9 +4424,11 @@ def _simple_walk(value: sp.Basic) -> bool:
             continue
         if isinstance(part, (Vector, SetOf)):
             pending.extend(part.args)
+        elif type(part) in _CONSTANT_SETS:
+            found.add(part)
         elif not isinstance(part, _SIMPLE):
             return False
-    return True
+    return frozenset(found)
 
 
 def vector_from(
@@ -4427,17 +4455,30 @@ def _known_simple(
     vector: Vector, sources: Sequence[Vector], added: Sequence[sp.Basic]
 ) -> Vector:
     """`vector`, made of elements of `sources` and `added`, marked simple (see
-    `is_simple`) if every source and every added item is."""
-    if (sources or added) and (
-        all(is_simple(source) for source in sources)
-        and all(is_simple(item) for item in added)
-    ):
-        vector.__dict__[SIMPLE] = True
+    `is_simple`) if every source and every added item is, with the constants they hold
+    (see `simple_constants`)."""
+    if sources or added:
+        held = _constants_of((*sources, *added))
+        if held is not False:
+            vector.__dict__[SIMPLE] = held
     return vector
 
 
-#: The attribute under which a vector or set records whether it `is_simple`.
+#: The attribute under which a vector or set records whether it `is_simple`: the
+#: constants it holds (see `simple_constants`) if it is, and False if it isn't.
 SIMPLE = "_simple"
+
+#: The constants `is_simple` takes as simple, which simplifying exactly leaves as they
+#: are.
+_SIMPLE_CONSTANTS = (sp.pi, sp.E, sp.oo, -sp.oo, sp.zoo)
+
+#: Each of those as the set of constants it holds, by its type.
+_CONSTANT_SETS = {
+    type(constant): frozenset({constant}) for constant in _SIMPLE_CONSTANTS
+}
+
+#: What a simple value without any of those holds.
+_NO_CONSTANTS: frozenset[sp.Basic] = frozenset()
 
 #: The values `is_simple` takes as simple, besides variables.
 _SIMPLE = (sp.Rational, type(sp.nan), BooleanAtom, StringLiteral)

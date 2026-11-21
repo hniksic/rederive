@@ -20,7 +20,7 @@ from test_library import LIBRARY_CASES, _case_ids
 from test_library import test_a_library_function_computes_its_specified_results as _library
 from test_programs import *  # noqa: F403 - the program tests, run again uncompiled
 
-from rederive.engine import evaluate
+from rederive.engine import evaluate, pipeline
 from rederive.engine.client import EngineError
 from rederive.engine.context import Context
 from rederive.engine.vectors import Vector
@@ -675,6 +675,27 @@ CASES = {
         "? nv(0) + s",
         "? LOOP(q :+ 1, IF(q > 3, exit))",
     ],
+    "tables of constants": [
+        "> tb1(n, t, k) := PROG(t := [[inf, inf]], k := 1, LOOP(IF(k > n, RETURN(t)), "
+        "t := APPEND(t, [[k, k]]), k :+ 1))",
+        "tb1(3)",
+        "> tb2(n, t, k) := PROG(t := [[pi, #e]], k := 1, LOOP(IF(k > n, RETURN(t)), "
+        "t := APPEND(t, [[k/3, k*pi]]), k :+ 1))",
+        "tb2(3)",
+        "> tb3(n, t, k) := PROG(t := [[1/0, 0]], k := 1, LOOP(IF(k > n, RETURN(t)), "
+        "t := APPEND(t, [[k, -inf]]), k :+ 1))",
+        "tb3(3)",
+        "> tb4(t, k) := PROG(t := [1/0], k := 0, LOOP(IF(t = [inf, 1/0], RETURN(k)), "
+        "IF(k > 3, RETURN(t)), t := APPEND(t, [1/0]), k :+ 1))",
+        "tb4()",
+        "> tb5(v) := PROG(v := APPEND([[1/0, 1]], [[pi, 2]]), "
+        "[IF(v SUB 1 = [inf, 1], 1, 2, 3), IF(v = [[-inf, 1], [pi, 2]], 1, 2, 3)])",
+        "tb5()",
+        "> Precision := Mixed",
+        "[tb1(2), tb2(2), tb3(2)]",
+        "> Precision := Approximate",
+        "[tb1(2), tb2(2), tb3(2)]",
+    ],
 }
 
 #: Programs at top level, whose variables are globals, and functions that change
@@ -1265,6 +1286,51 @@ async def test_writing_an_element_of_a_long_vector_copies_no_vector(monkeypatch)
     session.author(BENCHMARKS[1][2:])
     assert (await session.simplify("sieve(2000)")).text == "303"
     assert built[0] < 5 * 2000
+
+
+async def test_extending_a_table_of_constants_simplifies_no_old_element(monkeypatch):
+    """A table headed by `[inf, inf]`, `[1/0, 0]` or `[pi, #e]` is known simple as it
+    grows, as one of rationals is, so storing each extension simplifies nothing again:
+    looked through anew at each pass, the table of `n` points would take some `n^2/2`
+    steps of Simplify."""
+    calls = [0]
+    transform = pipeline._transform
+
+    def counted(*args, **kwargs):
+        calls[0] += 1
+        return transform(*args, **kwargs)
+
+    monkeypatch.setattr(pipeline, "_transform", counted)
+    session = Session()
+    for head in ["[inf, inf]", "[1/0, 0]", "[pi, #e]"]:
+        session.author(
+            f"tc(n, t, k) := PROG(t := [{head}], k := 1, LOOP(IF(k > n, RETURN(DIM(t))), "
+            "t := APPEND(t, [[k, k]]), k :+ 1))"
+        )
+        calls[0] = 0
+        assert (await session.simplify("tc(300)")).text == "301"
+        assert calls[0] < 300
+
+
+async def test_a_table_of_constants_keeps_its_answers():
+    """Taken as simple, the infinities still count as infinities in a test, `1/0` as
+    either of them, and Mixed precision still approximates `pi` and `#e`."""
+    session = Session()
+    session.author(
+        "tk(n, t, k) := PROG(t := [[1/0, pi]], k := 1, LOOP(IF(k > n, RETURN(t)), "
+        "t := APPEND(t, [[k, #e]]), k :+ 1))"
+    )
+    assert (await session.simplify("tk(1)")).text == "[[±inf, pi], [1, #e]]"
+    assert (await session.simplify("IF(tk(1) SUB 1 = [inf, pi], 1, 2, 3)")).text == "1"
+    assert (await session.simplify("IF(tk(1) SUB 1 = [-inf, pi], 1, 2, 3)")).text == "1"
+    assert (await session.simplify("IF(1/0 = inf, 1, 2, 3)")).text == "1"
+    assert (await session.simplify("APPEND([pi, inf], [1/0, #e])")).text == (
+        "[pi, inf, ±inf, #e]"
+    )
+    session.settings.apply({"Precision": "Mixed"})
+    assert (await session.simplify("APPEND([pi, inf], [1/0, #e])")).text == (
+        "[3.141592653, inf, ±inf, 2.718281828]"
+    )
 
 
 async def test_writing_an_element_of_a_long_global_vector_copies_no_vector(monkeypatch):

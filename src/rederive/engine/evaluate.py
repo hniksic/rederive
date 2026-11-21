@@ -155,6 +155,7 @@ from rederive.engine.to_sympy import (
     is_conditional,
     is_plain,
     is_simple,
+    simple_constants,
     iterated,
     multiplied,
     negated,
@@ -6323,12 +6324,14 @@ _ACTIVE = PROGRAM_FUNCTIONS | {"RANDOM"}
 
 def _mentions(value: sp.Basic, kind: object) -> bool:
     """`value.has(kind)`, without walking the sides of a relation that `is_simple`
-    finds simple, which hold numbers, strings, truth values and variables only: a loop
-    tests a long list it builds at every pass."""
+    finds simple, which hold numbers, strings, truth values and variables only, and of
+    constants those it remembers (see `simple_constants`): a loop tests a long list it
+    builds at every pass."""
     if isinstance(value, Relational):
         return any(_mentions(side, kind) for side in value.args)
-    if is_simple(value):
-        return False
+    held = simple_constants(value)
+    if held is not None:
+        return kind in held
     return value.has(kind)
 
 
@@ -6471,7 +6474,7 @@ def _unwrapped(value: Vector | SetOf) -> bool:
     which a program may read element by element as often as it has elements."""
     found = value.__dict__.get(_UNWRAPPED)
     if found is None:
-        found = value.__dict__.get(SIMPLE) or not any(
+        found = isinstance(value.__dict__.get(SIMPLE), frozenset) or not any(
             isinstance(element, (Assign, FunDef, Commanded)) for element in value.args
         )
         value.__dict__[_UNWRAPPED] = found
