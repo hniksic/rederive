@@ -2018,7 +2018,8 @@ async def test_a_terminal_paste_takes_the_offered_label_too(app):
         line = app.query_one("#prompt-input")
         line.post_message(events.Paste("a + b\nsecond line"))
         await pilot.pause()
-        assert prompt(app)[1] == "a + b"
+        # A line that takes one row joins the pasted rows with blanks.
+        assert prompt(app)[1] == "a + b second line"
 
 
 async def test_ctrl_v_pastes_onto_any_line_but_not_at_the_menu(app):
@@ -2489,12 +2490,19 @@ async def test_ctrl_up_and_down_move_the_highlight_however_many_rows(app):
         assert prompt(app)[1] == "(1\n  + 2)y"
 
 
-async def test_a_new_row_is_indented_for_each_open_bracket(app):
+async def test_a_new_row_is_a_level_deeper_than_the_innermost_open_bracket(app):
     async with app.run_test() as pilot:
         await pilot.press("a", *"IF(true,", "enter")
         assert prompt(app)[1] == "IF(true,\n  "
+        # Both brackets on the row open the same level.
         await pilot.press(*"[1, (2", "shift+enter")
-        assert prompt(app)[1] == "IF(true,\n  [1, (2\n      "
+        assert prompt(app)[1] == "IF(true,\n  [1, (2\n    "
+
+
+async def test_a_definition_continues_after_its_operator(app):
+    async with app.run_test() as pilot:
+        await pilot.press("a", *"f(n) :=", "enter", *"PROG(", "enter", *"n)", "enter")
+        assert entries(app) == ["f(n) := PROG(n)"]
 
 
 
@@ -2535,6 +2543,49 @@ async def test_a_paste_onto_the_author_line_keeps_its_rows(app):
         line.post_message(events.Paste("f(x) :=\n  x + 1"))
         await pilot.pause()
         assert prompt(app)[1] == "f(x) :=\n  x + 1"
+
+
+PROGRAM = "f(n) := PROG(a := 1, LOOP(IF(n = 1, RETURN a), a := a*n, n :- n - 1))"
+PROGRAM_ROWS = (
+    "f(n) :=\n"
+    "  PROG(\n"
+    "    a := 1,\n"
+    "    LOOP(\n"
+    "      IF(n = 1, RETURN(a)),\n"
+    "      a := a*n,\n"
+    "      n :- n - 1))"
+)
+
+
+async def test_f3_lays_a_program_out_on_the_author_line(app):
+    async with app.run_test() as pilot:
+        authored(app, PROGRAM)
+        await pilot.press("a", "f3")
+        assert prompt(app)[1] == PROGRAM_ROWS
+        # Entered again, it is the same expression.
+        await pilot.press("enter")
+        assert entries(app)[0] == entries(app)[1]
+
+
+async def test_f3_continues_the_row_the_cursor_is_on(app):
+    async with app.run_test() as pilot:
+        authored(app, "PROG(x, y)")
+        await pilot.press("a", *"IF(c,", "enter", "f4")
+        assert prompt(app)[1] == "IF(c,\n  (PROG(\n    x,\n    y))"
+
+
+async def test_f3_onto_a_line_of_one_row_stays_on_it(app):
+    async with app.run_test() as pilot:
+        authored(app, PROGRAM)
+        await pilot.press("s", "backspace", "f3")
+        assert prompt(app)[1] == entries(app)[0]
+
+
+async def test_ctrl_c_copies_a_program_laid_out(app):
+    async with app.run_test() as pilot:
+        authored(app, PROGRAM)
+        await pilot.press("ctrl+c")
+        assert app.clipboard == PROGRAM_ROWS
 
 
 # -- the kill ring: what a deletion took out, and Ctrl-Y putting it back ------

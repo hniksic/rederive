@@ -87,6 +87,7 @@ from rederive.syntax import (
     write_source,
     written,
 )
+from rederive.syntax.layout import laid_out
 from rederive.syntax.names import SETTINGS, YIELDING_FUNCTIONS
 from rederive.syntax.state import NameBinding
 
@@ -594,12 +595,15 @@ class Session:
         """Whether `text` is the start of an expression, still to be continued.
 
         It is if parsing runs out of input: an unclosed bracket, a trailing operator.
-        A mistake before the end, or a blank line, is not unfinished, since typing more
-        can't fix it. The author line uses this to continue on a new row rather than
-        refuse the line.
+        A trailing `:=` is too, although it parses as a definition with no value, since
+        a laid-out definition continues on the next row. A mistake before the end, or a
+        blank line, is not unfinished, since typing more can't fix it. The author line
+        uses this to continue on a new row rather than refuse the line.
         """
         if not text.strip():
             return False
+        if text.rstrip().endswith(":="):
+            return True
         try:
             parse_expression(text, self.state)
         except DeriveSyntaxError as error:
@@ -2499,6 +2503,20 @@ class Session:
         if node is None or not self.route:
             return entry.text
         return entry.text[node.start : node.end]
+
+    def highlighted_layout(self, width: int, before: str = "") -> str | None:
+        """The highlighted text laid out on rows to fit `width`, for editing.
+
+        `before` is the text it follows; see `layout.laid_out`. None when nothing is
+        selected.
+        """
+        entry = self.selected_entry
+        if entry is None:
+            return None
+        node = self.selected_node if self.route else entry.node
+        if node is None:
+            return None
+        return laid_out(entry.text, node, width, before)
 
     def selection_rect(self) -> Rect | None:
         """The rectangle to invert, in the selected entry's own render.

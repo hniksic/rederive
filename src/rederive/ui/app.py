@@ -294,6 +294,13 @@ EXPRESSION_LINES = (
 #: Keys reported on their own that only modify or lock other keys.
 LONE_KEYS = MODIFIER_FUNCTIONAL_KEYS | {"caps_lock", "num_lock", "scroll_lock"}
 
+#: The width the highlighted expression is laid out to for the clipboard: a terminal's,
+#: less a margin for whatever it is pasted after.
+CLIPBOARD_COLUMNS = 72
+#: The narrowest width the Author line lays text out to, so a field not yet sized (or a
+#: tiny terminal) doesn't break every list.
+MIN_LAYOUT_COLUMNS = 20
+
 #: What each Alt key inserts, a shortcut for typing the name out (as in Derive, whose
 #: table used the IBM PC character set).
 #:
@@ -2375,9 +2382,9 @@ class RederiveApp(App[None]):
         """Ctrl-C: copy the selected text on the line, or the highlighted expression.
 
         Without a user selection, it copies the highlighted expression or subexpression
-        as linear text, which can be typed back in. A label prefilled on the line
-        doesn't count as a selection, so under a line one can move the highlight and
-        copy.
+        as linear text, which can be typed back in, laid out on rows as on the Author
+        line (see `layout`). A label prefilled on the line doesn't count as a selection,
+        so under a line one can move the highlight and copy.
 
         The text goes to the system clipboard (see `copy_to_clipboard`). Since that
         gives no feedback, the message line confirms the copy.
@@ -2387,7 +2394,7 @@ class RederiveApp(App[None]):
             self.copy_to_clipboard(marked)
             self._set_message(COPIED_TEXT)
             return
-        text = self.session.highlighted_text
+        text = self.session.highlighted_layout(CLIPBOARD_COLUMNS)
         if text is None:
             self._beep()
             return
@@ -2435,25 +2442,38 @@ class RederiveApp(App[None]):
     def _paste_on_line(self, text: str) -> None:
         """Write `text` onto the line, replacing a prefilled label.
 
-        The Author line takes all of it, row by row; the others only its first line.
+        The Author line takes it row by row. The others take it as one line, each line
+        break and the indentation after it becoming a blank, so laid-out text pastes as
+        the expression it is.
         """
         lines = text.splitlines()
-        if self.mode == MODE_AUTHOR and any(lines):
+        if not any(lines):
+            return
+        if self.mode == MODE_AUTHOR:
             self._write_on_line("\n".join(lines))
             return
-        if not lines or not lines[0]:
-            return
         self._take_offered_label()
-        self._write_on_line(lines[0])
+        self._write_on_line(" ".join(line.strip() for line in lines if line.strip()))
 
     def action_insert_highlighted(self, fenced: int) -> None:
         """F3 and F4: insert the highlighted expression onto the line.
 
         F4 wraps it in parentheses, so that, say, `x + 1` next to a factor stays one
         term. It inserts at the cursor, replacing any selection, including the `#` of a
-        prefilled label.
+        prefilled label. On the Author line the text is laid out on rows to fit the
+        line, continuing from the text before it (see `layout`).
         """
-        text = self.session.highlighted_text
+        line = self._line
+        opening = "(" if fenced else ""
+        if isinstance(line, AuthorText):
+            # A line just shown has no size until the next layout, so its width is
+            # worked out from the screen's.
+            columns = line.columns or self.size.width - len(AUTHOR_PROMPT) - 1
+            text = self.session.highlighted_layout(
+                max(columns, MIN_LAYOUT_COLUMNS), line.before_cursor + opening
+            )
+        else:
+            text = self.session.highlighted_text
         if text is None:
             self._beep()
             return

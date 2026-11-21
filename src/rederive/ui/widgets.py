@@ -38,6 +38,7 @@ from rederive.model.settings import (
     TextField,
 )
 from rederive.model.windows import Drawing
+from rederive.syntax.layout import INDENT, continued
 from rederive.ui.menu import Menu
 
 #: Width of the label field, i.e. the column where renders start. `#1:` and `#10:` both
@@ -76,27 +77,6 @@ _FILE_COLUMN = 22
 #: The start of a word, where the word movements and deletions on a line stop. This is
 #: Textual's input's rule, which the Author line follows too.
 _WORD_START = re.compile(r"(?<=\W)\w")
-
-#: Brackets that open and close, which the Author line indents by.
-_OPENERS = "([{"
-_CLOSERS = ")]}"
-
-
-def _open_brackets(text: str) -> int:
-    """How many brackets are open at the end of `text`, ignoring those in strings."""
-    depth = 0
-    quoted = False
-    for character in text:
-        if character == '"':
-            quoted = not quoted
-        elif quoted:
-            continue
-        elif character in _OPENERS:
-            depth += 1
-        elif character in _CLOSERS:
-            depth = max(0, depth - 1)
-    return depth
-
 
 #: Number of kills the prompt line keeps for Ctrl-Y, as in Bash. Plenty for a line of
 #: algebra, and bounded so a long session doesn't keep every deleted scrap.
@@ -772,8 +752,9 @@ class AuthorText(KillRing, TextArea):
     always start a new row, to break a complete expression. Whether the text is
     complete is up to `unfinished`, which parses it.
 
-    A new row is indented by `INDENT` for each bracket still open before the cursor, so
-    the arguments of a call line up under it. Tab and Shift-Tab adjust it.
+    A new row is indented as laid-out text is (see `layout.continued`): a level deeper
+    than the row with the innermost bracket still open, so the arguments of a call line
+    up a level under it. Tab and Shift-Tab adjust it.
 
     The field grows with its text up to `MAX_ROWS` rows, then scrolls. It has the same
     overwrite mode and kill ring as the other lines. Ctrl-K at the end of a row kills
@@ -794,8 +775,8 @@ class AuthorText(KillRing, TextArea):
     #: expressions it is built from stay in view.
     MAX_ROWS = 5
 
-    #: One level of indentation.
-    INDENT = "  "
+    #: One level of indentation, as laid-out text uses.
+    INDENT = INDENT
 
     overwrite = False
 
@@ -879,7 +860,7 @@ class AuthorText(KillRing, TextArea):
     def action_new_row(self) -> None:
         """Start a new row at the cursor, indented, replacing any selection."""
         start, _ = self._marked()
-        self.write("\n" + self.INDENT * _open_brackets(self.text[:start]))
+        self.write("\n" + continued(self.text[:start]))
 
     def action_indent(self) -> None:
         """Tab: indent to the next level at the cursor, replacing any selection."""
@@ -932,6 +913,16 @@ class AuthorText(KillRing, TextArea):
     def write(self, text: str) -> None:
         """Insert `text` at the cursor, replacing any selection."""
         self._write(text, *self._marked())
+
+    @property
+    def before_cursor(self) -> str:
+        """The text before the cursor, or before the selection that typing replaces."""
+        return self.text[: self._marked()[0]]
+
+    @property
+    def columns(self) -> int:
+        """How many columns the text has before it scrolls sideways."""
+        return self.scrollable_content_region.width
 
     @property
     def cursor_position(self) -> int:
