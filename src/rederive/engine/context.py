@@ -219,9 +219,8 @@ class Cell:
     (see `Frame` in evaluate.py), or as a `Global`, a global. `raw` is the value as
     the evaluator keeps it, `CLEARED` for a variable that has none.
 
-    Two locals share a cell where Derive shares a vector: `w := v` with `v` a local,
-    and a parameter given a bare local of the caller. An element assignment through
-    either name changes the cell's value, so both see it. Globals never share one.
+    No two variables share a cell; locals share a vector by holding the same native
+    one (see `NativeVector` in native.py).
     """
 
     __slots__ = ("raw",)

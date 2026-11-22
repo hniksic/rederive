@@ -164,7 +164,8 @@ CASES = {
         "al11()",
     ],
     "written midway": [
-        # An operand read before a later one writes into it keeps its value as read.
+        # An operand sees a local's vector as a later operand writes it; a global's
+        # it reads as a copy.
         "> wa(t) := PROG(t := [1, 2], t SUB 2 := 5, "
         "APPEND(t, PROG(t SUB 1 := 9, [0])))",
         "wa()",
@@ -214,6 +215,85 @@ CASES = {
         "gw",
         "PROG(gw := [1, 2], gw SUB 2 := 5, [gw = PROG(gw SUB 1 := 9, [9, 5]), "
         "two(gw, PROG(gw SUB 1 :+ 1, 0)), gw])",
+    ],
+    "sharing": [
+        # Locals share a vector; giving one another value leaves the other's.
+        "> sa(t, u) := PROG(t := [1, 2], u := t, t SUB 1 := 9, u SUB 2 := 8, [t, u])",
+        "sa()",
+        "> sb(t, u) := PROG(t := [1, 2], u := t, t := [5, 6], u SUB 1 := 0, [t, u])",
+        "sb()",
+        # A parameter shares the caller's vector, through a body that is no program
+        # too, and a parameter's own argument shares it in turn.
+        "> wr(p) := PROG(p SUB 2 := 0, 1)",
+        "> pass(p) := wr(p)",
+        "> sc(t) := PROG(t := [1, 2, 3], wr(t), t)",
+        "> sd(t) := PROG(pass(t), t)",
+        "[sc(), sd([4, 5, 6])]",
+        # A vector written out holds its elements' vectors, as an element does.
+        "> se(t, m) := PROG(t := [1, 2], m := [t, t], m SUB 1 SUB 1 := 7, [t, m])",
+        "se()",
+        "> sf(a, r) := PROG(a := [[1, 2], [3, 4]], r := [5, 6], a SUB 2 := r, "
+        "r SUB 1 := 0, a)",
+        "sf()",
+        # A row is the matrix's own, by either index.
+        "> sg(a, r, q) := PROG(a := [[1, 2], [3, 4]], r := a SUB 1, q := a SUB -1, "
+        "r SUB 1 := 0, a SUB 1 SUB 2 := 9, q SUB 2 := 8, [a, r, q])",
+        "sg()",
+        # A vector stored into itself is stored as it is then.
+        "> sh(t) := PROG(t := [1, 2], t SUB 1 := t, t SUB 2 := 0, t)",
+        "sh()",
+        # IF, PROG, LOOP, RETURN and a call pass a vector on.
+        "> rt(p) := PROG(RETURN p)",
+        "> same(p) := p",
+        "> si(t, u, w, x, y, c) := PROG(t := [1, 2], c := 1, u := rt(t), "
+        "w := same(t), x := PROG(5, t), y := IF(c = 1, t), u SUB 1 := 0, "
+        "w SUB 2 := 0, x SUB 1 :+ 3, y SUB 2 :+ 4, [t, u, w, x, y])",
+        "si()",
+        # A vector written out is a new one each time.
+        "> sj(n, k, c, s) := PROG(k := 0, s := [], LOOP(IF(k >= n, RETURN s), "
+        "c := [0, 0], c SUB 1 :+ k, s := APPEND(s, [c]), k :+ 1))",
+        "sj(3)",
+        "> sk(n, k, z, c, s) := PROG(k := 0, z := [0], s := [], LOOP(IF(k >= n, "
+        "RETURN [z, s]), c := [z, 0], c SUB 2 := k, c SUB 1 SUB 1 :+ 1, s := [s, c], "
+        "k :+ 1))",
+        "sk(2)",
+        # A built-in's result shares nothing with its arguments.
+        "> sl(t, u) := PROG(t := [[1, 2], [3, 4]], u := [APPEND(t, []), REST(t), "
+        "ADJOIN(0, t), REVERSE(t), FIRST(t), t + 0, ELEMENT(t, 1), "
+        "VECTOR(t SUB k, k, 1, 2)], t SUB 1 SUB 1 := 9, t SUB 2 SUB 2 := 9, u)",
+        "sl()",
+        "> sm(t, u) := PROG(t := [[1, 2], [3, 4]], u := REST(t), u SUB 1 SUB 1 := 0, "
+        "[t, u])",
+        "sm()",
+        # Operands see a local's vector as later operands write it, whether or not it
+        # was written before.
+        "> sn(t) := PROG(t := [1, 2], [APPEND(t, PROG(t SUB 1 := 9, [0])), "
+        "t + PROG(t SUB 2 := 8, [0, 0])])",
+        "sn()",
+        # Under Approximate, where values are not native, likewise.
+        "> sq(t, u, Precision) := PROG(Precision := Approximate, t := [1, 2], u := t, "
+        "t SUB 1 := 9/7, [u, t + PROG(t SUB 2 := 1/2, [0, 0])])",
+        "sq()",
+        # A global is read and stored as a copy, and written where it is held.
+        "> gg := [1, 2, 3]",
+        "> gr(m) := PROG(m := gg, m SUB 1 := 0, [m, gg])",
+        "gr()",
+        "> gs(t) := PROG(t := [1, 2], gh := t, t SUB 1 := 9, [t, gh])",
+        "gs()",
+        "gh",
+        "> ge(t) := PROG(t := [1, 2], gg SUB 1 := t, t SUB 1 := 9, gg)",
+        "ge()",
+        "gg",
+        "> gm := [[1, 2], [3, 4]]",
+        "> grow(r) := PROG(gm SUB 1 SUB 1 := 5, r := gm SUB 1, r SUB 2 := 0, [r, gm])",
+        "grow()",
+        "gm",
+        "> gp(g) := PROG(g SUB 1 := 0, g)",
+        "[gp(gm), gm]",
+        # At the prompt, a program's variables are globals.
+        "PROG(ta := [1, 2], tb := ta, ta SUB 1 := 9, tc := [ta, ta], tc SUB 1 SUB 2 "
+        ":= 0, [ta, tb, tc])",
+        "[ta, tb, tc]",
     ],
     "nested": [
         "> ne1(m, r) := PROG(m := [[1, 2], [3, 4]], m SUB 2 SUB 1 := 7, r := m SUB 1, "
@@ -1172,6 +1252,76 @@ RECORDED = {
         ("[gk := 2, gv SUB 1 := gk, gv]", "[gk := 2, gv SUB 1 := 2, [2, 3]]", 7),
     ],
 }
+
+
+#: What the cases of sharing answer, compiled or not, where they share vectors (see
+#: `rederive.engine.native.NativeVector`).
+SHARED = {
+    "aliasing": {
+        "al1()": "[[0, 9, 3], [0, 9, 3]]",
+        "al2()": "[[0, 2, 3], [0, 2, 3]]",
+        "al3()": "[[0, 2, 3], [[0, 2, 3], [0, 2, 3]]]",
+        "al4()": "[[5, 6, 3], [5, 2, 3, 4]]",
+        "al5()": "[[99, 2, 7], [99, 2, 7]]",
+        "al6()": "[[9, 2, 3], [9, 2, 3]]",
+        "al7()": "[[3, 4], 5]",
+        "[al8(vv), vv]": "[[5, 0, 7], [5, 6, 7]]",
+        "al9()": "[[11, 2, 3], [11, 2, 3], 11]",
+        "al10()": "[3, [2, 3]]",
+        "al11()": "[[5, 6], [9, 0]]",
+    },
+    "written midway": {
+        "wa()": "[9, 5, 0]",
+        "wb()": "[[9, 5], [7, 5], [7, 6]]",
+        "wc()": "[[18, 10], [16, 10], [7/2, 5/2], 11, 50]",
+        "wd()": "[true, 1, true, false]",
+        "we()": "[[[3, 5], 0], [2, 2], 7, 6, 6, true]",
+        "wf()": "[[1, 2, 0], [8, 2, 0], [[8, 2], 7, 0], [[8, 2], 7]]",
+        "wg()": "[[11, 5, 0], [9, 8, 9, 8, 0], [[1, 9], [0, 8]]]",
+        "wh()": "[true, false, [[9, 5, 1], [9, 9, 2]], [11, 9, [10, 9, 0]], "
+        "SOME(PROG(9, k = y), k, [11, 9]), [9, 9], [9, 9]]",
+        "PROG(gw := [1, 2], gw SUB 2 := 5, APPEND(gw, wset(0)))": "[1, 5, 0]",
+    },
+    "sharing": {
+        "sa()": "[[9, 8], [9, 8]]",
+        "sb()": "[[5, 6], [0, 2]]",
+        "[sc(), sd([4, 5, 6])]": "[[1, 0, 3], [4, 0, 6]]",
+        "se()": "[[7, 2], [[7, 2], [7, 2]]]",
+        "sf()": "[[1, 2], [0, 6]]",
+        "sg()": "[[[0, 9], [3, 8]], [0, 9], [3, 8]]",
+        "sh()": "[[1, 2], 0]",
+        "si()": "[[3, 4], [3, 4], [3, 4], [3, 4], [3, 4]]",
+        "sj(3)": "[[0, 0], [1, 0], [2, 0]]",
+        "sk(2)": "[[2], [[[], [[2], 0]], [[2], 1]]]",
+        "sl()": "[[[1, 2], [3, 4]], [[3, 4]], [0, [1, 2], [3, 4]], [[3, 4], [1, 2]], "
+        "[1, 2], [[1, 2], [3, 4]], [1, 2], [[1, 2], [3, 4]]]",
+        "sm()": "[[[1, 2], [3, 4]], [[0, 4]]]",
+        "sn()": "[[9, 2, 0], [9, 8]]",
+        "sq()": "[[9/7, 1/2], [9/7, 1/2]]",
+        "gr()": "[[0, 2, 3], [1, 2, 3]]",
+        "gs()": "[[9, 2], [1, 2]]",
+        "gh": "[1, 2]",
+        "ge()": "[[1, 2], 2, 3]",
+        "gg": "[[1, 2], 2, 3]",
+        "grow()": "[[5, 0], [[5, 2], [3, 4]]]",
+        "gm": "[[5, 2], [3, 4]]",
+        "[gp(gm), gm]": "[[0, [3, 4]], [[5, 2], [3, 4]]]",
+        "PROG(ta := [1, 2], tb := ta, ta SUB 1 := 9, tc := [ta, ta], tc SUB 1 SUB 2 "
+        ":= 0, [ta, tb, tc])": "[[9, 2], [1, 2], [[9, 0], [9, 2]]]",
+        "[ta, tb, tc]": "[[9, 2], [1, 2], [[9, 0], [9, 2]]]",
+    },
+}
+
+
+@pytest.mark.parametrize("compiled", [True, False])
+@pytest.mark.parametrize("name", SHARED)
+async def test_locals_share_vectors_and_globals_copy_them(monkeypatch, name, compiled):
+    answers = {
+        line: answer
+        for line, answer, _ in await transcript(monkeypatch, CASES[name], compiled)
+        if line in SHARED[name]
+    }
+    assert answers == SHARED[name]
 
 
 @pytest.mark.parametrize("name", CASES)

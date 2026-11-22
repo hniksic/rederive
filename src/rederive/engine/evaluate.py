@@ -649,9 +649,9 @@ def _unit(evaluator: _Evaluator, node: Node) -> sp.Basic:
     frame = evaluator.env.frame
     assert frame is not None
     try:
-        return evaluator.statement(node)
+        return sympy_of(evaluator.statement(node))
     except _Return as returned:
-        return returned.value
+        return sympy_of(returned.value)
     except _Exit:
         return sympy_of(frame.last)
 
@@ -870,13 +870,16 @@ class _Evaluator(Converter):
     def convert(self, node: Node) -> sp.Basic:
         compiled = _NATIVES.get(id(node))
         if compiled is not None and COMPILED:
-            value = compiled[1](self)
-            # Only a native evaluator has native values (see "compiled nodes").
-            return sympy_of(value) if self.native else value
+            return sympy_of(compiled[1](self))
         return self._converted(node)
 
     def _converted(self, node: Node) -> sp.Basic:
         """`node` converted, dispatched by its kind (see `convert`)."""
+        return sympy_of(self._raw(node))
+
+    def _raw(self, node: Node) -> Any:
+        """`node` converted as `_converted` converts it, but a vector that a local
+        would take as it is (see `_taken`) left a native one."""
         kind = node.kind
         if kind is Kind.NAME:
             return self._name(node)
@@ -944,6 +947,8 @@ class _Evaluator(Converter):
         frame = env.frame
         unset = False
         if frame is not None and name not in env.bound:
+            # A local's vector is native once read (see `NativeVector`).
+            _taken_local(self, name)
             cell = frame.locals.get(name)
             if cell is not None:
                 if cell.raw is not CLEARED:
@@ -1149,6 +1154,27 @@ class _Evaluator(Converter):
                 found |= deeper
         return found
 
+    def _children(self, node: Node) -> list[sp.Basic]:
+        """The values of the children of `node`, operands made sympy values once all
+        are evaluated, as compiled closures make them: an operand that is a local's
+        vector is the vector as the later ones leave it (see `NativeVector`)."""
+        values = [self._taken(child) for child in node.children]
+        return [sympy_of(value) for value in values]
+
+    def _sides(self, left: Node, right: Node) -> tuple[sp.Basic, sp.Basic]:
+        """The sides `left` and `right` of a relation, as `_children` evaluates them."""
+        first = self._taken(left)
+        second = self._taken(right)
+        return self.sided(sympy_of(first)), self.sided(sympy_of(second))
+
+    def _chain(self, node: Node) -> tuple[list[sp.Basic], sp.Basic]:
+        """`Converter._chain`, the sides of one relation evaluated by `_sides`."""
+        left_node, right_node = node.children
+        if left_node.kind is Kind.REL and left_node.start == node.start:
+            return super()._chain(node)
+        left, right = self._sides(left_node, right_node)
+        return [self.related(str(node.value), left, right)], right
+
     def _written(self, symbol: sp.Basic) -> sp.Basic:
         return self.env.written.get(symbol, symbol)
 
@@ -1309,7 +1335,7 @@ class _Evaluator(Converter):
             # A statement before this one assigned a setting.
             return self.within(replace(self.env, context=current)).statement(node)
         if self.native:
-            return sympy_of(_statement(node)(self))
+            return _statement(node)(self)
         self.context.step()
         if COMPILED and id(node) not in _STATEMENTS:
             _statement(node)
@@ -1322,11 +1348,51 @@ class _Evaluator(Converter):
         if node.kind is Kind.VECTOR and not any(
             child.kind is Kind.ELLIPSIS for child in node.children
         ):
-            value = Vector(*(self.statement(child) for child in node.children))
+            value = _listed([self.statement(child) for child in node.children])
         else:
-            value = self.convert(node)
+            value = self._taken(node)
         frame.last = value
         return value
+
+    def _taken(self, node: Node) -> Any:
+        """The value of `node` as a compiled closure gives it, in the cases where that
+        can be a native vector, which is then what variables and elements take (see
+        `NativeVector`): a local's vector or an element of one, made native, and the
+        vector a vector written out, a program construct, `IF`, a call of a defined
+        function or an assignment passes on."""
+        kind = node.kind
+        if kind is Kind.NAME:
+            found = _taken_local(self, str(node.value))
+            if found is not None:
+                return found
+        elif kind is Kind.SUB:
+            if self.env.depth and node.children[0].kind in (Kind.NAME, Kind.SUB):
+                return self._taken_element(node)
+        elif kind is Kind.VECTOR:
+            if not any(child.kind is Kind.ELLIPSIS for child in node.children):
+                return _listed([self._taken(child) for child in node.children])
+        elif kind in (Kind.CALL, Kind.APPLY, Kind.ASSIGN):
+            return self._raw(node)
+        return self.convert(node)
+
+    def _taken_element(self, node: Node) -> Any:
+        """`v SUB i` as `_element_closure` reads it, whose value may be native."""
+        base_node, index_node = node.children
+        # The index first, as `Converter._sub` evaluates it.
+        at = self.operand(self.convert(index_node))
+        whole = self._taken(base_node)
+        if type(whole) is NativeVector:
+            if isinstance(at, sp.Integer):
+                found = _item(whole, at.p)
+                if found is not _NO_VALUE:
+                    return found if type(found) is NativeVector else sympy_of(found)
+            whole = whole.vector()
+        whole = self.operand(whole)
+        if isinstance(whole, Vector) and isinstance(at, sp.Integer):
+            place = place_of(at, whole.size())
+            if place is not None:
+                return whole.item(place)
+        return self.element(node, whole, at)
 
     def _program(self, statements: Sequence[Node]) -> sp.Basic:
         """`PROG(s1, ..., sn)`: the statements in order, the value of the last one.
@@ -1344,7 +1410,7 @@ class _Evaluator(Converter):
                 value = self.statement(statement)
             return value
         except _Exit:
-            return sympy_of(frame.last)
+            return frame.last
         finally:
             frame.progs -= 1
 
@@ -1359,7 +1425,7 @@ class _Evaluator(Converter):
                 for statement in statements:
                     self.statement(statement)
         except _Exit:
-            return sympy_of(frame.last)
+            return frame.last
         finally:
             frame.loops -= 1
 
@@ -1403,7 +1469,7 @@ class _Evaluator(Converter):
 
     def _returned(self, operand: Node) -> sp.Basic:
         """`RETURN u`: the activation ends with the value of `u`."""
-        raise _Return(self._settled(self.convert(operand)))
+        raise _Return(self._settled(self._taken(operand)))
 
     def _settled(self, value: sp.Basic, top: bool = False) -> sp.Basic:
         """`value` as a program stores it: simplified as Simplify would simplify it
@@ -1416,6 +1482,22 @@ class _Evaluator(Converter):
         carried from one step to the next is (see `carried`): the precision's
         approximation is the last step of the command, and a statement after this one
         may need the exact value, as a limit at a root of the denominator does."""
+        if type(value) is NativeVector:
+            # Settled where it is held, so its holders share it settled.
+            if value.items is None:
+                settled = self._settled(value.made)
+                if settled is not value.made and _shareable(settled):
+                    value.fill(settled)
+                return value
+            for place, item in enumerate(value.items):
+                if type(item) is NativeVector:
+                    if item.items is None or item.symbolic:
+                        self._settled(item)
+                elif type(item) not in SCALARS:
+                    settled = self._settled(item)
+                    if settled is not item:
+                        value.put(place, native_of(settled))
+            return value
         value = _value_of(value)
         if is_simple(value) or self._approximated(value):
             return carried(value, self.context)
@@ -1498,19 +1580,22 @@ class _Evaluator(Converter):
             if symbol is None:
                 symbol = self._target_symbol(target)
             return self._cleared(name, symbol, local)
-        value = _assigned_value(_value_of(self._right_side(target, values[0])))
-        if operator != ":=":
-            value = _updated(operator, self.convert(target), value)
+        value = self._right_side(target, values[0], taking=True)
+        if type(value) is NativeVector and not (local and operator == ":="):
+            # A global keeps a value of its own (see `NativeVector`).
+            value = value.vector()
+        if type(value) is not NativeVector:
+            value = _assigned_value(_value_of(value))
+            if operator != ":=":
+                value = _updated(operator, self.convert(target), value)
         settled = self._settled(value, top=node is self.env.top)
-        # An update's operand is no value the variable takes over (see `_given`).
-        shared = values[0] if operator == ":=" else None
         if variable is not None:
             # Written as an assignment to the formal, it counts as its value, as an
             # assignment to a local does.
             self.env.frame.through[variable] = settled
-            self._given(name, symbol, settled, shared, local)
+            self._given(name, symbol, settled, local)
             return settled
-        return self._given(name, symbol, settled, shared, local)
+        return self._given(name, symbol, settled, local)
 
     def _variable_of_formal(self, target: Node) -> sp.Symbol | None:
         """The variable a formal stands for, where an assignment to the formal assigns
@@ -1570,9 +1655,10 @@ class _Evaluator(Converter):
         store.set(name, setting)
         return assignment
 
-    def _right_side(self, target: Node, value: Node) -> sp.Basic:
+    def _right_side(self, target: Node, value: Node, taking: bool = False) -> Any:
         """The value of the right side of an assignment to `target`, not following the
-        target's value at top level where that refers to the target (see `_assign`)."""
+        target's value at top level where that refers to the target (see `_assign`);
+        `taking` gives it as `_taken` does."""
         name = str(target.value)
         if (
             target.kind is Kind.NAME
@@ -1582,8 +1668,9 @@ class _Evaluator(Converter):
             and _refers_to(self.context.assigned(name), name)
         ):
             expanding = self.env.expanding | {name}
-            return self.within(replace(self.env, expanding=expanding)).convert(value)
-        return self.convert(value)
+            inner = self.within(replace(self.env, expanding=expanding))
+            return inner._taken(value) if taking else inner.convert(value)
+        return self._taken(value) if taking else self.convert(value)
 
     def _stated(self, node: Node) -> sp.Basic:
         """An assignment that is not made: the value evaluated, the target as written.
@@ -1642,45 +1729,22 @@ class _Evaluator(Converter):
         self,
         name: str,
         symbol: sp.Basic | None,
-        value: sp.Basic,
-        written: Node | None,
+        value: Any,
         local: bool | None = None,
-    ) -> sp.Basic:
+    ) -> Any:
         """`value` given to the variable `name`: a local, whose value the assignment
         counts as, or a global, whose assignment it stays, to `symbol`. Which, `local`
-        says, or if None, whether `name` is a parameter of the running activation.
-
-        A local given another local by its bare name shares its vector (see `Cell`).
-        """
+        says, or if None, whether `name` is a parameter of the running activation. Only
+        a local takes a native vector (see `NativeVector`)."""
         frame = self.env.frame
         if local is None:
             local = self._is_local(name)
         if local:
             assert frame is not None
-            cell = None
-            if written is not None and isinstance(value, Vector):
-                cell = self._cell_of(written)
-            frame.locals[name] = cell if cell is not None else Cell(value)
+            frame.locals[name] = Cell(value)
             return value
         self.context.store.assign(name, value)
         return Assign(symbol, sp.Symbol(":="), value)
-
-    def _cell_of(self, written: Node) -> Cell | None:
-        """The cell of the local `written` names, made for it if it has only its
-        argument, or None if it names no local with a value."""
-        frame = self.env.frame
-        if frame is None or written.kind is not Kind.NAME:
-            return None
-        name = str(written.value)
-        if name in self.env.bound or name not in frame.formals:
-            return None
-        cell = frame.locals.get(name)
-        if cell is not None:
-            return None if cell.raw is CLEARED else cell
-        if name not in self.env.bindings:
-            return None
-        cell = frame.locals[name] = Cell(self.convert(written))
-        return cell
 
     def _cleared(
         self, name: str, symbol: sp.Basic, local: bool | None = None
@@ -1709,15 +1773,29 @@ class _Evaluator(Converter):
         vector as it is, as in Derive), where the variable doesn't hold a vector there,
         or where the target is a column (`A SUB SUB j`, `A COL j`); the assignment then
         stands, its parts evaluated. The value is as for `_given`: the element's for a
-        local, the assignment, with its indices evaluated, for a global.
+        local, the assignment, with its indices evaluated, for a global. The element is
+        written in place where it can be (see `_written_in_place`).
         """
         target, *values = node.children
         links, base = _element_links(target)
         indices = [self.operand(self.convert(index)) for _, index in links]
-        value = (
-            _assigned_value(_value_of(self.convert(values[0]))) if values else None
-        )
-        return self._element_stored(node, links, base, indices, value)
+        if not values:
+            return self._element_stored(node, links, base, indices, None)
+        value = self._taken(values[0])
+        if type(value) is not NativeVector:
+            value = _assigned_value(_value_of(value))
+        if (
+            len(values) == 1
+            and base.kind is Kind.NAME
+            and all(link.kind is Kind.SUB for link, _ in links)
+        ):
+            places = [native_of(index) for index in indices]
+            written = _written_in_place(
+                self, node, str(base.value), str(node.value), places, native_of(value)
+            )
+            if written is not _NO_VALUE:
+                return written if type(written) is NativeVector else sympy_of(written)
+        return self._element_stored(node, links, base, indices, sympy_of(value))
 
     def _element_stored(
         self,
@@ -1757,6 +1835,9 @@ class _Evaluator(Converter):
             cell = frame.locals.get(name)
             if cell is None or cell.raw is CLEARED:
                 frame.locals[name] = Cell(replaced)
+            elif type(cell.raw) is NativeVector and _shareable(replaced):
+                # Its holders share it (see `NativeVector`).
+                cell.raw.fill(replaced)
             else:
                 cell.raw = replaced
             return value
@@ -1775,7 +1856,7 @@ class _Evaluator(Converter):
             name = target.name
         if name is None or name in SETTINGS:
             return self.opaque("ASSIGN", [target, value])
-        return self._given(name, target, self._settled(value), None)
+        return self._given(name, target, self._settled(value))
 
     def _in_program(self) -> bool:
         """Whether this is inside a called body or a running `PROG` or `LOOP`, rather
@@ -1955,12 +2036,17 @@ class _Evaluator(Converter):
                 values = [self.convert(argument) for argument in arguments]
                 return self.called(node, values)
         else:
-            values = [self.convert(argument) for argument in arguments]
+            taken = [self._taken(argument) for argument in arguments]
+            values = [sympy_of(value) for value in taken]
+            return self.called(node, values, taken)
         return self.called(node, values)
 
-    def called(self, node: Node, values: list[sp.Basic]) -> sp.Basic:
+    def called(
+        self, node: Node, values: list[sp.Basic], taken: Sequence = ()
+    ) -> Any:
         """The call `node` on `values`, its arguments evaluated as `_call` evaluates
-        them, a command's answer still wrapped in `Commanded`."""
+        them, a command's answer still wrapped in `Commanded`. `taken` are the values
+        as taken (see `_taken`), which the parameters of a defined function take."""
         head, *arguments = node.children
         name = str(head.value)
         current = self.context.store.context
@@ -1972,7 +2058,8 @@ class _Evaluator(Converter):
         ):
             # Evaluating an argument assigned a setting (a program called in it), which
             # is in force from then on: `STRING(f(pi))` writes in the digits f set.
-            return self.within(replace(self.env, context=current)).called(node, values)
+            within = self.within(replace(self.env, context=current))
+            return within.called(node, values, taken)
         written = [_assigned_value(value) for value in values]
         values = [_assigned_value(_value_of(value)) for value in values]
         if name == "SUBS" and not self.env.writing:
@@ -1985,9 +2072,9 @@ class _Evaluator(Converter):
             if self.env.writing:
                 return self.opaque(name, values)
             with absorbed_by_infinity(False):
-                value = self._entered(name, definition, values, arguments)
+                value = self._entered(name, definition, values, taken)
             if name == "LAPLACE" and definition is library_definition(name):
-                return _transform_where_it_converges(value, values)
+                return _transform_where_it_converges(sympy_of(value), values)
             return value
         if (
             self.context.store.held
@@ -2299,8 +2386,8 @@ class _Evaluator(Converter):
         name: str,
         definition: Definition,
         values: list,
-        arguments: Sequence[Node] = (),
-    ) -> sp.Basic:
+        taken: Sequence = (),
+    ) -> Any:
         """A call of a defined function: its body evaluated in a new activation.
 
         Each parameter stands for its argument's value, which is evaluated again where
@@ -2312,8 +2399,8 @@ class _Evaluator(Converter):
         `6/m`. Arguments past the last parameter are evaluated and ignored, and a
         variadic function's one parameter takes them all as a vector.
 
-        An argument that is a bare local of the caller holding a vector is shared with
-        it, so the callee's element assignments change the caller's vector (see `Cell`).
+        A parameter takes a native vector among the arguments `taken` as it is, so the
+        caller and the callee share it (see `NativeVector`).
 
         The value is the body's, or what a `RETURN` gives; an `exit` that ends nothing
         in the body ends the body. A function without a body stands, with its omitted
@@ -2334,7 +2421,7 @@ class _Evaluator(Converter):
         names = definition.names
         if definition.variadic and names:
             values = [Vector(*values)]
-            arguments = ()
+            taken = ()
         frame = Frame(frozenset(names), activation=True)
         bindings: dict[str, sp.Basic] = {}
         supplied: dict[str, Argument] = {}
@@ -2354,10 +2441,8 @@ class _Evaluator(Converter):
                 bindings[parameter] = value
                 supplied[parameter] = Argument(self.env, value)
                 frame.locals.pop(parameter, None)
-                if index < len(arguments) and isinstance(value, Vector):
-                    cell = self._cell_of(arguments[index])
-                    if cell is not None:
-                        frame.locals[parameter] = cell
+                if index < len(taken) and type(taken[index]) is NativeVector:
+                    frame.locals[parameter] = Cell(taken[index])
                 continue
             default = definition.default(index)
             if default is not None:
@@ -2460,7 +2545,7 @@ class _Evaluator(Converter):
         except _Return as returned:
             value = returned.value
         except _Exit:
-            value = sympy_of(frame.last)
+            value = frame.last
         except RecursionError:
             return self.opaque(name, values)
         # Rounded under the settings in force at its return, which the body may have
@@ -2469,8 +2554,11 @@ class _Evaluator(Converter):
         # approximated, as the end of a command at that precision would approximate it.
         returning = evaluator.context.store.context or evaluator.context
         if returning.precision is not self.context.precision:
-            return carried_out(value, returning)
-        return carried(value, returning)
+            return carried_out(sympy_of(value), returning)
+        if type(value) is NativeVector:
+            # The caller gets the vector itself (see `NativeVector`).
+            return value
+        return carried(sympy_of(value), returning)
 
     def _with_local_settings(
         self,
@@ -2546,9 +2634,9 @@ class _Evaluator(Converter):
             depth=self.env.depth + 1,
         )
         try:
-            derived = [_value_of(_Evaluator(inner).statement(body)), variable]
+            derived = [_value_of(sympy_of(_Evaluator(inner).statement(body))), variable]
         except _Return as returned:
-            derived = [_value_of(returned.value), variable]
+            derived = [_value_of(sympy_of(returned.value)), variable]
         except _Exit:
             return None
         if order > 1:
@@ -3213,7 +3301,7 @@ class _Evaluator(Converter):
         frame = self.env.frame
         if statement and verdict is not None and frame is not None:
             frame.last = sp.true if verdict else sp.false
-        run = self.statement if statement else self.convert
+        run = self.statement if statement else self._taken
         if not branches:
             if verdict is None:
                 return self._suspended(node, test)
@@ -3276,8 +3364,7 @@ class _Evaluator(Converter):
                 and left_node.kind in STATEMENT_KINDS
                 and right_node.kind in STATEMENT_KINDS
             ):
-                left = self.side(left_node)
-                return self._tested_sides(word, left, self.side(right_node))
+                return self._tested_sides(word, *self._sides(left_node, right_node))
         return self._decided(_value_of(self.convert(node)))
 
     def _tested_sides(self, word: str, left: sp.Basic, right: sp.Basic) -> bool | None:
@@ -3503,12 +3590,9 @@ def _with_test(conditional: sp.Basic, test: sp.Basic) -> sp.Basic:
 # reads one reads it as a sympy value, and so does a closure where values are not
 # native. Each evaluator looks a name up first in the cells of its own variables
 # (`_Evaluator.scope`): a call's locals, or the globals of a program run at top level.
-# A native vector is kept only by the cell of the variable whose value it is, or the
-# native vector it is an element of, so that writing it in place changes what
-# replacing it would change: wherever else its value goes (another variable, an
-# element, a returned value, any expression), it goes as the sympy vector of its
-# elements at the time. So does an operand that a later operand could write into, as
-# soon as it is read (see `_operands`).
+# Locals share native vectors, globals don't (see `NativeVector`): a closure reads a
+# local's vector, or a vector in one, as the native vector itself, made native first
+# (see `_taken_local`), so that whatever takes it shares it.
 
 #: Whether programs run compiled; without, every node is converted as it is. The two
 #: give the same results, which tests compare.
@@ -3575,8 +3659,8 @@ def _statement(node: Node) -> Native:
     ):
         elements = [_statement(child) for child in node.children]
 
-        def listed(evaluator: _Evaluator) -> sp.Basic:
-            return Vector(*(sympy_of(element(evaluator)) for element in elements))
+        def listed(evaluator: _Evaluator) -> Any:
+            return _listed([element(evaluator) for element in elements])
 
         inner = listed
     if inner is None:
@@ -3597,8 +3681,6 @@ def _statement(node: Node) -> Native:
         else:
             context.step()
         value = run(evaluator)
-        if type(value) is NativeVector:
-            value = value.vector()
         evaluator.env.frame.last = value
         return value
 
@@ -3625,63 +3707,54 @@ def _native(node: Node) -> Native:
     return found[1]
 
 
-def _operands(nodes: Sequence[Node], after: Sequence[Node] = ()) -> list[Native]:
-    """The closures of `nodes`, operands evaluated in their order and then `after`,
-    each one that a later one could write into reading its value as it is when read.
-
-    A closure can give a native vector as its holder keeps it (a variable's value, or an
-    element of one), and a closure that evaluates several operands makes them sympy
-    values only once it has them all: so where a later operand writes into the vector,
-    the value already read would change with it. Such an operand gives `vector()`
-    instead, as soon as it has its value. A later operand of which `_inert` holds writes
-    nothing, so the commonest operands, names, numbers and arithmetic on them, are
-    read as they are."""
-    closures = [_native(node) for node in nodes]
-    inert = all(_inert(node) for node in after)
-    for place in range(len(nodes) - 1, -1, -1):
-        if not inert:
-            closures[place] = _read_now(closures[place])
-        inert = inert and _inert(nodes[place])
-    return closures
-
-
-def _read_now(closure: Native) -> Native:
-    """`closure`, a native vector it gives made `vector()`, the vector as it is now."""
-
-    def read(evaluator: _Evaluator) -> Any:
-        value = closure(evaluator)
-        return value.vector() if type(value) is NativeVector else value
-
-    return read
+def _taken_local(evaluator: _Evaluator, name: str) -> NativeVector | None:
+    """The vector of the local `name`, made native, where its value is a vector that a
+    read gives as it is (no substitution changes it); None otherwise."""
+    env = evaluator.env
+    frame = env.frame
+    if frame is None or name in env.bound or name not in frame.formals:
+        return None
+    cell = frame.locals.get(name)
+    if cell is None:
+        if frame.through or env.written:
+            return None
+        value = env.bindings.get(name)
+        if not _shareable(value):
+            return None
+        made = NativeVector.of(value)
+        frame.locals[name] = Cell(made)
+        return made
+    raw = cell.raw
+    if type(raw) is NativeVector:
+        # A substitution changes no vector of native numbers.
+        return None if env.written and not raw.fixed() else raw
+    if env.written or not _shareable(raw):
+        return None
+    made = cell.raw = NativeVector.of(raw)
+    return made
 
 
-#: The kinds of nodes that write nothing when evaluated, if their children don't.
-_INERT_KINDS = frozenset(
-    {
-        Kind.NUMBER,
-        Kind.NAME,
-        Kind.STRING,
-        Kind.SUM,
-        Kind.PRODUCT,
-        Kind.BINOP,
-        Kind.UNOP,
-        Kind.POSTOP,
-        Kind.SUB,
-        Kind.ABS,
-        Kind.VECTOR,
-        Kind.REL,
-        Kind.NOT,
-        Kind.AND,
-        Kind.OR,
-    }
-)
+def _shareable(value: object) -> bool:
+    """Whether `value` is a sympy vector that can be made native."""
+    return isinstance(value, Vector) and _unwrapped(value)
 
 
-def _inert(node: Node) -> bool:
-    """Whether evaluating `node` surely writes no element of a vector: it is made of
-    names, numbers and operators only. A call isn't, since a function, even one built
-    in and since redefined, can write a global's elements in place."""
-    return node.kind in _INERT_KINDS and all(_inert(child) for child in node.children)
+def _listed(elements: list) -> Any:
+    """The vector written out of the values `elements`: a native one where an element
+    is a native vector, which it then holds, and otherwise the sympy vector."""
+    if any(type(element) is NativeVector for element in elements) and not any(
+        _wrapped(element) for element in elements
+    ):
+        return NativeVector([native_of(element) for element in elements])
+    return Vector(*(sympy_of(element) for element in elements))
+
+
+def _wrapped(value: object) -> bool:
+    """Whether `value` is an assignment, a definition or a command's answer, which no
+    native vector holds."""
+    return type(value) in (NativeAssignment, Assigned) or isinstance(
+        value, (Assign, FunDef, Commanded)
+    )
 
 
 def _natively_only(node: Node) -> bool:
@@ -3749,10 +3822,10 @@ def _native_closure(node: Node) -> Native | None:
     ):
         elements = [_native(child) for child in node.children]
 
-        def listed(evaluator: _Evaluator) -> sp.Basic:
+        def listed(evaluator: _Evaluator) -> Any:
             if not evaluator.native:
                 return evaluator._converted(node)
-            return Vector(*(sympy_of(element(evaluator)) for element in elements))
+            return _listed([element(evaluator) for element in elements])
 
         return listed
     if kind is Kind.ASSIGN:
@@ -3765,11 +3838,13 @@ def _native_closure(node: Node) -> Native | None:
     return None
 
 
-def _name_closure(node: Node) -> Native | None:
+def _name_closure(node: Node, live: bool = False) -> Native | None:
     """A name, read as `_Evaluator._name` reads it: a local's or a global's value as
     its cell keeps it, an argument made native, and a variable a native binding binds
     its value (see `_binding_scope`). A global's value is read where its own rules for
-    a name don't apply: it has one (not `CLEARED`) and no held value to release."""
+    a name don't apply: it has one (not `CLEARED`) and no held value to release. A
+    global's native vector reads as its sympy vector, unless `live` is given for the
+    base of a subscript, which reads its element."""
     name = str(node.value)
     if name == EXIT:
         return None
@@ -3781,6 +3856,8 @@ def _name_closure(node: Node) -> Native | None:
             # nothing is substituted.
             frame = env.frame
             if frame is not None and not env.written and name not in env.bound:
+                # A local's vector is native once read, as `_name` makes it.
+                _taken_local(evaluator, name)
                 cell = frame.locals.get(name)
                 if cell is None:
                     if not frame.through:
@@ -3789,6 +3866,9 @@ def _name_closure(node: Node) -> Native | None:
                             return value
                 else:
                     raw = cell.raw
+                    if type(raw) is NativeVector:
+                        # Made a sympy value with the other operands (see `_children`).
+                        return raw
                     if raw is not CLEARED:
                         return sympy_of(raw)
             return evaluator._name(node)
@@ -3801,18 +3881,25 @@ def _name_closure(node: Node) -> Native | None:
                     if not env.written and not env.frame.through:
                         if type(value) is sp.Integer:
                             return value.p
+                        if _shareable(value):
+                            found = _taken_local(evaluator, name)
+                            if found is not None:
+                                return found
                         return native_of(value)
                 elif name not in env.expanding:
                     # A global, read from a function's body.
                     cell = evaluator.context.store.cells.get(name)
             if cell is not None:
                 raw = cell.raw
-                if type(raw) is int:
-                    return raw
                 kind = type(raw)
+                if kind is int:
+                    return raw
+                if kind is NativeVector and not raw.kept:
+                    if not env.written or not raw.symbolic:
+                        return raw
                 if kind not in SCALARS and kind is not NativeVector:
                     # A value the general operations stored, as `_given` does.
-                    raw = native_of(raw)
+                    raw = _taken_local(evaluator, name) or native_of(raw)
                     kind = type(raw)
                 # A global's held value is released when read (see `_name`).
                 if raw is not CLEARED and (
@@ -3820,12 +3907,14 @@ def _name_closure(node: Node) -> Native | None:
                     or type(cell) is Cell
                     or not evaluator.context.store.held
                 ):
-                    if not env.written or kind in SCALARS:
-                        return raw
                     if kind is NativeVector:
-                        if not raw.symbolic:
+                        if (live or not raw.kept) and (
+                            not env.written or not raw.symbolic or raw.fixed()
+                        ):
                             return raw
                         raw = raw.vector()
+                    if not env.written or type(raw) in SCALARS:
+                        return raw
                     return native_of(_over(raw, env.written))
         else:
             indices = evaluator.indices
@@ -3841,7 +3930,7 @@ def _name_closure(node: Node) -> Native | None:
 def _sum_closure(node: Node) -> Native:
     """A sum: of native numbers, their sum."""
     operators = str(node.value)
-    terms = _operands(node.children)
+    terms = [_native(child) for child in node.children]
     negative = [False, *(sign == "-" for sign in operators)]
 
     def slow(evaluator: _Evaluator, values: list) -> Any:
@@ -3853,6 +3942,7 @@ def _sum_closure(node: Node) -> Native:
                 return rational(total) if type(total) is Fraction else total
             operands = evaluator.operands_of([sympy_of(value) for value in values])
             return native_of(evaluator.summed(operators, operands))
+        values = [sympy_of(value) for value in values]
         for value in values:
             if not isinstance(value, sp.Rational):
                 return evaluator.summed(operators, evaluator.operands_of(values))
@@ -3883,10 +3973,11 @@ def _sum_closure(node: Node) -> Native:
 
 def _product_closure(node: Node) -> Native:
     """A product: of native numbers, their product."""
-    factors = _operands(node.children)
+    factors = [_native(child) for child in node.children]
 
     def slow(evaluator: _Evaluator, values: list) -> Any:
         if not evaluator.native:
+            values = [sympy_of(value) for value in values]
             return evaluator.multiplied_out(evaluator.operands_of(values))
         if all(type(value) in NUMBERS for value in values):
             product: Any = 1
@@ -3919,11 +4010,12 @@ def _binary_closure(node: Node) -> Native:
     number to an integer power, unless the power is zero to a power that isn't
     positive or bigger than `_NATIVE_POWER_BITS`."""
     operator_ = str(node.value)
-    first, second = _operands(node.children)
+    first, second = (_native(child) for child in node.children)
 
     def slow(evaluator: _Evaluator, left: Any, right: Any) -> Any:
         if not evaluator.native:
-            return evaluator.binary(operator_, evaluator.operands_of([left, right]))
+            operands = evaluator.operands_of([sympy_of(left), sympy_of(right)])
+            return evaluator.binary(operator_, operands)
         operands = evaluator.operands_of([sympy_of(left), sympy_of(right)])
         return native_of(evaluator.binary(operator_, operands))
 
@@ -3981,7 +4073,8 @@ def _prefix_closure(node: Node) -> Native:
     def prefixed(evaluator: _Evaluator) -> Any:
         value = operand(evaluator)
         if not evaluator.native:
-            return evaluator.prefixed(operator_, evaluator.operands_of([value]))
+            operands = evaluator.operands_of([sympy_of(value)])
+            return evaluator.prefixed(operator_, operands)
         if operator_ == "-" and type(value) in NUMBERS:
             return -value
         operands = evaluator.operands_of([sympy_of(value)])
@@ -3990,15 +4083,24 @@ def _prefix_closure(node: Node) -> Native:
     return prefixed
 
 
-def _element_closure(node: Node) -> Native:
+def _element_closure(node: Node, live: bool = False) -> Native:
     """`v SUB i`: the element of a vector at one of its places, counted from the end
     if negative (see `place_of`). At top level, a subscript that selects an element of a
     vector written out (see `_written_element`) is converted, as is any subscript
-    there where values are not native."""
+    there where values are not native.
+
+    An element of a local's vector that is a vector is made native (see
+    `NativeVector`); an element of a global's reads as its sympy vector, unless `live`
+    is given for the base of a subscript."""
     # The index is evaluated first.
     base_node, index_node = node.children
-    base = _native(base_node)
-    (index,) = _operands([index_node], after=[base_node])
+    if base_node.kind is Kind.SUB:
+        base = _element_closure(base_node, live=True)
+    else:
+        base = (
+            _name_closure(base_node, live=True) if base_node.kind is Kind.NAME else None
+        ) or _native(base_node)
+    index = _native(index_node)
     selected = _written_element(node)
 
     def element(evaluator: _Evaluator) -> Any:
@@ -4009,7 +4111,12 @@ def _element_closure(node: Node) -> Native:
                 return evaluator._converted(node)
             # The index first, as `Converter._sub` evaluates it.
             at = evaluator.operand(index(evaluator))
-            whole = evaluator.operand(base(evaluator))
+            whole = base(evaluator)
+            if type(whole) is NativeVector and isinstance(at, sp.Integer):
+                found = _item(whole, at.p)
+                if found is not _NO_VALUE:
+                    return found if type(found) is NativeVector else sympy_of(found)
+            whole = evaluator.operand(sympy_of(whole))
             if isinstance(whole, Vector) and isinstance(at, sp.Integer):
                 # An element of a vector at one of its places, as `element` takes it.
                 place = place_of(at, whole.size())
@@ -4021,11 +4128,15 @@ def _element_closure(node: Node) -> Native:
         if type(whole) is NativeVector:
             if type(at) is int:
                 items = whole.items
-                count = len(items)
-                if 0 < at <= count:
-                    return items[at - 1]
-                if -count <= at < 0:
-                    return items[count + at]
+                if items is not None and 0 < at <= len(items):
+                    found = items[at - 1]
+                    if type(found) is int:
+                        return found
+                found = _item(whole, at)
+                if found is not _NO_VALUE:
+                    if type(found) is NativeVector and found.kept and not live:
+                        return found.vector()
+                    return found
         whole = evaluator.operand(sympy_of(whole))
         if type(at) is int and isinstance(whole, Vector):
             count = whole.size()
@@ -4037,6 +4148,27 @@ def _element_closure(node: Node) -> Native:
         return native_of(evaluator.element(node, whole, at))
 
     return element
+
+
+def _item(whole: NativeVector, at: int) -> Any:
+    """The element of the native vector `whole` at the place `at`, counted from the end
+    if negative, or `_NO_VALUE` if it has no such place. An element that is a vector is
+    made native, unless `whole` is a global's (see `NativeVector`)."""
+    items = whole.unpacked()
+    count = len(items)
+    if 0 < at <= count:
+        place = at - 1
+    elif -count <= at < 0:
+        place = count + at
+    else:
+        return _NO_VALUE
+    item = items[place]
+    if type(item) not in SCALARS and type(item) is not NativeVector and not whole.kept:
+        if not _shareable(item):
+            return item
+        # The same value, so `whole.vector()` still holds.
+        item = items[place] = NativeVector.of(item)
+    return item
 
 
 def _decided_relation(node: Node) -> bool:
@@ -4055,7 +4187,7 @@ def _relation_closure(node: Node) -> Native | None:
     if not _decided_relation(node):
         return None
     word = str(node.value)
-    left, right = _operands(node.children)
+    left, right = (_native(child) for child in node.children)
 
     def related(evaluator: _Evaluator) -> Any:
         first = left(evaluator)
@@ -4075,7 +4207,7 @@ def _test_closure(node: Node) -> Callable[[_Evaluator], bool | None]:
     if node.kind is Kind.REL and _decided_relation(node):
         word = str(node.value)
         holds = _HOLDS[word]
-        left, right = _operands(node.children)
+        left, right = (_native(child) for child in node.children)
         # The relation as a value, where the test is converted.
         _native(node)
 
@@ -4111,7 +4243,7 @@ def _truth_closure(node: Node) -> Native:
     if node.kind is Kind.REL and _decided_relation(node):
         word = str(node.value)
         holds = _HOLDS[word]
-        left, right = _operands(node.children)
+        left, right = (_native(child) for child in node.children)
         # The relation as a value, where the test is converted.
         _native(node)
 
@@ -4211,7 +4343,8 @@ def _call_closure(node: Node) -> Native | None:
     """A call: the program constructs run here, `EVERY`, `SOME`, `VECTOR`, `ITERATE`
     and `ITERATES` over native values, a built-in of `_NATIVE_CALLS` computed on native
     values, and any other call without a special evaluation made on its arguments'
-    values (see `_Evaluator.called`)."""
+    values (see `_Evaluator.called`). Where values are not native, a call is converted,
+    which takes its arguments as the closure would."""
     head, *arguments = node.children
     name = str(head.value)
     if name == "IF":
@@ -4234,14 +4367,12 @@ def _call_closure(node: Node) -> Native | None:
         return None
     if name in _SPECIAL_CALLS - {"MOD", "MODS"}:
         return None
-    parts = _operands(arguments)
+    parts = [_native(argument) for argument in arguments]
     computed = _NATIVE_CALLS.get(name)
     if name in library.FUNCTIONS:
         computed = None
 
     def made(evaluator: _Evaluator, values: list) -> Any:
-        if not evaluator.native:
-            return evaluator.called(node, values)
         if computed is not None:
             value = computed(values)
             if value is not None:
@@ -4257,12 +4388,14 @@ def _call_closure(node: Node) -> Native | None:
                 ):
                     return value
         written = [sympy_of(value) for value in values]
-        return native_of(evaluator.called(node, written))
+        return native_of(evaluator.called(node, written, values))
 
     if name == "MOD" and len(parts) == 2:
         first, second = parts
 
         def modulo(evaluator: _Evaluator) -> Any:
+            if not evaluator.native:
+                return evaluator._converted(node)
             number = first(evaluator)
             divisor = second(evaluator)
             if type(number) is int and type(divisor) is int and divisor:
@@ -4280,6 +4413,8 @@ def _call_closure(node: Node) -> Native | None:
         return modulo
 
     def called(evaluator: _Evaluator) -> Any:
+        if not evaluator.native:
+            return evaluator._converted(node)
         return made(evaluator, [part(evaluator) for part in parts])
 
     return called
@@ -4339,7 +4474,9 @@ def _return_closure(node: Node, operand: Node) -> Native:
         if type(value) in SCALARS:
             # Exact, `_settled` keeps a number or truth value as it is.
             raise _Return(sympy_of(value))
-        raise _Return(evaluator._settled(sympy_of(value)))
+        if type(value) is not NativeVector:
+            value = sympy_of(value)
+        raise _Return(evaluator._settled(value))
 
     return returned
 
@@ -4382,17 +4519,21 @@ def _assignment_closure(node: Node) -> Native | None:
     operator_ = str(node.value)
     current = _native(target)
     right = _native(values[0])
-    # An update's operand is no value the variable takes over (see `_given`).
-    shared = values[0] if operator_ == ":=" else None
+    plain = operator_ == ":="
     # `x := x` takes the global's value away (see `_Evaluator._cleared`).
-    clears = shared is not None and _names_target(shared, target)
+    clears = plain and _names_target(values[0], target)
     add = {":+": operator.add, ":-": operator.sub, ":*": operator.mul}.get(operator_)
 
-    def worked_out(evaluator: _Evaluator, value: Any) -> Any:
-        """The value assigned, from the value `value` of the right side."""
+    def worked_out(evaluator: _Evaluator, value: Any, local: bool) -> Any:
+        """The value assigned to a local or a global, from the value `value` of the
+        right side."""
+        if type(value) is NativeVector:
+            if local and plain:
+                return evaluator._settled(value)
+            value = value.vector()
         if type(value) not in SCALARS:
             value = _as_native(evaluator, _assigned_value(_value_of(sympy_of(value))))
-        if shared is None:
+        if not plain:
             now = current(evaluator)
             updated = _updated_natively(operator_, now, value)
             if updated is None:
@@ -4417,23 +4558,23 @@ def _assignment_closure(node: Node) -> Native | None:
         ):
             return evaluator._converted(node)
         if name in env.bound:
-            return _as_native(evaluator, evaluator._converted(node))
+            return _as_native(evaluator, evaluator._raw(node))
         if name in frame.formals:
             store = None
             cells = frame.locals
             if not (frame.progs or frame.loops or name in cells):
-                return _as_native(evaluator, evaluator._converted(node))
+                return _as_native(evaluator, evaluator._raw(node))
         else:
             store = evaluator.context.store
             cells = store.cells
             if not evaluator.native or clears:
-                return _as_native(evaluator, evaluator._converted(node))
+                return _as_native(evaluator, evaluator._raw(node))
             if not (env.depth or frame.activation):
                 # At top level, only once the command has assigned it (see
                 # `_Evaluator._right_side`).
                 cell = cells.get(name)
                 if cell is None or not cell.at:
-                    return _as_native(evaluator, evaluator._converted(node))
+                    return _as_native(evaluator, evaluator._raw(node))
         value = right(evaluator)
         cell = None
         if type(value) is int and add is not None:
@@ -4449,16 +4590,11 @@ def _assignment_closure(node: Node) -> Native | None:
             else:
                 cell = None
         if cell is None:
-            value = worked_out(evaluator, value)
+            value = worked_out(evaluator, value, store is None)
         if store is not None:
             store.version = at = store.version + 1
             cell = cells[name] = Assigned(value, at, evaluator, node, store.domains)
             return cell
-        if shared is not None and isinstance(value, Vector):
-            cell = evaluator._cell_of(shared)
-            if cell is not None:
-                cells[name] = cell
-                return value
         cells[name] = Cell(value)
         return value
 
@@ -4468,7 +4604,7 @@ def _assignment_closure(node: Node) -> Native | None:
 def _element_assignment_closure(node: Node) -> Native | None:
     """`v SUB i SUB j := u` and its updates, as `_Evaluator._element_assigned` makes
     them: where `v` is a local or a global holding a vector with these places, the
-    element written in place (see `rederive.engine.native.NativeVector`)."""
+    element written in place (see `_written_in_place`)."""
     target, *values = node.children
     links, base = _element_links(target)
     if (
@@ -4479,7 +4615,7 @@ def _element_assignment_closure(node: Node) -> Native | None:
         return None
     name = str(base.value)
     operator_ = str(node.value)
-    indices = _operands([index for _, index in links], after=values)
+    indices = [_native(index) for _, index in links]
     right = _native(values[0])
     _native(target)
 
@@ -4488,7 +4624,7 @@ def _element_assignment_closure(node: Node) -> Native | None:
             return evaluator._converted(node)
         places = [index(evaluator) for index in indices]
         value = right(evaluator)
-        if type(value) not in SCALARS:
+        if type(value) not in SCALARS and type(value) is not NativeVector:
             value = native_of(_assigned_value(_value_of(sympy_of(value))))
         written = _written_in_place(evaluator, node, name, operator_, places, value)
         if written is not _NO_VALUE:
@@ -4514,13 +4650,18 @@ def _written_in_place(
     the local or global `name`, made in place, and its value; `_NO_VALUE` where it isn't
     so made, with nothing changed.
 
-    A global's value is the assignment (see `_Evaluator._given`), and its cell is
-    written in place only where no save point holds it, which one stamped after the
-    innermost save point was taken can't be (see `Store.save`); otherwise the write
-    starts a new cell."""
+    A local's vector, made native if it isn't, is written in place, and so is the
+    native vector it holds at each place on the way, which its other holders then see,
+    as they see a native vector stored as the element (see `NativeVector`); one that
+    holds the vector it is stored into is stored as its sympy vector instead. A global
+    keeps a value of its own: what is stored into it is the sympy vector, and its vector
+    and those in it are its own native ones. A global's value is the assignment (see
+    `_Evaluator._given`), and its cell is written in place only where no save point
+    holds it, which one stamped after the innermost save point was taken can't be (see
+    `Store.save`); otherwise the write starts a new cell."""
     env = evaluator.env
     frame = env.frame
-    if env.written or name in env.bound:
+    if frame is None or env.written or name in env.bound:
         return _NO_VALUE
     store = None
     if name in frame.formals:
@@ -4549,6 +4690,8 @@ def _written_in_place(
             return _NO_VALUE
         if type(container) is NativeVector:
             items = container.items
+            if items is None:
+                items = container.unpacked()
         elif isinstance(container, Vector) and _unwrapped(container):
             items = container.args
         else:
@@ -4564,30 +4707,36 @@ def _written_in_place(
                 _updated(operator_, sympy_of(container), sympy_of(value))
             )
         value = updated
+    shared = False
     if type(value) not in SCALARS:
-        value = native_of(evaluator._settled(sympy_of(value)))
-        if type(value) is NativeVector or isinstance(
-            value, (Assign, FunDef, Commanded)
-        ):
-            return _NO_VALUE
+        if type(value) is NativeVector and store is None:
+            shared = True
+            evaluator._settled(value)
+        else:
+            value = native_of(evaluator._settled(sympy_of(value)))
+            if isinstance(value, (Assign, FunDef, Commanded)):
+                return _NO_VALUE
     if store is not None:
         if cell.at <= store.saved or type(whole) is not NativeVector:
-            whole = _native_vector(sympy_of(whole))
+            whole = NativeVector.of(sympy_of(whole))
+            whole.kept = True
             cell = store.cells[name] = Global(whole, 0)
     elif type(whole) is not NativeVector:
-        whole = _native_vector(whole)
+        whole = NativeVector.of(whole)
         if cell is None:
             frame.locals[name] = Cell(whole)
         else:
             cell.raw = whole
     container = whole
     for place in places[:-1]:
-        container.made = None
-        element = container.items[place - 1]
+        element = container.unpacked()[place - 1]
         if type(element) is not NativeVector:
-            element = _native_vector(element)
-            container.items[place - 1] = element
+            # The same value, so `container.vector()` still holds.
+            element = container.items[place - 1] = NativeVector.of(element)
+            element.kept = whole.kept
         container = element
+    if shared and _holds(value, container):
+        value = value.vector()
     container.put(places[-1] - 1, value)
     if store is None:
         return value
@@ -4596,9 +4745,19 @@ def _written_in_place(
     return NativeAssignment(evaluator, node, places, value, store.domains)
 
 
-def _native_vector(vector: Vector) -> NativeVector:
-    """The vector `vector`, which `_unwrapped` holds of, as a native one."""
-    return NativeVector([native_of(element) for element in vector.args])
+def _holds(vector: NativeVector, held: NativeVector) -> bool:
+    """Whether the native vector `vector` is `held` or holds it, at any depth."""
+    seen = set()
+    pending = [vector]
+    while pending:
+        each = pending.pop()
+        if each is held:
+            return True
+        # One whose elements are not made native yet holds no native vector.
+        if each.items is not None and each.symbolic and id(each) not in seen:
+            seen.add(id(each))
+            pending.extend(item for item in each.items if type(item) is NativeVector)
+    return False
 
 
 def _bound_variable(node: Node, counts: range) -> tuple[Node, str] | None:
@@ -4672,7 +4831,7 @@ def _mapped_closure(node: Node) -> Native | None:
     body, _, *rest = arguments
     for argument in arguments:
         _native(argument)
-    limits = _operands(rest, after=[body])
+    limits = [_native(limit) for limit in rest]
     decide = _body_test_closure(body)
     deciding = name == "SOME"
     scope = _binding_scope(node, name, written_index, variable)
@@ -4686,6 +4845,7 @@ def _mapped_closure(node: Node) -> Native | None:
         index, bound, shadowed, inner, template = found
         ends = [limit(evaluator) for limit in limits]
         taken = evaluator._taken_by(bound, shadowed)
+        written = None
         if len(ends) == 2 and type(ends[0]) is int and type(ends[1]) is int:
             values: Any = range(ends[0], ends[1] + 1)
         else:
@@ -4706,7 +4866,8 @@ def _mapped_closure(node: Node) -> Native | None:
                 return deciding
             undecided = undecided or verdict is None
         if undecided:
-            written = [_value_of(sympy_of(end)) for end in ends]
+            if written is None:
+                written = [_value_of(sympy_of(end)) for end in ends]
             standing = evaluator._standing(name, body, index, inner, written)
             return native_of(_over(standing, taken))
         return not deciding
@@ -4729,7 +4890,7 @@ def _generated_closure(node: Node) -> Native | None:
     body, _, *rest = arguments
     for argument in arguments:
         _native(argument)
-    limits = _operands(rest, after=[body])
+    limits = [_native(limit) for limit in rest]
     element = _native(body)
     scope = _binding_scope(node, name, written_index, variable)
 
@@ -4812,7 +4973,7 @@ def _iterated_closure(node: Node) -> Native | None:
     body, _, *rest = arguments
     for argument in arguments:
         _native(argument)
-    limits = _operands(rest, after=[body])
+    limits = [_native(limit) for limit in rest]
     following = _native(body)
     scope = _binding_scope(node, name, written_index, variable)
     sequence = name == "ITERATES"
@@ -4885,7 +5046,7 @@ def _body_test_closure(body: Node) -> Callable[[_Evaluator, _Evaluator], bool | 
     if body.kind is Kind.REL and _decided_relation(body):
         word = str(body.value)
         holds = _HOLDS[word]
-        left, right = _operands(body.children)
+        left, right = (_native(child) for child in body.children)
         # The relation as a value, where the body is converted.
         _native(body)
 
@@ -4993,15 +5154,21 @@ def _count(values: list) -> Any:
     """`DIM(v)` of a native vector."""
     if len(values) != 1 or type(values[0]) is not NativeVector:
         return None
-    return len(values[0].items)
+    (vector,) = values
+    return len(vector.made.args) if vector.items is None else len(vector.items)
 
 
 def _first(values: list) -> Any:
-    """`FIRST(v)` of a native vector: `?` for an empty one."""
+    """`FIRST(v)` of a native vector: `?` for an empty one, and a vector as the sympy
+    one, which shares nothing (see `NativeVector`)."""
     if len(values) != 1 or type(values[0]) is not NativeVector:
         return None
-    items = values[0].items
-    return items[0] if items else sp.nan
+    (vector,) = values
+    items = vector.made.args if vector.items is None else vector.items
+    if not items:
+        return sp.nan
+    first = native_of(items[0])
+    return first.vector() if type(first) is NativeVector else first
 
 
 def _membership(values: list) -> Any:
@@ -5019,7 +5186,7 @@ def _membership(values: list) -> Any:
     if type(collection) is NativeVector:
         if not collection.symbolic:
             return any(
-                type(item) is kind and item == value for item in collection.items
+                type(item) is kind and item == value for item in collection.unpacked()
             )
         collection = collection.vector()
     if not isinstance(collection, (Vector, SetOf)):
