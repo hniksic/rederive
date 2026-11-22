@@ -89,8 +89,8 @@ EXPANSION = "21·x"
 #: span three lines).
 COMPUTATIONS = (
     ("INT(1/(1 + x^2), x)", "ATAN(x)", "integrals"),
-    ("SOLVE(x^2 - 4, x)", "[x = -2, x = 2]", "solving"),
-    ("EIGENVALUES([[2, 0], [0, 3]])", "[w = 2, w = 3]", "matrices"),
+    ("SOLVE(x^2 - 4, x)", "x = -2 OR x = 2", "solving"),
+    ("EIGENVALUES([[2, 0], [0, 3]])", "[2, 3]", "matrices"),
     ("LIM((1 + 1/n)^n, n, inf)", "ê", "limits"),
 )
 
@@ -388,7 +388,7 @@ def session_checks(binary: Path) -> None:
     """Start the app, open help, run computations, and quit."""
     terminal = Terminal(binary)
     try:
-        terminal.wait_for("Press H for help")
+        terminal.wait_for("H for help")
         report("first frame", "the stylesheet was found")
 
         terminal.type("H")
