@@ -146,13 +146,6 @@ __all__ = [
     "as_condition",
     "is_simple",
     "simple_constants",
-    "unwrapped",
-    "Commanded",
-    "settled_key",
-    "settled_from",
-    "mark_settled",
-    "settled_since",
-    "SETTLED_ADDED",
     "vector_from",
     "authored_conditionals",
     "chosen_from",
@@ -676,24 +669,6 @@ class Assign(sp.Function):
 
 class FunDef(sp.Function):
     """`F(x, y) := body`, as `FunDef(name, params, body)`; see `formals`."""
-
-
-class Commanded(sp.Function):
-    """The answer of a `FACTOR`, `EXPAND` or `SOLVE` head, in the command's form.
-
-    A factorization is a form, not just a value: `FACTOR(12)` is `2^2*3`, which
-    Simplify's normal form would multiply back out. A solution is written as soLve
-    writes it, `x >= (3*y - 7)/2`, not as Simplify would. So the answer is wrapped
-    through the rest of the pipeline and unwrapped only at the end. A call taking it
-    as an argument gets the unwrapped value: `RHS(SOLVE(x^2 - 5*x + 6 = 0, x))` is
-    `[2, 3]`.
-    """
-
-    nargs = 1
-
-    def _eval_derivative(self, symbol: sp.Basic) -> sp.Basic:
-        # The answer is its value: `DIF(EXPAND(u)/2, x)` is the derivative of `u/2`.
-        return self.args[0].diff(symbol)
 
 
 def formals(head: Node, converted: Sequence[sp.Basic]) -> sp.Basic:
@@ -4481,142 +4456,17 @@ def _known_simple(
 ) -> Vector:
     """`vector`, made of elements of `sources` and `added`, marked simple (see
     `is_simple`) if every source and every added item is, with the constants they hold
-    (see `simple_constants`), and not simple if an added item isn't. Otherwise, if
-    every source is simple or settled under the same settings (see `SETTLED`), it is
-    marked settled under them if every added item is simple or so settled too, and
-    else marked with them and the other added items (see `SETTLED_FROM`)."""
+    (see `simple_constants`)."""
     if sources or added:
-        held = _constants_of(added)
-        if held is False:
-            # An added item is an element of `vector`.
-            vector.__dict__[SIMPLE] = False
-        elif not any(
-            SETTLED in source.__dict__ and SIMPLE not in source.__dict__
-            for source in sources
-        ):
-            # A settled source is looked through only where its simplicity is asked:
-            # a loop extending a table of roots would look through it at every pass.
-            from_sources = _constants_of(sources)
-            if from_sources is not False:
-                vector.__dict__[SIMPLE] = held | from_sources
-                return vector
-        if all(unwrapped(source) for source in sources) and not any(
-            isinstance(item, _WRAPPED) for item in added
-        ):
-            vector.__dict__[UNWRAPPED] = True
-        key = None
-        rest: list[sp.Basic] = []
-        for source in sources:
-            found = _settled_part(source, key)
-            if found is None:
-                return vector
-            key, pending = found
-            rest.extend(pending)
-        for item in added:
-            found = _settled_part(item, key)
-            if found is None:
-                rest.append(item)
-            else:
-                key, pending = found
-                rest.extend(pending)
-        if key is not None and key is not True:
-            settled_since(vector, key, rest)
+        held = _constants_of((*sources, *added))
+        if held is not False:
+            vector.__dict__[SIMPLE] = held
     return vector
-
-
-def settled_since(vector: Vector, key: object, added: Sequence[sp.Basic]) -> Vector:
-    """`vector`, made of elements of vectors settled under the settings `key` and of
-    `added`, marked settled under them if `added` holds only simple values (see
-    `SETTLED`), and else with them and `added` (see `SETTLED_FROM`), unless it holds
-    more than `SETTLED_ADDED` values."""
-    rest = [item for item in added if not is_simple(item)]
-    if not rest:
-        vector.__dict__[SETTLED] = key
-    elif len(rest) <= SETTLED_ADDED:
-        vector.__dict__[SETTLED_FROM] = (key, tuple(rest))
-    return vector
-
-
-def unwrapped(value: Vector | SetOf) -> bool:
-    """Whether no element of the vector or set `value` is an assignment, a definition
-    or a command's answer, which its use as a value unwraps; remembered on the value,
-    which a program may read element by element as often as it has elements, and
-    passed on to the vectors list functions make (see `_known_simple`)."""
-    found = value.__dict__.get(UNWRAPPED)
-    if found is None:
-        found = isinstance(value.__dict__.get(SIMPLE), frozenset) or not any(
-            isinstance(element, _WRAPPED) for element in value.args
-        )
-        value.__dict__[UNWRAPPED] = found
-    return found
-
-
-#: What the use of a vector as a value unwraps (see `unwrapped`).
-_WRAPPED = (Assign, FunDef, Commanded)
-
-
-def _settled_part(
-    value: sp.Basic, key: object
-) -> tuple[object, tuple[sp.Basic, ...]] | None:
-    """The settings `value` is settled under (see `SETTLED`), or True if it is simple,
-    with the values `SETTLED_FROM` records on it besides, if they agree with `key`:
-    None, True or other settings. None if it is neither or they disagree."""
-    if isinstance(value, Vector):
-        state = value.__dict__
-        found = state.get(SETTLED)
-        pending: tuple[sp.Basic, ...] = ()
-        if found is None and SETTLED_FROM in state:
-            found, pending = state[SETTLED_FROM]
-        if found is not None:
-            if key is None or key is True or found is key or found == key:
-                return found, pending
-            return None
-    if not is_simple(value):
-        return None
-    return (True if key is None else key), ()
-
-
-def settled_key(value: sp.Basic) -> object:
-    """The settings under which a program stores the vector `value` as it is (see
-    `SETTLED`), or None if it isn't known to."""
-    return value.__dict__.get(SETTLED) if isinstance(value, Vector) else None
-
-
-def settled_from(value: sp.Basic) -> tuple[object, tuple[sp.Basic, ...]] | None:
-    """The settings and the elements of `SETTLED_FROM` the vector `value` records, or
-    None."""
-    return value.__dict__.get(SETTLED_FROM) if isinstance(value, Vector) else None
-
-
-def mark_settled(value: Vector, key: object) -> Vector:
-    """`value`, recorded as stored as it is under the settings `key` (see `SETTLED`)."""
-    value.__dict__[SETTLED] = key
-    return value
 
 
 #: The attribute under which a vector or set records whether it `is_simple`: the
 #: constants it holds (see `simple_constants`) if it is, and False if it isn't.
 SIMPLE = "_simple"
-
-#: The attribute `unwrapped` remembers its answer in.
-UNWRAPPED = "_unwrapped"
-
-#: The attribute under which a vector records the settings under which simplifying it
-#: as a program stores a value leaves it as it is (see `_Evaluator._settled` in
-#: evaluate.py): simplifying it so gave it, or a list function made it of the
-#: elements of such vectors and of values simplifying leaves as they are. A
-#: loop that extends a long table of roots or symbolic expressions then simplifies
-#: none of its old elements again.
-SETTLED = "_settled"
-
-#: The attribute under which a vector a list function made of the elements of vectors
-#: settled under some settings (see `SETTLED`), and of other values, records those
-#: settings and the other values: it is settled if simplifying leaves each of those as
-#: it is.
-SETTLED_FROM = "_settled_from"
-
-#: The most values other than settled and simple ones that `SETTLED_FROM` records.
-SETTLED_ADDED = 16
 
 #: The constants `is_simple` takes as simple, which simplifying exactly leaves as they
 #: are.

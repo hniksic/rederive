@@ -34,7 +34,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from contextvars import ContextVar
-from dataclasses import replace
+from dataclasses import fields, replace
 from functools import partial, reduce
 from itertools import combinations
 from math import gcd, lcm, prod
@@ -400,7 +400,7 @@ def simplified(
         running=True,
         top=node if top else None,
     )
-    token = _simplified_already.set({})
+    token = _simplified_already.set(_Simplified())
     try:
         expression = evaluate(node, environment)
         if context.precision is Precision.APPROXIMATE:
@@ -433,11 +433,52 @@ def _is_content_form(expression: sp.Basic) -> bool:
     )
 
 
-#: The expressions `_expression` has simplified during one `simplified` call, keyed by
-#: the expression, `decide` and whether it is an argument, with the context it was
-#: simplified in. ODE.MTH's tests ask about the same long parameters again and again:
-#: `F21_SOL` tests `MOD` of each of three in two conditions.
-_simplified_already: ContextVar[dict | None] = ContextVar(
+class _Simplified:
+    """The expressions `_expression` has simplified during one `simplified` call, in
+    `answers`: each by the expression, `decide` and whether it is an argument, with
+    what else its answer depends on (see `conditions`).
+
+    ODE.MTH's tests ask about the same long parameters again and again: `F21_SOL` tests
+    `MOD` of each of three in two conditions. A program simplifies each value it stores
+    (see `_Evaluator._settled` in evaluate.py), so a loop that extends a table stores
+    its old elements again at every pass, and finds them here.
+    """
+
+    __slots__ = ("answers", "_last")
+
+    def __init__(self) -> None:
+        self.answers: dict = {}
+        self._last: tuple = (None, None, None, ())
+
+    def conditions(self, context: Context) -> tuple:
+        """What simplifying under `context` depends on besides the expression: the
+        fields of the context that compare (the settings, and the session's
+        declarations, definitions, assignments and labels), and the declarations and
+        definitions the command has made so far, each a dict that `Store` replaces
+        rather than changes.
+
+        An answer is found by these values, not by the context it was simplified in:
+        a program simplifies each value it stores in a context of its own, and a
+        declaration it makes leaves the context it runs in the same object."""
+        store = context.store
+        domains, functions = store.domains, store.functions
+        last = self._last
+        if last[0] is context and last[1] is domains and last[2] is functions:
+            return last[3]
+        conditions = (
+            *(getattr(context, name) for name in _COMPARED),
+            domains,
+            functions,
+        )
+        self._last = (context, domains, functions, conditions)
+        return conditions
+
+
+#: The fields of a context that two contexts compare (see `Context`).
+_COMPARED = tuple(field.name for field in fields(Context) if field.compare)
+
+#: The expressions simplified during the `simplified` call in progress.
+_simplified_already: ContextVar[_Simplified | None] = ContextVar(
     "_simplified_already", default=None
 )
 
@@ -454,6 +495,7 @@ def _argument(value: sp.Basic, context: Context, top: bool = False) -> sp.Basic:
 
     `top` keeps an equation `value` is with its sides simplified, as the value of a
     top-level assignment (see `top_level_equation`).
+
     """
     try:
         heads = value.atoms(*_HELD)
@@ -1082,15 +1124,17 @@ def _expression(expression: sp.Basic, context: Context, decide: bool) -> sp.Basi
     memo = _simplified_already.get()
     if memo is None:
         return _simplified_expression(expression, context, decide)
+    answers = memo.answers
     try:
         key = (expression, decide, _in_argument.get())
-        found = memo.get(key)
+        found = answers.get(key)
     except TypeError:
         return _simplified_expression(expression, context, decide)
-    if found is not None and found[0] is context:
+    conditions = memo.conditions(context)
+    if found is not None and found[0] == conditions:
         return found[1]
     result = _simplified_expression(expression, context, decide)
-    memo[key] = (context, result)
+    answers[key] = (conditions, result)
     return result
 
 

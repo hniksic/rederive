@@ -1379,28 +1379,33 @@ async def test_writing_an_element_of_a_long_vector_copies_no_vector(monkeypatch)
     assert built[0] < 5 * 2000
 
 
+def simplifications(monkeypatch) -> list[sp.Basic]:
+    """Collect each expression Simplify works through, as it does when the command's
+    memo of answers doesn't have it (see `_simplified_already` in pipeline.py)."""
+    seen = []
+    simplified = pipeline._simplified_expression
+
+    def recorded(expression, *args, **kwargs):
+        seen.append(expression)
+        return simplified(expression, *args, **kwargs)
+
+    monkeypatch.setattr(pipeline, "_simplified_expression", recorded)
+    return seen
+
+
 async def test_extending_a_table_of_constants_simplifies_no_old_element(monkeypatch):
     """A table headed by `[inf, inf]`, `[1/0, 0]` or `[pi, #e]` is known simple as it
-    grows, as one of rationals is, so storing each extension simplifies nothing again:
-    looked through anew at each pass, the table of `n` points would take some `n^2/2`
-    steps of Simplify."""
-    calls = [0]
-    transform = pipeline._transform
-
-    def counted(*args, **kwargs):
-        calls[0] += 1
-        return transform(*args, **kwargs)
-
-    monkeypatch.setattr(pipeline, "_transform", counted)
+    grows, as one of rationals is, so storing each extension simplifies nothing."""
+    seen = simplifications(monkeypatch)
     session = Session()
     for head in ["[inf, inf]", "[1/0, 0]", "[pi, #e]"]:
         session.author(
             f"tc(n, t, k) := PROG(t := [{head}], k := 1, LOOP(IF(k > n, RETURN(DIM(t))), "
             "t := APPEND(t, [[k, k]]), k :+ 1))"
         )
-        calls[0] = 0
+        seen.clear()
         assert (await session.simplify("tc(300)")).text == "301"
-        assert calls[0] < 300
+        assert len(seen) < 10
 
 
 @pytest.mark.parametrize(
@@ -1416,28 +1421,23 @@ async def test_extending_a_table_of_constants_simplifies_no_old_element(monkeypa
 async def test_extending_a_table_of_expressions_simplifies_no_old_element(
     monkeypatch, extension, compiled
 ):
-    """A table of roots, multiples of `pi` or symbolic expressions that simplifying
-    leaves as it is remembers so, as the tables it is extended into do, so storing each
-    extension simplifies only what it adds: simplified anew at each pass, the table of
-    `n` points would take some `n^2/2` steps of Simplify."""
+    """A program simplifies each value it stores, so a table of roots, multiples of
+    `pi` or symbolic expressions is simplified again at each pass that extends it; the
+    command remembers what each element simplified to, so Simplify works through each
+    old element only as often as the settings it is simplified under change, and the
+    table of `n` points takes no `n^2/2` steps of it."""
     monkeypatch.setattr(evaluate, "COMPILED", compiled)
-    calls = [0]
-    transform = pipeline._transform
-
-    def counted(*args, **kwargs):
-        calls[0] += 1
-        return transform(*args, **kwargs)
-
-    monkeypatch.setattr(pipeline, "_transform", counted)
+    seen = simplifications(monkeypatch)
     session = Session()
     for head in ["[SQRT(2), 1]", "[2*pi, -pi]", "[x + 1, y]", "[SIN(x), 1]"]:
         session.author(
             f"te(n, t, k) := PROG(t := [{head}], k := 1, LOOP(IF(k > n, "
             f"RETURN(DIM(t))), {extension}, k :+ 1))"
         )
-        calls[0] = 0
+        seen.clear()
         assert (await session.simplify("te(300)")).text == "301"
-        assert calls[0] < 5 * 300
+        assert len(seen) < 2 * 300
+        assert max((seen.count(expression) for expression in seen), default=0) <= 2
 
 
 @pytest.mark.parametrize(
@@ -1449,20 +1449,11 @@ async def test_extending_a_table_of_expressions_simplifies_no_old_element(
         "f(y) := y",
     ],
 )
-async def test_a_settled_table_is_simplified_anew_under_other_settings(
-    monkeypatch, change
-):
-    """What a table is known to simplify to holds under the settings, declarations and
-    definitions it was simplified under: a program that changes them has its old
+async def test_a_table_is_simplified_anew_under_other_settings(monkeypatch, change):
+    """What an element of a table simplified to holds under the settings, declarations
+    and definitions it was simplified under: a program that changes them has its old
     elements simplified again."""
-    seen = []
-    transform = pipeline._transform
-
-    def recorded(expression, *args, **kwargs):
-        seen.append(expression)
-        return transform(expression, *args, **kwargs)
-
-    monkeypatch.setattr(pipeline, "_transform", recorded)
+    seen = simplifications(monkeypatch)
     session = Session()
     session.author(
         "ts(t) := PROG(t := [SIN(2*x), 1], t := APPEND(t, [2]), t := APPEND(t, [3]), "
@@ -1470,9 +1461,19 @@ async def test_a_settled_table_is_simplified_anew_under_other_settings(
     )
     assert (await session.simplify("ts()")).text == "5"
     element = sp.sin(2 * sp.Symbol("x", real=True))
-    old = sum(1 for expression in seen if expression == element)
-    # Stored first, then again after the change, and not at the passes between.
-    assert old == 2
+    # Simplified first, then again after the change, and not at the passes between.
+    assert seen.count(element) == 2
+
+
+async def test_a_declaration_in_a_program_holds_for_what_it_simplifies_after():
+    """An argument simplified under a declaration the program then takes back is
+    simplified anew: `FLOOR(x + 1/2)` is 0 only while `x` lies in (-1/2, 1/2)."""
+    session = Session()
+    answer = await session.simplify(
+        "PROG(x :epsilon Real (-1/2, 1/2), a := NUMERATOR(FLOOR(x + 1/2)), "
+        "x :epsilon Real, b := NUMERATOR(FLOOR(x + 1/2)), [a, b])"
+    )
+    assert answer.text == "[0, FLOOR(x + 1/2)]"
 
 
 def stored_twice(monkeypatch) -> list[tuple[sp.Basic, sp.Basic, sp.Basic]]:
@@ -1480,9 +1481,9 @@ def stored_twice(monkeypatch) -> list[tuple[sp.Basic, sp.Basic, sp.Basic]]:
     stores it, and return the list that collects each such value, what simplifying it
     gave and what simplifying that gave, where the two differ.
 
-    A vector simplified there is marked settled, so that storing it again doesn't
-    simplify it again (see `SETTLED` in to_sympy.py): what simplifying gives must be
-    what simplifying it again would give."""
+    A loop stores a value it computed from what it stored at the pass before, which
+    is simplified again: what simplifying gives must be what simplifying it again
+    would give, or the answer would depend on how many passes there were."""
     changed = []
     settled = evaluate._Evaluator._settled
     inside = [False]
@@ -1506,7 +1507,7 @@ def stored_twice(monkeypatch) -> list[tuple[sp.Basic, sp.Basic, sp.Basic]]:
             except Exception:
                 pass
             else:
-                if not evaluate._same(again, once):
+                if type(again) is not type(once) or again != once:
                     changed.append((value, once, again))
             finally:
                 inside[0] = False
