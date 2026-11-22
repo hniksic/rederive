@@ -2697,6 +2697,31 @@ def test_a_heading_heads_its_column_only_while_it_is_a_heading():
     assert again.text.startswith("[[p, q, NOT p AND q OR p AND NOT q], ")
 
 
+#: Answers whose form a step left for the next Simplify to finish: a sum put over one
+#: denominator in a quotient not then written in normal form, a product collected
+#: beside a piecewise factor, a polynomial in a call that trigsimp factored once
+#: multiplied out, the content of a numerator taken out of the sums inside its terms,
+#: and a logarithm split off where a coefficient multiplied it.
+SETTLED_AT_ONCE = [
+    ("(-6144*t*#e^(3*t) + 1536*#e^(3*t))*#e^(-4*t)", "(1536 - 6144*t)*#e^(-t)"),
+    ("1536*(1 - 4*t)*#e^(-t)", "(1536 - 6144*t)*#e^(-t)"),
+    ("6*t*#e^(-t) + 3*#e^(-t)", "(6*t + 3)*#e^(-t)"),
+    ("x^3*SIGN(3 - x)/3 - 9*SIGN(3 - x)", "(x^3/3 - 9)*SIGN(3 - x)"),
+    ("INT(x^2*SIGN(3 - x), x)", "(x^3/3 - 9)*SIGN(3 - x)"),
+    ("(SIN(a) + 2)^3/3 - 8/3", "SIN(a)^3/3 + 2*SIN(a)^2 + 4*SIN(a)"),
+    ("(8*x^2*y + 12*x^2 + 2*x + 2)/(z + 1)", "2*(x^2*(4*y + 6) + x + 1)/(z + 1)"),
+    ("-2*(x^2*(8*y + 12) + x + 1)/(z + 1)", "-2*(x^2*(8*y + 12) + x + 1)/(z + 1)"),
+    ("x + LN(2/(#e^x + 1))/a", "LN(2/(#e^x + 1))/a + x"),
+]
+
+
+@pytest.mark.parametrize(("text", "expected"), SETTLED_AT_ONCE, ids=str)
+def test_an_answer_is_settled_by_one_simplify(text, expected):
+    once = simp(text)
+    assert once == expected
+    assert simp(once) == once
+
+
 #: Corpus expressions that settle only on a second pass are listed in
 #: `test_simplify_corpus.py`, next to the sweep that finds them.
 

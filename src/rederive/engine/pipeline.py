@@ -6403,6 +6403,12 @@ def _trigsimp(expression: sp.Basic) -> sp.Basic:
     `_argument`): which variables such an argument has, or its numerator, are told by
     cancelling, and ODE.MTH's `FREE` asks that of equations in `TAN(x - y + 1)` dozens
     of times.
+
+    A result that only takes a power of a call out of a sum is not kept: that is
+    factoring, Factor's job, and the normal form writes a polynomial in `SIN(a)`
+    multiplied out as it writes one in `x`. Sympy finds such a factor only in some
+    spellings of one polynomial: in `SIN(a)^3/3 + 2*SIN(a)^2 + 4*SIN(a)`, but not in
+    `(SIN(a) + 2)^3/3 - 8/3`, which the normal form multiplies out into the first.
     """
     if _in_argument.get():
         return expression
@@ -6423,7 +6429,21 @@ def _trigsimp(expression: sp.Basic) -> sp.Basic:
         )
     except Exception:
         unchanged = False
-    return expression if unchanged else sp.trigsimp(expression)
+    if unchanged:
+        return expression
+    simplified = sp.trigsimp(expression)
+    if (
+        isinstance(expression, sp.Add)
+        and isinstance(simplified, sp.Mul)
+        and any(
+            isinstance(factor.as_base_exp()[0], TrigonometricFunction)
+            and factor.as_base_exp()[1].is_positive
+            for factor in simplified.args
+        )
+        and sp.expand(simplified) == sp.expand(expression)
+    ):
+        return expression
+    return simplified
 
 
 #: The largest expression with trigonometric calls nested in angles that `_trigsimp`
@@ -8015,8 +8035,8 @@ def _applied(
         rewrite = rule.rewrite
         if rewrite is _extracted_powers and context.branch is Branch.ANY:
             rewrite = _any_extracted_powers
-        elif rewrite is _collected_powers:
-            rewrite = partial(_collected_powers, order=context.order)
+        elif rewrite is _collected_powers or rewrite is _collected_by_pieces:
+            rewrite = partial(rewrite, order=context.order)
         expression = _within_budget(expression, rule.kept, rewrite, rule.work)
     return expression
 
@@ -8240,7 +8260,9 @@ def _powers_of_e(expression: sp.Basic) -> sp.Basic:
     return walked(expression, False)
 
 
-def _collected_by_pieces(expression: sp.Basic) -> sp.Basic:
+def _collected_by_pieces(
+    expression: sp.Basic, order: Sequence[str] = ORDER_LIST
+) -> sp.Basic:
     """Collect the terms of a sum by their piecewise factors: one polynomial beside each
     `SIGN(u)`, `ABS(u)` or standing `CHI` call, as a spline is written.
 
@@ -8248,6 +8270,10 @@ def _collected_by_pieces(expression: sp.Basic) -> sp.Basic:
     `ABS(u)` is `u*SIGN(u)` where `SIGN(u)` stands beside it. A sum without two terms
     over the same piecewise factor is left alone, and so is one where such a factor's
     terms are no polynomial, as an antiderivative counting arches with `FLOOR` is.
+
+    Each collected product is written in normal form, which Simplify would otherwise
+    give it the next time: `x^3*SIGN(3 - x)/3 - 9*SIGN(3 - x)` is `(x^3/3 - 9)*SIGN(3 -
+    x)`, as `(x^3 - 27)*SIGN(3 - x)/3` is.
     """
     if not expression.has(sp.sign, sp.Abs, AppliedUndef):
         return expression
@@ -8288,7 +8314,8 @@ def _collected_by_pieces(expression: sp.Basic) -> sp.Basic:
                 return total
             else:
                 content, rest = together.as_content_primitive()
-                collected.append(_keep_coeff(content, rest) * kernel)
+                product = _keep_coeff(content, rest) * kernel
+                collected.append(normal_form(product, order, over_numbers=False))
         if all(len(parts) < 2 for kernel, parts in groups.items() if kernel != 1):
             return total
         return sp.Add(*collected)

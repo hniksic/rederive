@@ -289,7 +289,10 @@ class _Writer:
             # + y`), or too large to multiply out: keep the terms holding it as is.
             terms = list(holding)
             rest = self.written(sp.Add(*free))
-            return _over_one_denominator(self._shared(sp.Add(*terms, rest)))
+            shared = self._shared(sp.Add(*terms, rest))
+            combined = _over_one_denominator(shared)
+            # Combined, the sum is a new quotient, written as any other is.
+            return shared if combined is shared else self.written(combined)
         terms, constant = written
         # The constant term joins the terms free of the generator, and that sum is
         # written about its own most main generator.
@@ -434,21 +437,21 @@ def _rational_in(
     frozen = _roots_of_quotients_hidden(frozen, hidden)
     shown = {symbol: root for root, symbol in hidden.items()}
     numerator, denominator = sp.fraction(sp.together(frozen))
-    numerator = _expanded(numerator)
+    numerator = _expanded(numerator, generator)
     cancelled = _cancelled([numerator], list(sp.Mul.make_args(denominator)))
     if cancelled is not None:
-        numerator = _expanded(sp.Mul(*cancelled[0]))
+        numerator = _expanded(sp.Mul(*cancelled[0]), generator)
         denominator = sp.Mul(*cancelled[1])
     if denominator.has(generator):
         quotient, remainder = sp.div(numerator, denominator, generator)
     else:
         # A denominator free of the generator is a coefficient and divides each term:
         # `(x + y*z)/y` is `x/y + z`, a polynomial in `x`.
-        quotient, remainder = _expanded(numerator / denominator), sp.S.Zero
+        quotient, remainder = _expanded(numerator / denominator, generator), sp.S.Zero
     terms, constant = _collected(quotient.xreplace(shown), generator, thaw)
     if remainder != 0:
         rest, rest_constant = _collected(
-            _expanded(remainder).xreplace(shown), generator, thaw
+            _expanded(remainder, generator).xreplace(shown), generator, thaw
         )
         # Cancel again unfrozen, since the frozen gcd saw only the generator.
         tops = [sp.Add(*rest, thaw(rest_constant))]
@@ -836,10 +839,35 @@ def _numeric_content(factor: sp.Expr, below: bool) -> tuple[sp.Expr, sp.Expr]:
     base, exponent = factor.as_base_exp()
     if not (base.is_Add and exponent.is_Integer and exponent > 0):
         return sp.S.One, factor
-    content, primitive = base.as_content_primitive()
+    content = base.as_content_primitive()[0]
     if not (content.is_Integer if below else content.is_Rational) or content == 1:
         return sp.S.One, factor
+    primitive = sp.Add(*(_divided(term, content) for term in base.args))
     return content**exponent, primitive**exponent
+
+
+def _divided(term: sp.Expr, number: sp.Rational) -> sp.Expr:
+    """`term` divided by `number`, a divisor of its numeric content.
+
+    The content of a sum inside the term counts, but the sum gives up only what the
+    term's coefficient can't: in `2*x*(4*y + 6) + 2` the coefficient takes the 2, and in
+    `x*(8*y + 12) + 2` the sum does, becoming `x*(4*y + 6) + 1`. Sympy's primitive part
+    would take all of a sum's content out, `2*x*(2*y + 3) + 1`, though a coefficient
+    keeps it inside where there is no number to divide (see `_collected`).
+    """
+    coefficient, rest = term.as_coeff_Mul()
+    quotient = coefficient / number
+    if quotient.is_Integer:
+        return _keep_coeff(quotient, rest)
+    factors = list(sp.Mul.make_args(rest))
+    for index, factor in enumerate(factors):
+        if factor.is_Add:
+            spread = [quotient * part for part in factor.args]
+            if all(part.as_coeff_Mul()[0].is_Integer for part in spread):
+                factors[index] = sp.Add(*spread)
+                return sp.Mul(*factors)
+    content, primitive = term.as_content_primitive()
+    return _keep_coeff(content / number, primitive)
 
 
 def _reciprocal_sum(expression: sp.Basic) -> bool:
@@ -1209,27 +1237,35 @@ def _without(term: sp.Basic, common: dict[sp.Basic, sp.Basic]) -> sp.Basic:
 # -- sizes ---------------------------------------------------------------------
 
 
-def _expanded(expression: sp.Basic) -> sp.Basic:
+def _expanded(expression: sp.Basic, generator: sp.Basic | None = None) -> sp.Basic:
     """Multiplied out, without splitting powers.
 
     Derive keeps `x^(a + b)` and `(x*y)^n` as they are. A logarithm sheds a positive
     factor only where a variable multiplies it: `x*LN(2*x)` is `x*LN(x) + x*LN(2)`, whose
-    second term collects with others in `x`, while `LN(2*x) + x` stays.
+    second term collects with others in `x`, while `LN(2*x) + x` stays. Given the
+    generator of a sum, only a factor holding it counts as a variable, the others
+    being coefficients: `x + LN(2*x)/a` keeps its logarithm whole, as `(a*x + LN(2*x))/a`
+    does.
     """
     expanded = sp.expand(expression, power_exp=False, power_base=False, log=False)
     return sp.Add(
         *(
             term
-            if _lone_logarithm(term)
+            if _lone_logarithm(term, generator)
             else sp.expand(term, power_exp=False, power_base=False)
             for term in sp.Add.make_args(expanded)
         )
     )
 
 
-def _lone_logarithm(term: sp.Basic) -> bool:
-    """Whether `term` is a constant multiple of one logarithm of a variable argument."""
-    variable = [factor for factor in sp.Mul.make_args(term) if factor.free_symbols]
+def _lone_logarithm(term: sp.Basic, generator: sp.Basic | None = None) -> bool:
+    """Whether `term` is a constant multiple of one logarithm of a variable argument,
+    or, given a generator, a multiple of one logarithm by a coefficient free of it."""
+    variable = [
+        factor
+        for factor in sp.Mul.make_args(term)
+        if (factor.free_symbols if generator is None else factor.has(generator))
+    ]
     return len(variable) == 1 and isinstance(variable[0], sp.log)
 
 
