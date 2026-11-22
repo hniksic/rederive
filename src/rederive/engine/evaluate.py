@@ -1484,14 +1484,24 @@ class _Evaluator(Converter):
         return carried(value, self.context)
 
     def _approximated(self, value: sp.Basic) -> bool:
-        """Whether `value` is a number that Approximate precision approximates as it
-        is: simplifying it first would only cost time."""
+        """Whether `value` is a number, or a vector of such values, that Approximate
+        precision approximates as it is: simplifying it first would only cost time.
+        `carried` rounds the numbers of a vector, at any depth, as it rounds a number
+        alone, so a loop whose iterate is a vector of numbers runs at the speed of one
+        whose iterate is a number. A set doesn't qualify: simplifying its elements may
+        make two of them equal."""
         if self.context.precision is not Precision.APPROXIMATE:
             return False
-        try:
-            return isinstance(value, sp.Expr) and not value.free_symbols and (
-                value.is_number is True
+
+        def number(part: sp.Basic) -> bool:
+            if isinstance(part, Vector):
+                return all(number(element) for element in part.args)
+            return isinstance(part, sp.Expr) and not part.free_symbols and (
+                part.is_number is True
             )
+
+        try:
+            return number(value)
         except Exception:
             return False
 

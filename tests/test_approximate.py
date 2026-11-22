@@ -18,6 +18,7 @@ import pytest
 import sympy as sp
 from simplifying import declaring, parse, simp
 
+from rederive.engine import pipeline
 from rederive.engine.approximation import approximated, carried
 from rederive.engine.computing import Context, approx
 from rederive.engine.context import Definition, Notation, Precision
@@ -559,6 +560,22 @@ def test_a_system_iterates_numerically_in_approximate_mode():
     assert simp(text, APPROXIMATE) == (
         "[[1, 0], [0.7503638678, 0], [0.7391128909, 0], [0.7390851333, 0]]"
     )
+
+
+def test_a_vector_of_numbers_iterates_without_being_simplified(monkeypatch):
+    # A numeric system stepped a thousand times: simplifying each iterate, a vector of
+    # numbers it rounds as they are, took ten times as long as the arithmetic.
+    simplified = []
+    argument = pipeline._argument
+
+    def recording(value, *args, **kwargs):
+        simplified.append(value)
+        return argument(value, *args, **kwargs)
+
+    monkeypatch.setattr(pipeline, "_argument", recording)
+    text = "ITERATE([x + 0.01, y + 0.01*SIN(x*y)], [x, y], [0, 1], 20)"
+    assert simp(text, APPROXIMATE) == "[0.2, 1.019106463]"
+    assert not any(isinstance(value, Vector) for value in simplified)
 
 
 def test_an_iteration_with_a_symbolic_count_runs_until_it_repeats():
