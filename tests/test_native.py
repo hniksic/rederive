@@ -292,10 +292,39 @@ CASES = {
         "u SUB 1 := 9/7, w SUB 2 := 8, x SUB 1 := 7, y SUB 2 :+ 1/2, z SUB 1 :+ 1, "
         "wr(LOOP(t, exit) SUB 2), wr([t] SUB 1 SUB 1), [t, u, w, x, y, z, v])",
         "ss()",
+        # An assignment's value is the vector it stores, passed on by a chained
+        # assignment, a PROG, the last value of a LOOP and an element taken from it.
+        "> sv(t, u) := PROG(u := (t := [1, 2]), u SUB 1 := 9, [t, u])",
+        "sv()",
+        "> sw(t, u) := PROG(t := [1, 2], u := LOOP(exit), u SUB 1 := 9, [t, u])",
+        "sw()",
+        "> sx(t, u) := PROG(t := [[1, 2], [3, 4]], u := (t := [[1, 2], [3, 4]]) SUB 1, "
+        "u SUB 1 := 9, [t, u])",
+        "sx()",
+        "> sy(t, u, w) := PROG(w := (u := (t := [1, 2])), t SUB 2 := 8, w SUB 1 := 9, "
+        "[t, u, w])",
+        "sy()",
+        "> sz(t, u, v, w) := PROG(u := PROG(t := [1, 2]), w := LOOP(v := [3, 4], exit), "
+        "u SUB 1 := 9, v SUB 2 := 0, [t, u, v, w])",
+        "sz()",
+        "> st(t, u, w) := PROG(t := [[1, 2], [3, 4]], u := (t SUB 2 := [5, 6]), "
+        "w := (u SUB 1 := [7, 8]), t SUB 2 SUB 1 SUB 2 := 0, w SUB 1 := 9, [t, u, w])",
+        "st()",
+        "> sp(t, u, v, w, x, y, z, m, Precision) := PROG(Precision := Approximate, "
+        "u := (t := [1, 2]), w := PROG(v := [3, 4]), x := (m := [[1, 2], [3, 4]]) SUB 2, "
+        "y := LOOP(z := [0, 0], exit), u SUB 1 := 9/7, w SUB 2 := 1/2, x SUB 1 := 5, "
+        "y SUB 1 := 1, [t, u, v, w, m, x, y, z])",
+        "sp()",
         # A global is read and stored as a copy, and written where it is held.
         "> gg := [1, 2, 3]",
         "> gr(m) := PROG(m := gg, m SUB 1 := 0, [m, gg])",
         "gr()",
+        "> gt(t) := PROG(gq := (t := [1, 2]), t SUB 1 := 9, [t, gq])",
+        "gt()",
+        "gq",
+        "> gu(t) := PROG(t := (gn := [1, 2]), t SUB 1 := 9, [t, gn])",
+        "gu()",
+        "gn",
         "> gs(t) := PROG(t := [1, 2], gh := t, t SUB 1 := 9, [t, gh])",
         "gs()",
         "gh",
@@ -1322,7 +1351,19 @@ SHARED = {
         "su()": "[[1, 0], [3, 0]]",
         "ss()": "[[[16/7, 0], [7, 0]], [16/7, 0], [16/7, 0], [7, 0], [7, 0], [16/7, 0], "
         "[[16/7, 0], [7, 0]]]",
+        "sv()": "[[9, 2], [9, 2]]",
+        "sw()": "[[9, 2], [9, 2]]",
+        "sx()": "[[[9, 2], [3, 4]], [9, 2]]",
+        "sy()": "[[9, 8], [9, 8], [9, 8]]",
+        "sz()": "[[9, 2], [9, 2], [3, 0], [3, 0]]",
+        "st()": "[[[1, 2], [[9, 0], 6]], [[9, 0], 6], [9, 0]]",
+        "sp()": "[[9/7, 2], [9/7, 2], [3, 1/2], [3, 1/2], [[1, 2], [5, 4]], [5, 4], "
+        "[1, 0], [1, 0]]",
         "gr()": "[[0, 2, 3], [1, 2, 3]]",
+        "gt()": "[[9, 2], [1, 2]]",
+        "gq": "[1, 2]",
+        "gu()": "[[9, 2], [1, 2]]",
+        "gn": "[1, 2]",
         "gs()": "[[9, 2], [1, 2]]",
         "gh": "[1, 2]",
         "ge()": "[[1, 2], 2, 3]",

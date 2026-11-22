@@ -97,9 +97,10 @@ class NativeVector:
     7. Operands are evaluated left to right on the vectors as they are: in
        `APPEND(t, PROG(t SUB 1 := 9, [0]))`, `APPEND` sees the 9.
 
-    A local's vector, and each vector in it, is made native once read, so that what
-    takes it shares it and an operand sees it written; until then the local holds the
-    sympy vector, which nothing can change. A global's vector and the vectors in it
+    A local holds its vector native, so that what takes it shares it and an operand
+    sees it written: a vector assigned to it is made native as it is stored, and is
+    then the assignment's value, and an argument once the parameter is read. Each
+    vector in it is made native once read. A global's vector and the vectors in it
     are `kept`: the global holds them alone, and a read gives `vector()`. Wherever a
     value leaves the evaluator, it is the sympy vector of its elements as they are
     then.

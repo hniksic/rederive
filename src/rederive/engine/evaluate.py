@@ -1713,6 +1713,7 @@ class _Evaluator(Converter):
             local = self._is_local(name)
         if local:
             assert frame is not None
+            value = _held(value)
             frame.locals[name] = Cell(value)
             return value
         self.context.store.assign(name, value)
@@ -1806,12 +1807,12 @@ class _Evaluator(Converter):
         if frame is not None and name in frame.formals:
             cell = frame.locals.get(name)
             if cell is None or cell.raw is CLEARED:
-                frame.locals[name] = Cell(replaced)
+                frame.locals[name] = Cell(_held(replaced))
             elif type(cell.raw) is NativeVector and _shareable(replaced):
                 # Its holders share it (see `NativeVector`).
                 cell.raw.fill(replaced)
             else:
-                cell.raw = replaced
+                cell.raw = _held(replaced)
             return value
         self.context.store.assign(name, replaced)
         return Assign(written, sp.Symbol(":="), value)
@@ -3560,8 +3561,8 @@ def _with_test(conditional: sp.Basic, test: sp.Basic) -> sp.Basic:
 # native. Each evaluator looks a name up first in the cells of its own variables
 # (`_Evaluator.scope`): a call's locals, or the globals of a program run at top level.
 # Locals share native vectors, globals don't (see `NativeVector`): a closure reads a
-# local's vector, or a vector in one, as the native vector itself, made native first
-# (see `_taken_local`), so that whatever takes it shares it.
+# local's vector, or a vector in one, as the native vector itself (see `_held` and
+# `_taken_local`), so that whatever takes it shares it.
 
 #: Whether programs run compiled; without, every node is converted as it is. The two
 #: give the same results, which tests compare.
@@ -3682,8 +3683,9 @@ _TAKEN_KINDS = frozenset({Kind.NAME, Kind.VECTOR, Kind.CALL, Kind.APPLY, Kind.AS
 
 
 def _taken_local(evaluator: _Evaluator, name: str) -> NativeVector | None:
-    """The vector of the local `name`, made native, where its value is a vector that a
-    read gives as it is (no substitution changes it); None otherwise."""
+    """The native vector of the local `name`, where its value is a vector that a read
+    gives as it is (no substitution changes it); None otherwise. A parameter's argument
+    is made native here, once read."""
     env = evaluator.env
     frame = env.frame
     if frame is None or name in env.bound or name not in frame.formals:
@@ -3691,18 +3693,27 @@ def _taken_local(evaluator: _Evaluator, name: str) -> NativeVector | None:
     cell = frame.locals.get(name)
     if cell is not None:
         value = cell.raw
-        if type(value) is NativeVector:
-            # A substitution changes no vector of native numbers.
-            return None if env.written and not value.fixed() else value
-    elif frame.through:
+        if type(value) is not NativeVector:
+            return None
+        # A substitution changes no vector of native numbers.
+        return None if env.written and not value.fixed() else value
+    if frame.through:
         return None
-    else:
-        value = env.bindings.get(name)
+    value = env.bindings.get(name)
     if env.written or not _shareable(value):
         return None
     made = NativeVector.of(value)
     frame.locals[name] = Cell(made)
     return made
+
+
+def _held(value: Any) -> Any:
+    """`value` as a local holds it: a sympy vector made native, which is then also the
+    value of the assignment, so that whatever takes either shares it (see
+    `NativeVector`)."""
+    if type(value) not in SCALARS and _shareable(value):
+        return NativeVector.of(value)
+    return value
 
 
 def _shareable(value: object) -> bool:
@@ -3859,7 +3870,7 @@ def _name_closure(node: Node, live: bool = False) -> Native | None:
                         return raw
                 if kind not in SCALARS and kind is not NativeVector:
                     # A value the general operations stored, as `_given` does.
-                    raw = _taken_local(evaluator, name) or native_of(raw)
+                    raw = native_of(raw)
                     kind = type(raw)
                 # A global's held value is released when read (see `_name`).
                 if raw is not CLEARED and (
@@ -4528,6 +4539,8 @@ def _assignment_closure(node: Node) -> Native | None:
             store.version = at = store.version + 1
             cell = cells[name] = Assigned(value, at, evaluator, node, store.domains)
             return cell
+        if type(value) not in SCALARS:
+            value = _held(value)
         cells[name] = Cell(value)
         return value
 
@@ -4584,13 +4597,13 @@ def _written_in_place(
     so made, with nothing changed.
 
     The vector and each one on the way are made native where they aren't and written
-    in place, so that their other holders see the write. A local stores a native vector
-    as it is, unless that holds the vector it is stored into, and a global its sympy
-    vector, the global's own native vectors being `kept` (see `NativeVector`). A
-    global's value is the assignment (see `_Evaluator._given`), and its cell is written
-    in place only where no save point holds it, which one stamped after the innermost
-    save point was taken can't be (see `Store.save`); otherwise the write starts a new
-    cell."""
+    in place, so that their other holders see the write. A local stores a vector as
+    `_held` gives it, a native one as it is unless that holds the vector it is stored
+    into, and a global its sympy vector, the global's own native vectors being `kept`
+    (see `NativeVector`). A global's value is the assignment (see `_Evaluator._given`),
+    and its cell is written in place only where no save point holds it, which one
+    stamped after the innermost save point was taken can't be (see `Store.save`);
+    otherwise the write starts a new cell."""
     env = evaluator.env
     frame = env.frame
     if frame is None or env.written or name in env.bound:
@@ -4665,6 +4678,8 @@ def _written_in_place(
         container = element
     if type(value) is NativeVector and _holds(value, container):
         value = value.vector()
+    if store is None and type(value) not in SCALARS:
+        value = _held(value)
     container.put(places[-1] - 1, value)
     if store is None:
         return value
