@@ -249,6 +249,18 @@ CASES = {
         "w := same(t), x := PROG(5, t), y := IF(c = 1, t), u SUB 1 := 0, "
         "w SUB 2 := 0, x SUB 1 :+ 3, y SUB 2 :+ 4, [t, u, w, x, y])",
         "si()",
+        # An element of a vector that any of them passes on is that vector's element,
+        # taken by a local or given as an argument.
+        "> so(t, u, w, x, y, z, v, c) := PROG(t := [[1, 2], [3, 4]], c := 1, "
+        "u := same(t) SUB 1, w := rt(t) SUB 1, x := PROG(5, t) SUB 2, "
+        "y := IF(c = 1, t) SUB 2, z := (v := t) SUB 1, u SUB 1 := 9, w SUB 2 := 8, "
+        "x SUB 1 := 7, y SUB 2 :+ 1, z SUB 1 :+ 1, [t, u, w, x, y, z, v])",
+        "so()",
+        "> sr(t, u, w) := PROG(t := [[1, 2], [3, 4]], u := LOOP(t, exit) SUB 1, "
+        "w := [t, 0] SUB 1 SUB 2, u SUB 2 := 0, w SUB 1 := 6, [t, u, w])",
+        "sr()",
+        "> su(t) := PROG(t := [[1, 2], [3, 4]], wr(same(t) SUB 1), wr(PROG(t) SUB 2), t)",
+        "su()",
         # A vector written out is a new one each time.
         "> sj(n, k, c, s) := PROG(k := 0, s := [], LOOP(IF(k >= n, RETURN s), "
         "c := [0, 0], c SUB 1 :+ k, s := APPEND(s, [c]), k :+ 1))",
@@ -274,6 +286,12 @@ CASES = {
         "> sq(t, u, Precision) := PROG(Precision := Approximate, t := [1, 2], u := t, "
         "t SUB 1 := 9/7, [u, t + PROG(t SUB 2 := 1/2, [0, 0])])",
         "sq()",
+        "> ss(t, u, w, x, y, z, v, c, Precision) := PROG(Precision := Approximate, "
+        "t := [[1, 2], [3, 4]], c := 1, u := same(t) SUB 1, w := rt(t) SUB 1, "
+        "x := PROG(5, t) SUB 2, y := IF(c = 1, t) SUB 2, z := (v := t) SUB 1, "
+        "u SUB 1 := 9/7, w SUB 2 := 8, x SUB 1 := 7, y SUB 2 :+ 1/2, z SUB 1 :+ 1, "
+        "wr(LOOP(t, exit) SUB 2), wr([t] SUB 1 SUB 1), [t, u, w, x, y, z, v])",
+        "ss()",
         # A global is read and stored as a copy, and written where it is held.
         "> gg := [1, 2, 3]",
         "> gr(m) := PROG(m := gg, m SUB 1 := 0, [m, gg])",
@@ -1298,6 +1316,12 @@ SHARED = {
         "sm()": "[[[1, 2], [3, 4]], [[0, 4]]]",
         "sn()": "[[9, 2, 0], [9, 8]]",
         "sq()": "[[9/7, 1/2], [9/7, 1/2]]",
+        "so()": "[[[10, 8], [7, 5]], [10, 8], [10, 8], [7, 5], [7, 5], [10, 8], "
+        "[[10, 8], [7, 5]]]",
+        "sr()": "[[[1, 0], [6, 4]], [1, 0], [6, 4]]",
+        "su()": "[[1, 0], [3, 0]]",
+        "ss()": "[[[16/7, 0], [7, 0]], [16/7, 0], [16/7, 0], [7, 0], [7, 0], [16/7, 0], "
+        "[[16/7, 0], [7, 0]]]",
         "gr()": "[[0, 2, 3], [1, 2, 3]]",
         "gs()": "[[9, 2], [1, 2]]",
         "gh": "[1, 2]",

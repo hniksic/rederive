@@ -879,8 +879,8 @@ class _Evaluator(Converter):
 
     def _raw(self, node: Node) -> Any:
         """`node` converted as `_converted` converts it, but a native vector left one:
-        a local's vector or an element of one, made native, and the vector that a
-        vector written out, a call or an assignment passes on (see `NativeVector`)."""
+        a local's vector, made native, the vector that a vector written out, a call or
+        an assignment passes on, and an element of any of these (see `NativeVector`)."""
         kind = node.kind
         if kind is Kind.NAME:
             return _taken_local(self, str(node.value)) or self._name(node)
@@ -904,7 +904,7 @@ class _Evaluator(Converter):
                 selected = _written_element(node)
                 if selected is not None:
                     return self.convert(selected)
-            case Kind.SUB if node.children[0].kind in _TAKEN_BASES:
+            case Kind.SUB:
                 base, index = node.children
                 # The index first, as `Converter._sub` evaluates it.
                 at = self.operand(self.convert(index))
@@ -1351,11 +1351,8 @@ class _Evaluator(Converter):
         native: as `_raw` gives it where that can be a native vector, which variables
         and elements then take as it is, and as `convert` does otherwise."""
         kind = node.kind
-        if kind in _TAKEN_KINDS:
+        if kind in _TAKEN_KINDS or (kind is Kind.SUB and self.env.depth):
             return self._raw(node)
-        if kind is Kind.SUB and self.env.depth:
-            if node.children[0].kind in _TAKEN_BASES:
-                return self._raw(node)
         return self.convert(node)
 
     def _taken_element(self, node: Node, at: sp.Basic, whole: Any) -> Any:
@@ -3679,10 +3676,9 @@ def _native(node: Node) -> Native:
     return found[1]
 
 
-#: The kinds of nodes whose value `_Evaluator._taken` takes from `_Evaluator._raw`, and
-#: those of the bases of subscripts it takes so at depth.
+#: The kinds of nodes whose value `_Evaluator._taken` takes from `_Evaluator._raw`, as
+#: it takes a subscript's at depth.
 _TAKEN_KINDS = frozenset({Kind.NAME, Kind.VECTOR, Kind.CALL, Kind.APPLY, Kind.ASSIGN})
-_TAKEN_BASES = (Kind.NAME, Kind.SUB)
 
 
 def _taken_local(evaluator: _Evaluator, name: str) -> NativeVector | None:
@@ -4041,8 +4037,8 @@ def _prefix_closure(node: Node) -> Native:
 def _element_closure(node: Node, live: bool = False) -> Native:
     """`v SUB i`: the element of a vector at one of its places, counted from the end
     if negative (see `place_of`). At top level, a subscript that selects an element of a
-    vector written out (see `_written_element`) is converted, as is any subscript
-    there where values are not native.
+    vector written out (see `_written_element`) is converted, and where values are not
+    native, a subscript is taken as `_Evaluator._raw` takes it.
 
     An element of a local's vector that is a vector is made native (see
     `NativeVector`); an element of a global's reads as its sympy vector, unless `live`
@@ -4062,11 +4058,7 @@ def _element_closure(node: Node, live: bool = False) -> Native:
         if selected is not None and evaluator.env.depth == 0:
             return _as_native(evaluator, evaluator._converted(node))
         if not evaluator.native:
-            if evaluator.env.depth == 0:
-                return evaluator._converted(node)
-            # The index first, as `Converter._sub` evaluates it.
-            at = evaluator.operand(index(evaluator))
-            return evaluator._taken_element(node, at, base(evaluator))
+            return evaluator._raw(node)
         at = index(evaluator)
         whole = base(evaluator)
         if type(whole) is NativeVector:
