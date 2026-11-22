@@ -3536,7 +3536,8 @@ def _with_test(conditional: sp.Basic, test: sp.Basic) -> sp.Basic:
 # native vector it is an element of, so that writing it in place changes what
 # replacing it would change: wherever else its value goes (another variable, an
 # element, a returned value, any expression), it goes as the sympy vector of its
-# elements at the time.
+# elements at the time. So does an operand that a later operand could write into, as
+# soon as it is read (see `_operands`).
 
 #: Whether programs run compiled; without, every node is converted as it is. The two
 #: give the same results, which tests compare.
@@ -3651,6 +3652,65 @@ def _native(node: Node) -> Native:
                 table.clear()
             found = table[id(node)] = (node, closure)
     return found[1]
+
+
+def _operands(nodes: Sequence[Node], after: Sequence[Node] = ()) -> list[Native]:
+    """The closures of `nodes`, operands evaluated in their order and then `after`,
+    each one that a later one could write into reading its value as it is when read.
+
+    A closure can give a native vector as its holder keeps it (a variable's value, or an
+    element of one), and a closure that evaluates several operands makes them sympy
+    values only once it has them all: so where a later operand writes into the vector,
+    the value already read would change with it. Such an operand gives `vector()`
+    instead, as soon as it has its value. A later operand of which `_inert` holds writes
+    nothing, so the commonest operands, names, numbers and arithmetic on them, are
+    read as they are."""
+    closures = [_native(node) for node in nodes]
+    inert = all(_inert(node) for node in after)
+    for place in range(len(nodes) - 1, -1, -1):
+        if not inert:
+            closures[place] = _read_now(closures[place])
+        inert = inert and _inert(nodes[place])
+    return closures
+
+
+def _read_now(closure: Native) -> Native:
+    """`closure`, a native vector it gives made `vector()`, the vector as it is now."""
+
+    def read(evaluator: _Evaluator) -> Any:
+        value = closure(evaluator)
+        return value.vector() if type(value) is NativeVector else value
+
+    return read
+
+
+#: The kinds of nodes that write nothing when evaluated, if their children don't.
+_INERT_KINDS = frozenset(
+    {
+        Kind.NUMBER,
+        Kind.NAME,
+        Kind.STRING,
+        Kind.SUM,
+        Kind.PRODUCT,
+        Kind.BINOP,
+        Kind.UNOP,
+        Kind.POSTOP,
+        Kind.SUB,
+        Kind.ABS,
+        Kind.VECTOR,
+        Kind.REL,
+        Kind.NOT,
+        Kind.AND,
+        Kind.OR,
+    }
+)
+
+
+def _inert(node: Node) -> bool:
+    """Whether evaluating `node` surely writes no element of a vector: it is made of
+    names, numbers and operators only. A call isn't, since a function, even one built
+    in and since redefined, can write a global's elements in place."""
+    return node.kind in _INERT_KINDS and all(_inert(child) for child in node.children)
 
 
 def _natively_only(node: Node) -> bool:
@@ -3810,7 +3870,7 @@ def _name_closure(node: Node) -> Native | None:
 def _sum_closure(node: Node) -> Native:
     """A sum: of native numbers, their sum."""
     operators = str(node.value)
-    terms = [_native(child) for child in node.children]
+    terms = _operands(node.children)
     negative = [False, *(sign == "-" for sign in operators)]
 
     def slow(evaluator: _Evaluator, values: list) -> Any:
@@ -3852,7 +3912,7 @@ def _sum_closure(node: Node) -> Native:
 
 def _product_closure(node: Node) -> Native:
     """A product: of native numbers, their product."""
-    factors = [_native(child) for child in node.children]
+    factors = _operands(node.children)
 
     def slow(evaluator: _Evaluator, values: list) -> Any:
         if not evaluator.native:
@@ -3888,7 +3948,7 @@ def _binary_closure(node: Node) -> Native:
     number to an integer power, unless the power is zero to a power that isn't
     positive or bigger than `_NATIVE_POWER_BITS`."""
     operator_ = str(node.value)
-    first, second = (_native(child) for child in node.children)
+    first, second = _operands(node.children)
 
     def slow(evaluator: _Evaluator, left: Any, right: Any) -> Any:
         if not evaluator.native:
@@ -3964,7 +4024,10 @@ def _element_closure(node: Node) -> Native:
     if negative (see `place_of`). At top level, a subscript that selects an element of a
     vector written out (see `_written_element`) is converted, as is any subscript
     there where values are not native."""
-    base, index = (_native(child) for child in node.children)
+    # The index is evaluated first.
+    base_node, index_node = node.children
+    base = _native(base_node)
+    (index,) = _operands([index_node], after=[base_node])
     selected = _written_element(node)
 
     def element(evaluator: _Evaluator) -> Any:
@@ -4021,7 +4084,7 @@ def _relation_closure(node: Node) -> Native | None:
     if not _decided_relation(node):
         return None
     word = str(node.value)
-    left, right = (_native(child) for child in node.children)
+    left, right = _operands(node.children)
 
     def related(evaluator: _Evaluator) -> Any:
         first = left(evaluator)
@@ -4041,7 +4104,7 @@ def _test_closure(node: Node) -> Callable[[_Evaluator], bool | None]:
     if node.kind is Kind.REL and _decided_relation(node):
         word = str(node.value)
         holds = _HOLDS[word]
-        left, right = (_native(child) for child in node.children)
+        left, right = _operands(node.children)
         # The relation as a value, where the test is converted.
         _native(node)
 
@@ -4077,7 +4140,7 @@ def _truth_closure(node: Node) -> Native:
     if node.kind is Kind.REL and _decided_relation(node):
         word = str(node.value)
         holds = _HOLDS[word]
-        left, right = (_native(child) for child in node.children)
+        left, right = _operands(node.children)
         # The relation as a value, where the test is converted.
         _native(node)
 
@@ -4200,7 +4263,7 @@ def _call_closure(node: Node) -> Native | None:
         return None
     if name in _SPECIAL_CALLS - {"MOD", "MODS"}:
         return None
-    parts = [_native(argument) for argument in arguments]
+    parts = _operands(arguments)
     computed = _NATIVE_CALLS.get(name)
     if name in library.FUNCTIONS:
         computed = None
@@ -4445,7 +4508,7 @@ def _element_assignment_closure(node: Node) -> Native | None:
         return None
     name = str(base.value)
     operator_ = str(node.value)
-    indices = [_native(index) for _, index in links]
+    indices = _operands([index for _, index in links], after=values)
     right = _native(values[0])
     _native(target)
 
@@ -4648,7 +4711,7 @@ def _mapped_closure(node: Node) -> Native | None:
     body, _, *rest = arguments
     for argument in arguments:
         _native(argument)
-    limits = [_native(each) for each in rest]
+    limits = _operands(rest, after=[body])
     decide = _body_test_closure(body)
     deciding = name == "SOME"
     scope = _binding_scope(node, name, written_index, variable)
@@ -4705,7 +4768,7 @@ def _generated_closure(node: Node) -> Native | None:
     body, _, *rest = arguments
     for argument in arguments:
         _native(argument)
-    limits = [_native(each) for each in rest]
+    limits = _operands(rest, after=[body])
     element = _native(body)
     scope = _binding_scope(node, name, written_index, variable)
 
@@ -4788,7 +4851,7 @@ def _iterated_closure(node: Node) -> Native | None:
     body, _, *rest = arguments
     for argument in arguments:
         _native(argument)
-    limits = [_native(each) for each in rest]
+    limits = _operands(rest, after=[body])
     following = _native(body)
     scope = _binding_scope(node, name, written_index, variable)
     sequence = name == "ITERATES"
@@ -4861,7 +4924,7 @@ def _body_test_closure(body: Node) -> Callable[[_Evaluator, _Evaluator], bool | 
     if body.kind is Kind.REL and _decided_relation(body):
         word = str(body.value)
         holds = _HOLDS[word]
-        left, right = (_native(child) for child in body.children)
+        left, right = _operands(body.children)
         # The relation as a value, where the body is converted.
         _native(body)
 

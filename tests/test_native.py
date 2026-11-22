@@ -163,6 +163,58 @@ CASES = {
         "[v, r])",
         "al11()",
     ],
+    "written midway": [
+        # An operand read before a later one writes into it keeps its value as read.
+        "> wa(t) := PROG(t := [1, 2], t SUB 2 := 5, "
+        "APPEND(t, PROG(t SUB 1 := 9, [0])))",
+        "wa()",
+        "> wb(t) := PROG(t := [1, 2], t SUB 2 := 5, [t + PROG(t SUB 1 := 9, [0, 0]), "
+        "t - PROG(t SUB 1 := 7, [0, 0]), t + 1 + PROG(t SUB 1 := 6, [0, 0])])",
+        "wb()",
+        "> wc(t) := PROG(t := [1, 2], t SUB 2 := 5, [t*PROG(t SUB 1 := 9, 2), "
+        "t*2*PROG(t SUB 1 := 8, 1), t/PROG(t SUB 1 := 7, 2), "
+        "t . PROG(t SUB 1 := 6, [1, 1]), t^PROG(t SUB 1 := 5, 2)])",
+        "wc()",
+        "> wd(t) := PROG(t := [1, 2], t SUB 2 := 5, [t = PROG(t SUB 1 := 9, [9, 5]), "
+        "IF(t = PROG(t SUB 1 := 8, [8, 5]), 1, 2), "
+        "t = PROG(t SUB 1 := 7, [7, 5]) AND true, "
+        "t /= PROG(t SUB 1 := 6, [6, 5]) OR false])",
+        "wd()",
+        "> two(a, b) := [a, b]",
+        "> we(t) := PROG(t := [1, 2], t SUB 2 := 5, [two(t, PROG(t SUB 1 := 9, 0)), "
+        "MOD(t, PROG(t SUB 1 := 8, 3)), ELEMENT(t, PROG(t SUB 1 := 7, 1)), "
+        "t SUB PROG(t SUB 1 := 6, 1), t SUB 1 + PROG(t SUB 1 := 4, 0), "
+        "MEMBER?(PROG(t SUB 1 := 3, 3), t)])",
+        "we()",
+        "> wf(m, c) := PROG(m := [[1, 2], [3]], m SUB 2 SUB 1 := 4, c := 1, "
+        "[APPEND(FIRST(m), PROG(m SUB 1 SUB 1 := 9, [0])), "
+        "APPEND(m SUB 1, PROG(m SUB 1 SUB 1 := 8, [0])), "
+        "APPEND(IF(c = 1, m, 0), PROG(m SUB 2 := 7, [0])), m])",
+        "wf()",
+        "> wg(t, u) := PROG(t := [1, 2], t SUB 2 := 5, "
+        "[APPEND(t, PROG(t SUB 1 :+ 10, [0])), "
+        "APPEND(t, PROG(t SUB 1 := 9, APPEND(t, PROG(t SUB 2 := 8, [0])))), "
+        "PROG(u := t, u :+ PROG(u SUB 1 := 0, [1, 1]), [u, t])])",
+        "wg()",
+        "> wh(t) := PROG(t := [1, 2], t SUB 2 := 5, "
+        "[EVERY(t = PROG(t SUB 1 := k, [k, 5]), k, 1, 2), "
+        "SOME(t /= PROG(t SUB 1 := k, [k, 5]), k, 3, 4), "
+        "VECTOR(APPEND(t, PROG(t SUB k := 9, [k])), k, 1, 2), "
+        "ITERATE(APPEND(t, PROG(t SUB 1 :+ 1, [x])), x, 0, 2), "
+        "SOME(PROG(t SUB 1 := 9, k = y), k, t), "
+        "VECTOR(PROG(t SUB 2 := k, k), k, t), t])",
+        "wh()",
+        "> gw := [1, 2]",
+        "> wset(x) := PROG(gw SUB 1 := 9, [x])",
+        "> wread(x) := APPEND(gw, wset(x))",
+        "PROG(gw := [1, 2], gw SUB 2 := 5, APPEND(gw, wset(0)))",
+        "gw",
+        "PROG(gw := [1, 2], gw SUB 2 := 5, [gw + PROG(gw SUB 1 := 8, [0, 0]), gw])",
+        "PROG(gw := [1, 2], gw SUB 2 := 5, wread(0))",
+        "gw",
+        "PROG(gw := [1, 2], gw SUB 2 := 5, [gw = PROG(gw SUB 1 := 9, [9, 5]), "
+        "two(gw, PROG(gw SUB 1 :+ 1, 0)), gw])",
+    ],
     "nested": [
         "> ne1(m, r) := PROG(m := [[1, 2], [3, 4]], m SUB 2 SUB 1 := 7, r := m SUB 1, "
         "r SUB 1 := 0, m SUB 1 SUB 2 :* 5, [m, r])",
