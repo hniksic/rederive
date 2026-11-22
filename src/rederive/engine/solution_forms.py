@@ -15,8 +15,10 @@ each with its conditions, instead.
 `SOLUTIONS(u, x)` is the vector of the values `SOLVE` finds for `x`, or with a vector of
 variables the matrix of the solutions, one row each; a free value is a new arbitrary
 constant `@n`. It holds the solutions found: an equation left unsolved and a condition
-on the parameters are left out, so `[]` says that none was found, not that there is
-none. A value that holds under a condition on the parameters is `IF(condition, value)`.
+on the parameters found beside the solutions of an equation are left out, so `[]` says
+that none was found, not that there is none. A value that holds under a condition on
+the parameters is `IF(condition, value)`, and a formula in none of the variables is
+solved by every value where it holds: `SOLUTIONS(a = b, x)` is `[IF(a - b = 0, @1)]`.
 
 `NSOLVE` and `NSOLUTIONS` solve one equation in one variable numerically, in the forms
 of `SOLVE` and `SOLUTIONS`: every root of a polynomial, or one real root of anything
@@ -410,7 +412,9 @@ def _solve_all(
             real,
             commit=listing,
         )
-        found.merge(_classified(result, symbols, relations, context))
+        found.merge(
+            _classified(result, symbols, relations, context, bool(conditions))
+        )
     found.rows = listed_in_order(found.rows)
     # The conjunctions come in no fixed order, so neither would the branches.
     places = [
@@ -526,11 +530,18 @@ def _classified(
     symbols: tuple[sp.Symbol, ...],
     relations: list[sp.Basic],
     context: Context,
+    free: bool = False,
 ) -> _Found:
-    """The entries of a solve sorted into what each function writes."""
+    """The entries of a solve sorted into what each function writes. `free` says that
+    the relations are in none of the variables, so that each entry in none of them is a
+    condition under which every value is a solution: `a = b` solved for `x`."""
     found = _Found(minted=result.minted)
     names = [symbol.name for symbol in symbols]
     for entry in result.entries:
+        if free and not isinstance(entry, BooleanAtom) and not entry.has(*symbols):
+            parts = entry.args if isinstance(entry, Vector) else (entry,)
+            found.others.append(_Branch(tuple(parts), _Found(everything=True)))
+            continue
         row = _row(entry, names)
         if row is not None:
             if all(result.is_arbitrary(value) for value in row):
@@ -710,6 +721,7 @@ def _solved(
     _polish(found, decide)
     if call.bounds is not None:
         found = _bounded(found, symbols, call.bounds, context, call.real)
+    _possible(found, symbols, decide)
     if context.angle is Angle.DEGREE and formula.has(TrigonometricFunction):
         # The angles of a trigonometric equation are shown in degrees.
         _in_degrees(found)
@@ -1046,6 +1058,48 @@ def _bounded(
     return kept
 
 
+def _possible(
+    found: _Found,
+    symbols: tuple[sp.Symbol, ...],
+    decide: Decider,
+    outer: tuple[sp.Basic, ...] = (),
+) -> None:
+    """Drop the solutions whose conditions on the parameters hold for no value of them,
+    as Simplify decides them: `x = -SQRT(a)` inside `[1, 2]` needs `1 <= -SQRT(a)`,
+    which no real `a` satisfies. `outer` are the conditions of the enclosing branches,
+    which hold too."""
+    kept: list[sp.Basic | _Branch] = []
+    for part in found.others:
+        if isinstance(part, _Branch):
+            conditions = (*outer, *part.conditions)
+            if _never(conditions, decide):
+                continue
+            _possible(part.found, symbols, decide, conditions)
+            if not (part.found.everything or part.found.rows or part.found.others):
+                continue
+        else:
+            conditions = (
+                *outer,
+                *(
+                    relation
+                    for relation in sp.And.make_args(part)
+                    if not relation.has(*symbols)
+                ),
+            )
+            if len(conditions) > len(outer) and _never(conditions, decide):
+                continue
+        kept.append(part)
+    found.others = kept
+
+
+def _never(conditions: Sequence[sp.Basic], decide: Decider) -> bool:
+    """Whether Simplify decides the conjunction of `conditions` false."""
+    try:
+        return decide(sp.And(*conditions)) is sp.false
+    except Exception:
+        return False
+
+
 def _cut(kept: _Found, entries: Sequence[sp.Basic], symbol: sp.Symbol) -> None:
     """Add the entries of a range cut to bounds to `kept`: a value as a solution, a
     range as one that holds an interval."""
@@ -1119,12 +1173,18 @@ def _solutions(
     if not (formula.free_symbols & set(symbols)) and not isinstance(
         formula, BooleanAtom
     ):
+        # A formula in none of the variables is solved by every value of them where
+        # it holds, so only one decided false has no solution.
         decided = decide(formula)
-        conjunctions = [[]] if decided is sp.true else []
+        if decided is sp.true:
+            conjunctions = [[]]
+        elif decided is sp.false:
+            conjunctions = []
     found = _solve_all(conjunctions, symbols, context, divisors, call.real, True)
     _polish(found, decide)
     if call.bounds is not None:
         found = _bounded(found, symbols, call.bounds, context, call.real)
+    _possible(found, symbols, decide)
     if found.intervals:
         return None
     if found.everything:

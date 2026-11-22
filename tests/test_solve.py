@@ -469,8 +469,7 @@ def test_a_solution_not_known_to_be_inside_the_bounds_is_kept_under_that_conditi
     assert simp("SOLVE(x^2 = 4, x, 0, 3)") == "x = 2"
     assert simp("SOLVE(x^2 = -4, x, 0, 3)") == "false"
     assert simp("SOLVE(x^2 = a, x, 1, 2)") == (
-        "x = -SQRT(a) AND 1 <= -SQRT(a) AND -SQRT(a) <= 2"
-        " OR x = SQRT(a) AND 1 <= SQRT(a) AND SQRT(a) <= 2"
+        "x = SQRT(a) AND 1 <= SQRT(a) AND SQRT(a) <= 2"
     )
 
 
@@ -1338,16 +1337,16 @@ BOUNDED_CONDITIONS = [
     ("SOLVE([x^2 = 4, a = b], x, 1, 3)", "[x = 2 AND a = b]"),
     ("SOLUTIONS(x^2 = 4 AND a = b, x, 1, 3)", "[IF(a = b, 2)]"),
     ("SOLUTIONS(x^2 = 4 AND a = b, x, 3, 5)", "[]"),
-    # One not known to be inside holds where it is, besides the condition.
+    # One not known to be inside holds where it is, besides the condition, and one
+    # that is inside for no value of the parameters is no solution: `-SQRT(a)` is
+    # never in `[1, 2]`.
     (
         "SOLVE(x^2 = a AND a > 0, x, 1, 2)",
-        "(x = -SQRT(a) AND 1 <= -SQRT(a) AND -SQRT(a) <= 2"
-        " OR x = SQRT(a) AND 1 <= SQRT(a) AND SQRT(a) <= 2) AND a > 0",
+        "x = SQRT(a) AND 1 <= SQRT(a) AND SQRT(a) <= 2 AND a > 0",
     ),
     (
         "SOLUTIONS(x^2 = a AND a > 0, x, 1, 2)",
-        "[IF(a > 0 AND SQRT(a) >= 1 AND SQRT(a) <= 2, SQRT(a)),"
-        " IF(a > 0 AND SQRT(a) >= -2 AND SQRT(a) <= -1, -SQRT(a))]",
+        "[IF(a > 0 AND SQRT(a) >= 1 AND SQRT(a) <= 2, SQRT(a))]",
     ),
     # So does one under a condition the solver found.
     ("SOLVE(x = a AND x = b, x, 0, 1)", "x = a AND 0 <= a AND a <= 1 AND a - b = 0"),
@@ -1390,12 +1389,51 @@ BOUNDED_EVERYTHING = [
     ("SOLUTIONS(x = x, x, 1, 1)", "[1]"),
     ("SOLUTIONS(x = x AND a = b, x)", "[IF(a = b, @1)]"),
     ("SOLUTIONS(x = x AND a = b, x, 1, 3)", "SOLUTIONS(a = b, x, 1, 3)"),
+    # A condition in none of the variables is solved by every value where it holds.
+    ("SOLVE(a = b, x, 1, 3)", "1 <= x AND x <= 3 AND a - b = 0"),
+    ("SOLVE(a = b OR x = 2, x, 1, 3)", "1 <= x AND x <= 3 AND a - b = 0 OR x = 2"),
 ]
 
 
 @pytest.mark.parametrize(("text", "expected"), BOUNDED_EVERYTHING, ids=str)
 def test_every_value_in_the_bounds_solves_an_identity(text, expected):
     assert simp(text) == expected
+
+
+#: Solutions under conditions on the parameters, in answers a second Simplify keeps. A
+#: condition in none of the variables is solved by every value of them where it holds,
+#: and a solution under conditions that hold for no value of the parameters is none:
+#: `-SQRT(a)` is never in `[1, 2]`.
+SETTLED_CONDITIONS = [
+    ("SOLVE(a = b, x)", "a - b = 0"),
+    ("SOLUTIONS(a = b, x)", "[IF(a - b = 0, @1)]"),
+    ("SOLUTIONS(a > b, x)", "[IF(a - b > 0, @1)]"),
+    ("SOLUTIONS(a = b, [x, y])", "[[IF(a - b = 0, @1), IF(a - b = 0, @2)]]"),
+    ("SOLUTIONS(a = b OR x = 2, x)", "[2, IF(a - b = 0, @1)]"),
+    ("SOLUTIONS(a = b, x, 1, 1)", "[IF(a - b = 0, 1)]"),
+    ("SOLUTIONS(1 = 2, x, 1, 3)", "[]"),
+    # Every value in the bounds is a solution there, which no vector lists.
+    ("SOLUTIONS(a = b, x, 1, 3)", "SOLUTIONS(a = b, x, 1, 3)"),
+    ("SOLUTIONS(a = b OR x = 2, x, 1, 3)", "SOLUTIONS(x = 2 OR a = b, x, 1, 3)"),
+    ("SOLUTIONS(x^2 = a, x, 1, 2)", "[IF(SQRT(a) >= 1 AND SQRT(a) <= 2, SQRT(a))]"),
+    (
+        "SOLUTIONS(x^2 = a, x, -2, -1)",
+        "[IF(SQRT(a) >= 1 AND SQRT(a) <= 2, -SQRT(a))]",
+    ),
+    (
+        "SOLUTIONS(x^2 = a AND a > 0, x, 1, 2)",
+        "[IF(a > 0 AND SQRT(a) >= 1 AND SQRT(a) <= 2, SQRT(a))]",
+    ),
+    ("SOLUTIONS(x^2 = a AND a < 0, x, 1, 2)", "[]"),
+    ("SOLUTIONS(x^2 = 4 AND SQRT(a) <= -1 AND SQRT(a) >= -5, x)", "[]"),
+]
+
+
+@pytest.mark.parametrize(("text", "expected"), SETTLED_CONDITIONS, ids=str)
+def test_solutions_under_conditions_are_settled_at_once(text, expected):
+    once = simp(text)
+    assert once == expected
+    assert simp(once) == once
 
 
 BOUNDED_RANGES = [
