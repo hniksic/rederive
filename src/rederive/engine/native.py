@@ -115,9 +115,11 @@ class NativeVector:
 
     __slots__ = ("items", "kept", "made", "stamp", "symbolic")
 
-    def __init__(self, items: list | None, made: Vector | None = None) -> None:
+    def __init__(
+        self, items: list | None, made: Vector | None = None, kept: bool = False
+    ) -> None:
         self.items = items
-        self.kept = False
+        self.kept = kept
         self.made = made
         self.stamp = _WRITES[0]
         self.symbolic = (
@@ -125,11 +127,11 @@ class NativeVector:
         )
 
     @classmethod
-    def of(cls, vector: Vector) -> NativeVector:
+    def of(cls, vector: Vector, kept: bool = False) -> NativeVector:
         """The sympy vector `vector`, which holds no assignment, definition or command's
         answer, as a native one. Its elements are made native only once they are
         needed: until then `items` is None, and `symbolic` -1."""
-        return cls(None, vector)
+        return cls(None, vector, kept)
 
     def unpacked(self) -> list:
         """The elements, `items`, made native where they still aren't."""

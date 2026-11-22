@@ -1877,8 +1877,7 @@ class Converter:
             links, previous = self._chain(left_node)
             right = self.side(right_node)
             return [*links, self._related(relation, previous, right)], right
-        left = self.side(left_node)
-        right = self.side(right_node)
+        left, right = (self.sided(side) for side in self._children(node))
         return [self.related(str(node.value), left, right)], right
 
     def related(self, word: str, left: sp.Basic, right: sp.Basic) -> sp.Basic:
