@@ -41,13 +41,10 @@
 // text - so `-π` is an answer in a page as it is on a desktop.
 //
 // And what the picture is drawn *at* is `plot/appearance.py`'s: the ground, the
-// box and the marks along its edges, the direction the light comes from, the
-// shove that makes the wire a wire, how far a tick number stands out of the
-// box. Those are the numbers a pane and the desktop's window have to agree
-// about, so they are written once and handed over with `dress` before the first
-// pane opens. What is left here is what only a card has - the field of view,
-// the weight of the two lamps three.js is asked for - which has nothing on the
-// other side to disagree with.
+// box, its axis rays and the marks along its edges, the shove that makes the wire
+// a wire, how far a tick number stands out of the box. Those are the numbers a
+// pane and the desktop's window have to agree about, so they are written once and
+// handed over with `dress` before the first pane opens.
 
 import * as THREE from 'three';
 import { OrbitControls } from './three/OrbitControls.js';
@@ -57,29 +54,18 @@ import * as keys from './keys.js';
 import * as place from './place.js';
 
 // What the picture is drawn at, which is `plot/appearance.py`'s and arrives
-// with `dress` below: the ground, the box and the marks along its edges, the
-// direction the light comes from, the wire's shove and how far a tick number
-// stands out of the box. Not one of them is written here, because every one of
+// with `dress` below: the ground, the box, its rays and the marks along its
+// edges, the wire's shove and how far a tick number stands out of the box. Not one of them is written here, because every one of
 // them is a number this pane and the desktop's window have to agree about, and
 // a number written twice is a number the two backends can drift apart on.
 let look = null;
 
-// How much light the card adds to the light Python baked in. Half of a
-// vertex's color is already how the surface lies to a fixed lamp - that is what
-// makes a fold in the middle of a surface show - so what is asked of three.js
-// is the rest: a broad ambient that keeps the baked shading readable, and one
-// directional lamp from `look.lamp`, which is the direction the shading was
-// baked to, so that turning the picture moves a highlight across it the way
-// turning a solid does.
-//
-// The two weights are the page's own and have no desktop twin: three.js lights
-// are in physical units and a diffuse surface gives back a π-th of what falls
-// on it, which is why they are near π rather than near one. What they are
-// chosen to add up to is the desktop's own brightness - the vertex color
-// itself, which is what pyqtgraph draws with no lighting at all - so the two
-// programs draw one surface at one weight, with the lamp for relief.
-const AMBIENT = 2.4;
-const DIRECTIONAL = 0.95;
+// Every color handed to three.js is a final screen value: the ground, the box and
+// the rays from `look`, and the vertex colors Python shaded. three.js would
+// otherwise take a color set through THREE.Color as sRGB and convert it to linear
+// light, and with the output left unencoded (below) it would reach the screen
+// darker than the desktop draws it.
+THREE.ColorManagement.enabled = false;
 
 // The field of view is measured across the picture, as pyqtgraph measures it
 // and as three.js does not - three.js takes the angle up it - so the two are
@@ -435,20 +421,14 @@ class Solid {
       Math.max(this.canvas.clientHeight, 120),
       false,
     );
-    // The shading is Python's and is already in the numbers: a vertex color is
-    // the surface's own color scaled by how bright that vertex is, worked out
-    // where the arrays were. Encoding it a second time on the way to the screen
-    // would make the browser's picture a lighter one than the desktop's, so the
-    // card writes what it was given.
+    // The shading is Python's and is already in the vertex colors, which are
+    // display values, as are the other colors (see `ColorManagement` above). The
+    // card writes them unencoded and unlit, as the desktop does.
     this.renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
     this.renderer.setClearColor(new THREE.Color(look.ground), 1);
     this.renderer.domElement.className = 'plot-card';
     this.canvas.appendChild(this.renderer.domElement);
     this.world = new THREE.Scene();
-    this.world.add(new THREE.AmbientLight(0xffffff, AMBIENT));
-    const lamp = new THREE.DirectionalLight(0xffffff, DIRECTIONAL);
-    lamp.position.set(look.lamp[0], look.lamp[1], look.lamp[2]).multiplyScalar(100);
-    this.world.add(lamp);
     this.camera = new THREE.PerspectiveCamera(FIELD_OF_VIEW, 1, NEAR, FAR);
     this._lens(
       Math.max(this.canvas.clientWidth, 120),
@@ -467,6 +447,8 @@ class Solid {
     });
     this.frame = this._frame();
     this.world.add(this.frame);
+    this.rays = this._rays();
+    this.world.add(this.rays);
     this.marks = this._marks();
     this.world.add(this.marks);
   }
@@ -487,6 +469,26 @@ class Solid {
       opacity: look.box.alpha,
     });
     const lines = new THREE.LineSegments(geometry, material);
+    lines.visible = false;
+    return lines;
+  }
+
+  // The axis rays: a line along each axis from the data's origin to the far wall,
+  // which is where the zeros are inside the box. Python works out where they go.
+  _rays() {
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute(
+      'position',
+      new THREE.BufferAttribute(new Float32Array(6 * 3), 3),
+    );
+    const lines = new THREE.LineSegments(
+      geometry,
+      new THREE.LineBasicMaterial({
+        color: look.ray.color,
+        transparent: true,
+        opacity: look.ray.alpha,
+      }),
+    );
     lines.visible = false;
     return lines;
   }
@@ -704,6 +706,11 @@ class Solid {
     points.needsUpdate = true;
     this.frame.geometry.computeBoundingSphere();
     this.frame.visible = this.boxed;
+    const rays = this.rays.geometry.attributes.position;
+    rays.array.set(message.rays);
+    rays.needsUpdate = true;
+    this.rays.geometry.computeBoundingSphere();
+    this.rays.visible = this.boxed;
     this._anchor();
   }
 
@@ -731,9 +738,11 @@ class Solid {
       swatch.className = 'plot-swatch';
       swatch.style.background = plot.color;
       const name = document.createElement('span');
-      // What the app wrote, cut to a line by Python. Nothing here renders any
-      // part of an expression.
+      name.className = 'plot-name';
+      // What the app wrote, cut to a line by Python, in the plot's color as on
+      // the desktop. Nothing here renders any part of an expression.
       name.textContent = plot.name;
+      name.style.color = plot.color;
       row.append(swatch, name);
       row.addEventListener('pointerdown', (event) => {
         event.stopPropagation();
@@ -806,7 +815,7 @@ class Solid {
     const names = [
       [0, nearY + outY * look.out.name, floor],
       [nearX + outX * look.out.name, 0, floor],
-      [farX + up[0] * look.out.name, farY + up[1] * look.out.name, -floor * 0.9],
+      [farX + up[0] * look.out.label, farY + up[1] * look.out.label, half + look.out.rise],
     ];
     this.axes.forEach((name, axis) => {
       if (name) written.push({ where: names[axis], text: name, name: true });
@@ -979,6 +988,7 @@ class Solid {
     this.boxed = !this.boxed;
     if (this.frame !== undefined) {
       this.frame.visible = this.boxed && this.standing !== null;
+      this.rays.visible = this.frame.visible;
     }
     this._anchor();
     this._paint();
@@ -1191,12 +1201,9 @@ class Standing {
     this.triangles = 0;
     this.geometry = new THREE.BufferGeometry();
     this.strands = new THREE.BufferGeometry();
-    this.lit = new THREE.MeshStandardMaterial({
+    this.solid = new THREE.MeshBasicMaterial({
       vertexColors: true,
       side: THREE.DoubleSide,
-      roughness: 1,
-      metalness: 0,
-      flatShading: false,
     });
     this.occluder = new THREE.MeshBasicMaterial({
       color: new THREE.Color(look.ground),
@@ -1205,12 +1212,11 @@ class Standing {
       polygonOffsetFactor: look.wire.offset[0],
       polygonOffsetUnits: look.wire.offset[1],
     });
-    this.mesh = new THREE.Mesh(this.geometry, this.lit);
+    this.mesh = new THREE.Mesh(this.geometry, this.solid);
     this.mesh.visible = false;
-    // The width is asked for and will not be given: WebGL draws every line one
-    // pixel wide whatever a material says, which is the same refusal the
-    // desktop's core profile makes. The wire reads anyway, because what makes
-    // it read is the solid hiding the half of it that is behind.
+    // three.js scales `linewidth` by the renderer's pixel ratio, so the wire is
+    // `look.wire.width` CSS pixels wide, like a 2D curve. A browser may cap line width
+    // (ALIASED_LINE_WIDTH_RANGE), down to a hairline where its maximum is 1.
     this.lines = new THREE.LineSegments(
       this.strands,
       new THREE.LineBasicMaterial({ vertexColors: true, linewidth: look.wire.width }),
@@ -1225,7 +1231,7 @@ class Standing {
     this.color = spec.color;
     this.wire = Boolean(spec.wire);
     this.hidden = Boolean(spec.hidden);
-    this.mesh.material = this.wire ? this.occluder : this.lit;
+    this.mesh.material = this.wire ? this.occluder : this.solid;
     this._shown();
   }
 
@@ -1239,7 +1245,7 @@ class Standing {
     if (this.lines.parent) this.lines.parent.remove(this.lines);
     this.geometry.dispose();
     this.strands.dispose();
-    this.lit.dispose();
+    this.solid.dispose();
     this.occluder.dispose();
     this.lines.material.dispose();
   }
@@ -1270,11 +1276,6 @@ class Standing {
       this.geometry.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
       this.geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
     }
-    // The normals are the card's own business either way: the lighting three.js
-    // adds is over the surface's real slope, and a rewritten position is a new
-    // slope. It is one pass over the triangles and it is not what a re-sample
-    // costs.
-    this.geometry.computeVertexNormals();
     this.geometry.computeBoundingSphere();
     this._strands(message);
     this._shown();

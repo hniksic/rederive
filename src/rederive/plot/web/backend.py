@@ -1693,8 +1693,8 @@ def _look() -> Any:
                 "closest": appearance.POLAR_CLOSEST_PX,
             },
             "box": _ink(appearance.BOX_COLOR),
+            "ray": _ink(appearance.RAY_COLOR),
             "tick": _ink(appearance.TICK_COLOR),
-            "lamp": list(appearance.LIGHT),
             "wire": {
                 "offset": list(appearance.WIRE_OFFSET),
                 "width": appearance.CURVE_WIDTH,
@@ -1705,6 +1705,7 @@ def _look() -> Any:
                 "tick": appearance.TICK_OUT,
                 "label": appearance.LABEL_OUT,
                 "name": appearance.NAME_OUT,
+                "rise": appearance.NAME_RISE,
             },
             "edge": appearance.EDGE_ON,
         }

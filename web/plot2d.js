@@ -1183,9 +1183,11 @@ class Pane {
       swatch.className = 'plot-swatch';
       swatch.style.background = plot.color;
       const name = document.createElement('span');
-      // What the app wrote, cut to a line by Python. Nothing here renders any
-      // part of an expression.
+      name.className = 'plot-name';
+      // What the app wrote, cut to a line by Python, in the plot's color as on
+      // the desktop. Nothing here renders any part of an expression.
       name.textContent = plot.name;
+      name.style.color = plot.color;
       row.append(swatch, name);
       // The left button takes a curve out of the picture and puts it back; the
       // right one opens the menu about that curve, which is the same menu the

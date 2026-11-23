@@ -407,6 +407,7 @@ def _box(box: geometry.Box) -> dict[str, Any]:
             "lengths": [written(value) for value in box.lengths],
             "z": [written(box.z[0]), written(box.z[1])],
         },
+        "rays": [float(value) for value in geometry.rays(box).ravel()],
         "ticks": {
             "x": _marks(box.x, box.across),
             "y": _marks(box.y, box.along),

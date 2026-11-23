@@ -48,6 +48,8 @@ from rederive.plot.appearance import (
     EDGE_ON,
     LABEL_OUT,
     NAME_OUT,
+    NAME_RISE,
+    RAY_COLOR,
     TICK_COLOR,
     TICK_OUT,
     WIRE_OFFSET,
@@ -71,6 +73,7 @@ from rederive.plot.surface import (
     brightened,
     extent,
     mesh,
+    rays,
     ticks,
     wire,
 )
@@ -83,8 +86,9 @@ __all__ = ["Drawn", "Window3D"]
 #: are in `plot.appearance`, shared with the page.
 TEXT_COLOR = "#d0d0d0"
 
-#: Box, tick and label colors for image exports, which use a white background.
+#: Box, ray, tick and label colors for image exports, which use a white background.
 PAPER_BOX = (40, 40, 40, 230)
+PAPER_RAY = (40, 40, 40, 160)
 PAPER_TICK = (60, 60, 60, 255)
 PAPER_TEXT = "#000000"
 
@@ -385,7 +389,13 @@ class Window3D(QtWidgets.QMainWindow):
         )
         self.box.translate(-HALF, -HALF, -HALF)
         self.view.addItem(self.box)
-        self.rays = gl.GLAxisItem(size=QtGui.QVector3D(HALF, HALF, HALF))
+        self.rays = gl.GLLinePlotItem(
+            pos=np.zeros((0, 3), dtype=np.float32),
+            mode="lines",
+            color=pg.glColor(RAY_COLOR),
+            width=1,
+            antialias=True,
+        )
         self.view.addItem(self.rays)
         self.marks = gl.GLLinePlotItem(
             pos=np.zeros((0, 3), dtype=np.float32), mode="lines", antialias=True
@@ -548,12 +558,14 @@ class Window3D(QtWidgets.QMainWindow):
         self.view.addItem(surface.item)
         # The wireframe, shown over the solid while `wire` is on. Opaque rather than
         # blended, so the depth buffer sorts it against all solids, including its
-        # own. The curve width is best-effort: a core forward-compatible GL profile
-        # only supports width one, and pyqtgraph skips setting it there.
+        # own. GL measures line width in device pixels, so the device pixel ratio is
+        # multiplied in, as for the 2D pen. The width is best-effort: a core
+        # forward-compatible GL profile only supports width one, and pyqtgraph skips
+        # setting it there.
         surface.wires = gl.GLLinePlotItem(
             pos=np.zeros((0, 3), dtype=np.float32),
             mode="lines",
-            width=CURVE_WIDTH,
+            width=CURVE_WIDTH * self.view.devicePixelRatioF(),
             antialias=True,
             glOptions="opaque",
         )
@@ -706,15 +718,7 @@ class Window3D(QtWidgets.QMainWindow):
         As in the 2D window, axes are drawn at zero, or at the box's edge when zero is
         outside it. The box itself is a fixed cube, so only the rays move.
         """
-        box = self.box_now
-        origin = (
-            float(np.clip(box.across(0.0), -HALF, HALF)),
-            float(np.clip(box.along(0.0), -HALF, HALF)),
-            float(np.clip(box.up(0.0), -HALF, HALF)),
-        )
-        self.rays.setSize(*(HALF - value for value in origin))
-        self.rays.resetTransform()
-        self.rays.translate(*origin)
+        self.rays.setData(pos=rays(self.box_now))
 
     def _draw(self, surface: Drawn) -> None:
         """Build a surface's mesh, and its wireframe if it has one.
@@ -827,9 +831,9 @@ class Window3D(QtWidgets.QMainWindow):
             (0.0, near_y + out_y * NAME_OUT, floor),
             (near_x + out_x * NAME_OUT, 0.0, floor),
             (
-                far_x + upright[0] * NAME_OUT,
-                far_y + upright[1] * NAME_OUT,
-                -floor * 0.9,
+                far_x + upright[0] * LABEL_OUT,
+                far_y + upright[1] * LABEL_OUT,
+                HALF + NAME_RISE,
             ),
         )
         for item, where, name in zip(self.names, places, self.axis_names):
@@ -1378,6 +1382,7 @@ class _on_paper:
         window._papered = True
         window.view.setBackgroundColor("w")
         window.box.setColor(PAPER_BOX)
+        window.rays.setData(color=pg.glColor(PAPER_RAY))
         for surface in window.plots:
             window._draw(surface)
         window._relabel()
@@ -1388,6 +1393,7 @@ class _on_paper:
         window._papered = False
         window.view.setBackgroundColor(BACKGROUND)
         window.box.setColor(BOX_COLOR)
+        window.rays.setData(color=pg.glColor(RAY_COLOR))
         for surface in window.plots:
             window._draw(surface)
         window._relabel()

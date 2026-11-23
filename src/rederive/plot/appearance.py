@@ -33,12 +33,14 @@ __all__ = [
     "MARKER_PX",
     "MARKER_WIDTH",
     "NAME_OUT",
+    "NAME_RISE",
     "NUDGE_FAST_PX",
     "NUDGE_PX",
     "PAPER_AXIS",
     "POLAR_CLOSEST_PX",
     "POLAR_RINGS",
     "POLAR_SPOKES",
+    "RAY_COLOR",
     "REGION_ALPHA",
     "STEP_FAST_SHARE",
     "STEP_SHARE",
@@ -108,9 +110,12 @@ NUDGE_FAST_PX = 10.0
 STEP_SHARE = 1 / 500
 STEP_FAST_SHARE = 1 / 50
 
-#: RGBA colors of the 3D bounding box and its ticks: a gray that doesn't compete with
-#: the surface, with ticks slightly stronger since values are read off them.
+#: RGBA colors of the 3D bounding box, the axis rays through the data's origin, and the
+#: tick marks: a gray that doesn't compete with the surface, with the rays stronger than
+#: the box so the zeros show inside it, and ticks stronger still since values are read
+#: off them.
 BOX_COLOR = (150, 150, 150, 110)
+RAY_COLOR = (150, 150, 150, 160)
 TICK_COLOR = (150, 150, 150, 200)
 
 #: Polygon offset (OpenGL/WebGL factor, units) pushing the surface's occluding
@@ -120,10 +125,13 @@ TICK_COLOR = (150, 150, 150, 200)
 WIRE_OFFSET = (1.0, 2.0)
 
 #: How far tick marks, tick labels and axis names stand out from the box, in world
-#: units.
+#: units. The z name stands above the top z tick label rather than out from the edge,
+#: since out from that edge is mostly away from the camera and would put the name over
+#: the label.
 TICK_OUT = 0.35
 LABEL_OUT = 1.05
 NAME_OUT = 2.3
+NAME_RISE = 0.6
 
 #: Cosine of the angle (about five degrees) below which an axis pointing at the camera
 #: loses its tick labels. Facing the xy plane, for example, collapses the z axis to a
@@ -131,7 +139,6 @@ NAME_OUT = 2.3
 EDGE_ON = 0.996
 
 #: Direction of the light used to shade surfaces. `plot/surface.py` bakes it into the
-#: vertex colors, which makes folds visible in both backends. The page adds its own
-#: light from the same direction for a moving highlight; a different direction would
-#: make the highlight fight the shading.
+#: vertex colors, which makes folds visible in both backends; both draw those colors
+#: unlit.
 LIGHT = (0.40, -0.60, 0.69)

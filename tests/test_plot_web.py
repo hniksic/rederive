@@ -539,11 +539,11 @@ def test_neither_drawing_module_is_left_a_color_or_a_length_of_its_own(
         "spokes": appearance.POLAR_SPOKES,
         "closest": appearance.POLAR_CLOSEST_PX,
     }
-    assert look["lamp"] == list(appearance.LIGHT)
     assert look["out"] == {
         "tick": appearance.TICK_OUT,
         "label": appearance.LABEL_OUT,
         "name": appearance.NAME_OUT,
+        "rise": appearance.NAME_RISE,
     }
 
 
@@ -553,11 +553,12 @@ def test_the_page_is_handed_its_colors_in_the_units_a_page_reads(session, page):
     look = page.look
     assert look["grid"] == "rgba(144, 144, 144, 0.18)"
     assert appearance.AXIS_COLOR == "#909090" and appearance.GRID_ALPHA == 0.18
-    red, green, blue, alpha = appearance.BOX_COLOR
-    assert look["box"] == {
-        "color": (red << 16) | (green << 8) | blue,
-        "alpha": alpha / 255,
-    }
+    for key, rgba in (("box", appearance.BOX_COLOR), ("ray", appearance.RAY_COLOR)):
+        red, green, blue, alpha = rgba
+        assert look[key] == {
+            "color": (red << 16) | (green << 8) | blue,
+            "alpha": alpha / 255,
+        }
 
 
 async def test_a_pane_renders_the_menu_the_desktop_renders(session, page):
@@ -1942,6 +1943,14 @@ def test_a_surfaces_box_is_the_one_the_desktops_inspector_reads():
     # The numbers arrive already formatted with `written`, as on the desktop.
     assert answer["reading"]["lengths"] == [written(one) for one in box.lengths]
     assert answer["reading"]["lengths"][:2] == ["10", "10"]
+
+
+def test_a_surfaces_box_carries_the_desktops_axis_rays():
+    from rederive.plot.surface import rays
+
+    answer = _standing(_grid("SIN(x y)"))
+    box = _geometry("SIN(x y)")["box"]
+    assert answer["rays"] == pytest.approx(rays(box).ravel().tolist())
 
 
 def test_the_writing_on_the_box_is_chosen_and_spelled_where_the_numbers_are():

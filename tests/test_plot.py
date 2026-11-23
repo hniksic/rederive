@@ -868,6 +868,19 @@ def test_a_whole_grid_becomes_two_triangles_a_cell(solid):
     assert shading.shape == (64,)
 
 
+def test_the_axis_rays_start_at_zero_or_at_the_wall_nearest_it(solid):
+    # Zero inside the x and y ranges puts the rays there; z's range is all positive,
+    # so they start on the floor. Each runs along its axis to the far wall.
+    box = solid.Box((-2.0, 2.0), (-1.0, 3.0), (10.0, 50.0))
+    points = solid.rays(box)
+    origin = [0.0, -2.5, -solid.HALF]
+    assert points.shape == (6, 3)
+    assert np.allclose(points[0::2], [origin] * 3)
+    assert np.allclose(points[1], [solid.HALF, -2.5, -solid.HALF])
+    assert np.allclose(points[3], [0.0, solid.HALF, -solid.HALF])
+    assert np.allclose(points[5], [0.0, -2.5, solid.HALF])
+
+
 def test_the_faces_of_a_dome_stop_at_the_edge_of_its_domain(solid):
     # `SQRT(1-x^2-y^2)` over [-2, 2] is a dome over the unit disc and undefined outside
     # it. Every face must lie inside the circle, and enough must remain to form a dome.
@@ -2610,10 +2623,11 @@ def test_the_mesh_box_and_the_m_key_flip_every_surface(deep):
 def test_the_wire_draws_at_the_curves_weight(deep):
     from rederive.plot.qt.window2d import CURVE_WIDTH
 
-    # The wire uses the same stroke width constant as 2D curves.
+    # The wire uses the same stroke width as 2D curves, scaled by screen density since
+    # GL measures it in device pixels.
     surface = _surface("x*y")
     surface = deep.add(surface)
-    assert surface.wires.width == CURVE_WIDTH
+    assert surface.wires.width == CURVE_WIDTH * deep.view.devicePixelRatioF()
 
 
 def test_the_legend_override_moves_one_surface_and_nothing_sticky(deep):

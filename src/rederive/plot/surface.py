@@ -33,7 +33,17 @@ from rederive.plot import evaluate
 from rederive.plot.appearance import LIGHT
 from rederive.plot.view import PERCENTILES, Span, pooled
 
-__all__ = ["Box", "brightened", "extent", "mesh", "place", "spanned", "ticks", "wire"]
+__all__ = [
+    "Box",
+    "brightened",
+    "extent",
+    "mesh",
+    "place",
+    "rays",
+    "spanned",
+    "ticks",
+    "wire",
+]
 
 #: The side of the cube surfaces are drawn in, and half of it, where the walls are. In
 #: world units, which have no meaning beyond this.
@@ -548,6 +558,22 @@ def _lit(upright: np.ndarray) -> np.ndarray:
         slope_x**2 + slope_y**2 + 1.0
     )
     return AMBIENT + (1.0 - AMBIENT) * np.clip(facing, 0.0, 1.0)
+
+
+def rays(box: Box) -> np.ndarray:
+    """The axis rays: one segment per axis, from the data's origin to the box's far wall.
+
+    As in the 2D window, an axis is drawn at zero, or at the box's edge when zero is
+    outside it. Returns six points in world coordinates, a segment per consecutive pair,
+    in x, y, z order.
+    """
+    origin = np.clip(
+        [float(box.across(0.0)), float(box.along(0.0)), float(box.up(0.0))], -HALF, HALF
+    )
+    points = np.repeat(origin[None, :], 6, axis=0)
+    for axis in range(3):
+        points[2 * axis + 1, axis] = HALF
+    return points.astype(np.float32)
 
 
 def brightened(shading: np.ndarray, color: str) -> np.ndarray:
