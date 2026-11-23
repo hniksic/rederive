@@ -18,16 +18,14 @@
 // whichever side of the seam the choice was made on.
 //
 // **Two roads, and the second one exists for a reason that has been seen to
-// happen.** Ordinarily a demonstration is one file of a few kilobytes, taken
-// out of a DOS diskette image by the archive itself; two images carry the same
-// set, so both are asked at once and the first answer wins. But both of those
-// go through one piece of machinery - the archive's extractor - and that is
-// the piece that fails: the extractor for one of the two items answers nothing
-// but 503. When it takes both images down at once, the whole diskette is
-// fetched instead and opened here. That download is three hundred kilobytes
-// against one, which is why it is the second road and not the first, and it
-// brings back all nine demonstrations, which is why none of them is ever
-// downloaded twice.
+// happen.** Ordinarily a demonstration is one file of a few kilobytes, which
+// the archive's extractor takes out of one of two archived copies; both are
+// asked at once and the first answer wins. Both depend on that extractor, which
+// has been seen to fail (another item's answered only 503), so when both
+// refuse, the whole diskette is fetched instead and opened here. That download
+// is three hundred kilobytes against one, which is why it is the second road
+// and not the first, and it brings back all nine demonstrations, which is why
+// none of them is ever downloaded twice.
 //
 // The whole diskette is the one address a page may not read directly - the
 // archive sends no CORS headers with it - so that road, and only that road,
@@ -150,9 +148,9 @@ async function chose(demo) {
       return;
     }
   }
-  // Said rather than thrown. What is on the other side of this call is Python,
-  // and a refusal from it inside an async function is an unhandled rejection -
-  // a line in a console nobody has open, and a page where nothing happened.
+  // Said as well as rethrown: the throw from Python inside this async function
+  // ends up as an unhandled rejection in the console, which nobody sees, so the
+  // notice is what tells the user.
   try {
     handlers.chose(demo.file, bytes);
   } catch (error) {
@@ -235,17 +233,17 @@ async function got(url, largest) {
 // -- the diskette --------------------------------------------------------------
 //
 // Enough of a zip reader for one written in 1996: the central directory, and
-// deflate. No library, because a browser is already a deflate implementation
-// and every file in this one is either stored or deflated - a zip needs a
-// reader in the megabytes only to cover what nothing here uses.
+// deflate. No library, because a browser already has deflate
+// (`DecompressionStream`) and every file in this one is stored or deflated.
 
 const SIGNATURE_END = 0x06054b50;
 const SIGNATURE_ENTRY = 0x02014b50;
 const STORED = 0;
 const DEFLATED = 8;
 
-// The end record is last in the file and holds a comment nobody writes, so it
-// is found by looking back from the end rather than by seeking to it.
+// The end record is last in the file but may be followed by a comment of any
+// length, so it is found by scanning back from the end; `LOOKBACK` bounds the
+// comment this tolerates.
 const LOOKBACK = 1024;
 
 async function entries(zip) {

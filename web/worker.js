@@ -42,9 +42,8 @@ from rederive.web.worker import serve
 serve()
 `);
   } catch (error) {
-    // The last line of it, which for a Python exception is the one naming what
-    // went wrong: a message line has one line to say this in, and the rest of
-    // the traceback is in the console for whoever wants it.
+    // Only the last line is kept, which for a Python exception names what went
+    // wrong; a message line has room for one line.
     const said = String((error && error.message) || error).trim().split('\n');
     self.postMessage('The engine could not be started: ' + said[said.length - 1].trim());
   }

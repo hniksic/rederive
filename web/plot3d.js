@@ -131,16 +131,15 @@ function surface() {
   return root;
 }
 
-// Holding on to a pointer for the length of a drag, so that a finger or a mouse
-// that leaves the element it started on is still heard. A browser may refuse -
-// a pointer it has already released is not one to capture - and a refusal is
-// not worth an exception in the page: what capture buys is the end of the drag,
-// not the drag.
+// Holding on to a pointer for the length of a drag, so that its moves and its
+// release are still heard after it leaves the element. The call throws for a
+// pointer that is no longer active, and a refusal is not worth an exception in
+// the page: the drag then follows only while the pointer is over the element.
 function capture(element, event) {
   try {
     element.setPointerCapture(event.pointerId);
   } catch (refused) {
-    /* the drag goes on without it, and ends wherever the element does */
+    /* without capture the drag follows only while the pointer is over the element */
   }
 }
 
@@ -154,9 +153,9 @@ function capture(element, event) {
 // its own. Ctrl+C reaches a pane as a `copy` and not as a key press: a page
 // that cancels the keydown cancels the copy the browser was about to offer it,
 // so the key ladder leaves the stroke alone and this is where it arrives. The
-// listener is the document's because a copy event is raised where the selection
-// is rather than on whatever holds the keyboard, and it goes to the pane that
-// has focus - which is what keeps it away from the terminal and from a flat
+// listener is the document's because browsers differ on whether a copy event is
+// targeted at the selection or at the focused element, and it goes to the pane
+// that has focus - which is what keeps it away from the terminal and from a flat
 // pane alike.
 export function wire(term) {
   terminal = term;
@@ -404,9 +403,8 @@ class Solid {
   // happened. Never a blank rectangle and no explanation.
   _scene() {
     try {
-      // The drawing buffer is kept because a picture leaving the pane is read
-      // off it, and a card that cleared after every frame would hand back a
-      // blank rectangle to whoever asked for one a moment later.
+      // The drawing buffer is kept, so that it stays readable outside the task
+      // that drew it rather than only until the browser composites the frame.
       this.renderer = new THREE.WebGLRenderer({
         antialias: true,
         preserveDrawingBuffer: true,
@@ -494,8 +492,8 @@ class Solid {
   }
 
   // The dashes standing out of the three edges the numbers are written along.
-  // Rebuilt on every camera move, which is a few dozen coordinates and no
-  // geometry at all: the edges that carry them change as the picture turns.
+  // Rebuilt on every camera move, as a fresh buffer of a few dozen points,
+  // because which edges carry them changes as the picture turns.
   _marks() {
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(0), 3));
@@ -766,10 +764,9 @@ class Solid {
   //
   // Three edges carry them: the two bottom edges of the side the camera is on,
   // which is where a number sits in front of the picture rather than behind it,
-  // and for the upright axis the far vertical edge, which is the one the
-  // surface does not stand in front of. Which edges those are changes as the
-  // view turns, so this runs on every camera move; it is a few dozen positions
-  // and no geometry at all.
+  // and for the upright axis the vertical edge farthest from the camera. Which
+  // edges those are changes as the view turns, so this runs on every camera
+  // move; it is a few dozen positions.
   //
   // An axis pointing at the camera is left unnumbered. Facing the xy plane
   // makes the whole z axis one point of the screen, and five numbers stacked on
@@ -840,7 +837,7 @@ class Solid {
   // What a frame costs is one projected point and two style writes per number,
   // which for a box of five ticks an axis and three names is under twenty of
   // each. The elements are pooled and their text is left alone where it has not
-  // changed: a rotation runs this sixty times a second, and a layer emptied and
+  // changed: a rotation runs this once a frame, and a layer emptied and
   // refilled that often is a layer the browser lays out that often.
   _write(segments, written) {
     if (this.marks !== undefined) {
@@ -1010,9 +1007,9 @@ class Solid {
     this._copyImage();
   }
 
-  // Ctrl+C, arriving as the event it has to arrive as. The default is cancelled
-  // so that a pane with nothing selected does not copy an empty string over
-  // whatever was on the clipboard.
+  // Ctrl+C, arriving as a copy event. The default is cancelled so the browser
+  // does not also copy whatever text happens to be selected; the picture is
+  // written instead.
   _copied(event) {
     if (controls.evented(this.commands, 'copy') === null) return;
     event.preventDefault();
@@ -1044,7 +1041,7 @@ class Solid {
   }
 
   // Export, which in a tab is a download: an object URL and a link clicked from
-  // here, since that is the only way a file leaves a page.
+  // here, the one way to save a file that works in every browser.
   //
   // A PNG, which is also what the desktop's 3D window exports: there is no
   // painter path behind a card, so a picture of a solid is pixels on either
@@ -1082,12 +1079,9 @@ class Solid {
 
   // The pane as one image: the card, and the names of what is standing on it.
   //
-  // The scene is painted first, because a drawing buffer is only guaranteed to
-  // hold what was last rendered into it. The legend and the writing on the box
-  // are DOM over the card rather than anything drawn into it, so the plot list
-  // is written on afterwards, exactly as the desktop's export writes it. A pane
-  // with no card at all answers with nothing, and the caller says so rather
-  // than handing back a blank rectangle.
+  // The legend is DOM over the card, so the plot list is written onto the copy
+  // afterwards. The numbers and names on the box are DOM too and are not in the
+  // picture. A pane with no card answers with nothing, and the caller says so.
   _photograph() {
     if (this.renderer === undefined) return null;
     this._paint();

@@ -52,8 +52,8 @@ export function dropdown(term, button, panel, opening = null) {
       if (open === !panel.hidden) return;
       panel.hidden = !open;
       button.setAttribute('aria-expanded', String(open));
-      // The keyboard goes back to the program as the menu closes. A button
-      // keeps focus after a click, and the next keystroke would go to it.
+      // The keyboard goes back to the program as the menu closes, wherever
+      // the focus was left, with the touch keyboard following the program.
       if (!open && term !== null) settle(term);
     },
   };

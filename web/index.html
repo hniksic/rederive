@@ -2,9 +2,9 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<!-- A phone's keyboard shrinks the page rather than covering it, so the
-     terminal is refit above the keyboard and the line being typed on stays in
-     sight. -->
+<!-- In a browser that honors interactive-widget, a phone's keyboard shrinks
+     the page rather than covering it, so the terminal is refit above the
+     keyboard and the line being typed on stays in sight. -->
 <meta name="viewport"
       content="width=device-width, initial-scale=1, interactive-widget=resizes-content">
 <title>Rederive</title>
@@ -229,8 +229,9 @@
   }
   .plot-close:hover { color: #e2a1a1; border-color: #7c3f42; }
   .plot-canvas { position: relative; flex: 1; background: #0c0c10; overflow: hidden; }
-  /* The card a solid is drawn on fills the canvas area under it; three.js sizes
-     the element itself, and this is what stops a stale size from stretching it. */
+  /* The card a solid is drawn on fills the canvas area under it. three.js sets
+     only the drawing buffer's width and height attributes (CSS size times pixel
+     ratio), so without this the canvas would show at its buffer size. */
   .plot-card { display: block; width: 100% !important; height: 100% !important; }
   /* The second row of a pane: the buttons `plot/controls.py` gives a word to,
      and in a 3D pane the domain and the grid in front of them. A toggle stands
@@ -480,8 +481,8 @@
             title="Run one of the original Derive's own demonstrations">
       Demos
     </button>
-    <!-- Filled from the list in `demos.js`, which is the only place the
-         demonstrations are named. -->
+    <!-- Filled by `demos.js` from the catalog Python hands it, which is
+         `rederive.model.demos`. -->
     <div id="gallery" class="menu" hidden></div>
   </div>
 </div>

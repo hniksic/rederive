@@ -18,9 +18,9 @@
 // this file shows what it is handed. The one exception is the pointer readout,
 // which is the coordinates of the pointer and not a value of anything.
 //
-// The samples never pass through Python. They come off the worker as typed
-// arrays, are drawn from here, and what goes back to the main thread's Python is
-// the request number and whatever would not evaluate.
+// The samples never pass through the main thread's Python. The worker's Python
+// sends them as typed arrays, they are drawn from here, and what goes back to
+// the main thread's Python is the request number and whatever would not evaluate.
 //
 // Nor does this file own what a pane offers. The commands, their words, their
 // keys and the order a menu stands them in are `plot/controls.py`'s, the same
@@ -43,8 +43,7 @@
 // it, how the polar grid is spaced. Those are the numbers a pane and the
 // desktop's window have to agree about, so they are written once and handed
 // over with `dress` before the first pane opens. What is left here is what only
-// a page has - the wheel, the double click, the size a pane opens at - which
-// has nothing on the other side to disagree with.
+// a page has: the wheel, the double click, the size a pane opens at.
 //
 // Copying and exporting are the one pair this file answers outright. A canvas
 // has no painter path to write a vector file out of, so what leaves a pane is
@@ -75,9 +74,9 @@ let look = null;
 const PAPER = '#ffffff';
 const PAPER_TEXT = '#000000';
 
-// The chrome's dimmest weight, which the numbers along the axes are written
-// in. A pane's chrome is the style sheet's, as the desktop's is `theme.py`'s,
-// and this is the one of its colors the canvas itself writes with.
+// The muted gray of the chrome (`theme.py`'s MUTED), which the numbers along the
+// axes are written in. A pane's chrome is the style sheet's, as the desktop's is
+// `theme.py`'s, and this is the one of its colors the canvas itself writes with.
 const MUTED = '#7d8595';
 
 // How far a wheel zooms, and what one turn of one is worth in the units a page
@@ -93,8 +92,8 @@ const MUTED = '#7d8595';
 // only the outcome that is comparable: one detent is 1.25 in a pane and 1.02^15,
 // or 1.35, in a window.
 //
-// A page reports a scroll in pixels, in lines or in pages, and no two browsers
-// agree on which; nothing measures a line or a page for us, so those two are
+// A page reports a scroll in pixels, in lines or in pages, and browsers differ
+// on which; nothing measures a line or a page for us, so those two are
 // what a line of text and a screenful of them come to. The cap is what stops one
 // oversized event - a page of scroll, or a driver that batches a flick - from
 // throwing the view away in a single frame.
@@ -147,9 +146,9 @@ const SCANNED = new Set([CURVE, FAMILY]);
 const PARAMETRIZED = new Set([PARAMETRIC, POLAR]);
 
 // How close together in time and in place two clicks have to be to be the one
-// gesture that centres the view. The page counts them itself because a press on
-// the picture is cancelled - that is what makes a drag a drag rather than a
-// selection - and a cancelled press is one no `dblclick` follows.
+// gesture that centers the view. The clicks counted are the releases `release`
+// judges to be clicks, so two short pans never add up to a double click, as
+// they would for `dblclick`, which follows any two clicks.
 const DOUBLE_MS = 400;
 const DOUBLE_PX = 6;
 
@@ -165,8 +164,8 @@ let terminal = null;
 // page is actually showing; nothing in the program writes to it.
 export const panes = new Map();
 
-// The keyboard back to the terminal, as `files.js` does it for its buttons.
-// Nothing else on the page reads keys, so there is nowhere else to put them.
+// The keyboard back to the terminal, as `files.js` does it for its buttons:
+// the terminal is where the keys belong when no pane holds them.
 function focus() {
   if (terminal !== null) keys.settle(terminal);
 }
@@ -194,16 +193,16 @@ function capture(element, event) {
 // -- what Python calls ---------------------------------------------------------
 
 // Called by the page as it builds itself, so that a pane which closes while it
-// holds the keyboard knows where to hand it back. The terminal is the only
-// other thing on the page that takes keys.
+// holds the keyboard knows where to hand it back.
 //
 // The copy event is listened for here for a reason of its own. Ctrl+C reaches a
 // pane as a `copy` and not as a key press: a page that cancels the keydown
 // cancels the copy the browser was about to offer it, so the key ladder leaves
 // the stroke alone and this is where it arrives. The listener is the document's
-// because a copy event is raised where the selection is rather than on whatever
-// holds the keyboard, and it goes to the pane that has focus - which is also
-// what keeps it away from the terminal, xterm.js having its own copy.
+// because browsers differ on what a copy event is raised at (the focused element
+// by the spec, where the selection is in Chromium), and it goes to the pane that
+// has focus - which is also what keeps it away from the terminal, xterm.js having
+// its own copy.
 export function wire(term) {
   terminal = term;
   document.addEventListener('copy', (event) => {
@@ -213,9 +212,8 @@ export function wire(term) {
 }
 
 // What every pane is drawn at, handed over once before the first one opens.
-// `plot/appearance.py` is where all of it is written down, for the desktop's
-// windows and these panes alike; nothing here argues with any of it, and
-// nothing here has a color or a length of its own to argue with.
+// `plot/appearance.py` is where it is written down, for the desktop's windows
+// and these panes alike.
 export function dress(description) {
   look = description;
 }
@@ -380,12 +378,11 @@ class Pane {
   // observer below hears about it.
   //
   // The pointer is captured by the bar, so the drag follows a finger or a mouse
-  // that has left it - which every drag does, a bar being twenty pixels tall.
+  // that has left it, which every drag does, the bar being so short.
   //
-  // The keyboard is handed over by hand, as it is over the picture. Cancelling
-  // the press is what stops the drag from selecting the title as text, and it
-  // also cancels the focus the press would have given the pane - so a pane
-  // taken hold of by its bar would answer to none of its keys.
+  // The keyboard is handed over by hand, as it is over the picture: the press is
+  // cancelled, and the pane takes the focus here rather than relying on the press
+  // to give it.
   _movable() {
     let from = null;
     this.bar.addEventListener('pointerdown', (event) => {
@@ -649,14 +646,15 @@ class Pane {
   }
 
   // Ctrl+C, arriving as the event it has to arrive as. The default is cancelled
-  // so that a pane with nothing selected does not copy an empty string over
-  // whatever was on the clipboard.
+  // because what is put in the event's clipboardData reaches the clipboard only
+  // when it is, and so that a selection elsewhere on the page is not copied in
+  // place of the picture.
   //
   // A traced point goes through the event's own clipboard, which is the road
   // that needs no permission of anybody: the browser is offering to be written
-  // into, and text is what it will take. A picture cannot go that way - a
-  // DataTransfer carries strings - so it goes through `navigator.clipboard`,
-  // which is granted or refused, and a refusal is a sentence and not a silence.
+  // into, and text is what it will take. A picture goes through
+  // `navigator.clipboard` instead, which is granted or refused, and a refusal is
+  // a sentence and not a silence.
   _copied(event) {
     if (controls.evented(this.commands, 'copy') === null) return;
     event.preventDefault();
@@ -968,9 +966,9 @@ class Pane {
     ctx.restore();
   }
 
-  // The rings and spokes a polar picture is read against. Not a library
-  // requirement and never was: the curve is sampled as x = r cos θ, y = r sin θ
-  // where the numbers are, and what is left is a few dozen lines of arcs.
+  // The rings and spokes a polar picture is read against. The curve is sampled
+  // as x = r cos θ, y = r sin θ where the numbers are, and what is left here is
+  // a few dozen lines of arcs.
   //
   // Both are loci in the plane rather than shapes on the screen: a ring is one
   // value of r and a spoke one value of θ, so each is measured in the two units
@@ -1131,8 +1129,8 @@ class Pane {
     // A point off the picture takes its chip with it. The ring and the hairline
     // are drawn on the canvas inside the clip the picture is drawn in, so they
     // simply leave the view the way the desktop's do; the chip is an element and
-    // an element let out of the picture is drawn over the tool row above it. The
-    // reading is on the status line either way, so a marker off the picture is
+    // an element let out of the picture is drawn over the numbers along the axes.
+    // The reading is on the status line either way, so a marker off the picture is
     // one whose value can still be read - just not beside a point nobody can see.
     const showing = this.reading &&
       px >= u.bbox.left && px <= u.bbox.left + u.bbox.width &&
@@ -1864,9 +1862,8 @@ class Pane {
     };
   }
 
-  // Which curve the pointer is on, for the menu that is about one. The nearest
-  // sample within a few pixels, which is the same hit test the desktop's stroke
-  // does for itself.
+  // Which curve the pointer is on, for a click and for the menu that is about
+  // one: the nearest sample within `look.hit` pixels.
   _pointedPlot(event) {
     const over = this.plot.over;
     const at = this._value(event.offsetX, event.offsetY);

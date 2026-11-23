@@ -218,8 +218,9 @@ function named(id) {
   return document.getElementById(id);
 }
 
-// The keyboard belongs to the terminal. A button keeps focus after a click,
-// and the next keystroke would go to it rather than to the program.
+// The keyboard goes back to the terminal after a control is used: a file
+// dialog, a drop or Tab can leave the focus elsewhere, and on a touch screen
+// whether the keyboard shows follows what the program is waiting for.
 function focus() {
   if (terminal !== null) settle(terminal);
 }

@@ -67,10 +67,10 @@ RUNTIME = (
 DISTRIBUTED = ("sympy", "mpmath", "numpy")
 
 #: xterm.js with four addons, plus the plot libraries. unicode11 is insurance (every
-#: character the display emits measured as one cell either way), and canvas is a
-#: pixel-identical fallback when WebGL is unavailable. uPlot (21 kB) draws the axes,
-#: tick labels and grid, while `plot2d.js` draws the curves on its canvas. three.js
-#: (190 kB compressed) renders 3D surfaces.
+#: character the display emits measured as one cell either way), and canvas is the
+#: fallback when WebGL is unavailable; both draw box-drawing and block glyphs
+#: themselves. uPlot (21 kB) draws the axes, tick labels and grid, while `plot2d.js`
+#: draws the curves on its canvas. three.js (190 kB compressed) renders 3D surfaces.
 #:
 #: xterm.js and the addons released with it are pinned to the 6.1 beta, the first with
 #: the kitty keyboard protocol, without which Shift-Enter arrives as Enter. Move them to
@@ -216,8 +216,7 @@ def _terminal(cache: Path, offline: bool) -> list[tuple[str, Path]]:
     if not offline:
         # `--legacy-peer-deps` because addon-canvas 0.7.0 declares a peer dependency on
         # xterm ^5, which npm rejects with xterm 6.0.0. The range is just stale: the
-        # addon was tested on xterm 6 in both browsers and matches the WebGL renderer
-        # pixel for pixel.
+        # addon was tested on xterm 6 in both browsers.
         install = ["npm", "install", "--silent", "--no-package-lock"]
         _run([*install, "--legacy-peer-deps", *NPM], directory)
     found = []

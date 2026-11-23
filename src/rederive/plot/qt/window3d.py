@@ -765,9 +765,9 @@ class Window3D(QtWidgets.QMainWindow):
         """Place the tick marks and labels on the box edges facing the camera.
 
         The x and y ticks go on the two bottom edges on the camera's side, in front of
-        the picture, and the z ticks on the far vertical edge, which the surface
-        doesn't cover. These change as the view rotates, so this runs on every camera
-        move; it only updates a few dozen positions.
+        the picture, and the z ticks on the vertical edge farthest from the camera.
+        These change as the view rotates, so this runs on every camera move; it only
+        updates a few dozen positions.
 
         An axis pointing at the camera gets no tick labels, since they would all pile
         up on one point, but keeps its name.

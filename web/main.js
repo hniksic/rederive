@@ -4,8 +4,8 @@
 // mathematics at all. The mathematics is a Web Worker away, has a Pyodide of
 // its own, and is reached only by the Python in `rederive.web.engine`; nothing
 // in this file knows what a request looks like or what an answer means. That
-// is the same split the desktop program has, with `postMessage` where the pipe
-// was.
+// is the same split the desktop program has, with `postMessage` where the
+// desktop has a pipe.
 //
 // The one message this file does look at is a plot sampling. Its answer is
 // typed arrays and is for the canvas rather than for Python, so the worker's
@@ -74,9 +74,9 @@ const AGAIN = 'Press Enter or click here to start it again.';
 const COLUMNS = 72;
 
 // Four quadrants, turning, and how long each is held. They are block elements
-// rather than the braille a spinner is usually made of because xterm draws
-// these itself under the canvas and WebGL renderers, so no font on the machine
-// has to have them.
+// rather than the braille a spinner is usually made of because both renderers
+// draw these themselves (the canvas one has no braille), so no font on the
+// machine has to have them.
 const SPINNER = ['▘', '▝', '▗', '▖'];
 const TICK = 125;
 
@@ -88,19 +88,18 @@ const DIM = '\x1b[2m';
 const DONE = '\x1b[32m';
 const PLAIN = '\x1b[0m';
 
-// The font the display is measured in. DejaVu is what stage 0 checked the
-// typeset math against; the rest are what a machine without it is likely to
-// have. Box drawing does not come from the font at all under the canvas and
-// WebGL renderers - xterm draws those itself, to the cell - which is why the
+// The font the display is measured in. DejaVu is what the typeset math was
+// checked against; the rest are what a machine without it is likely to have.
+// Box drawing does not come from the font at all under the canvas and WebGL
+// renderers - xterm draws those itself, to the cell - which is why the
 // fraction bars and integral rails join whatever this resolves to.
 const FONT = '"DejaVu Sans Mono", "Liberation Mono", Menlo, Consolas, monospace';
 const FONT_SIZE = 16;
 
 // How far a finger moves before a touch is a swipe rather than a tap, in
-// pixels, and how far a swipe goes for each notch of the wheel it stands for,
-// which is how far a notch moves what is under the finger: two rows down, the
-// scroll Textual gives one, and a third of the width across, which is how far
-// a notch moves an expression too wide for its pane.
+// pixels, and how far a swipe goes for each notch of the wheel it stands for:
+// two rows down, the scroll Textual gives a notch, and a third of the
+// terminal's width across.
 const SLOP = 10;
 const NOTCH_ROWS = 2;
 const NOTCH_SHARE = 3;
@@ -236,8 +235,9 @@ function opening(term) {
 
 // The end of a session, on the screen the program hands back.
 //
-// A tab cannot start the program again where it stopped: Pyodide is loaded once
-// per page, so beginning again is a reload, and the only thing this card has to
+// A tab cannot start the program again where it stopped: this page loads
+// Pyodide and the program once and does not restart them, so beginning again
+// is a reload, and the only thing this card has to
 // say is how to ask for one. It offers the gesture as well as the words, since
 // a reader who has just quit is looking at this screen and not at the browser's
 // toolbar - and it is Enter or a click rather than any key at all, so that a
@@ -278,8 +278,8 @@ function terminal() {
     // What the unicode11 addon needs before it may be loaded.
     allowProposedApi: true,
     // The program takes the mouse, so selecting text off the screen is a
-    // modified drag, as in a desktop terminal: Shift everywhere, and Option on a
-    // Mac, where xterm.js only honors it with this set.
+    // modified drag, as in a desktop terminal: Shift, or on a Mac Option, which
+    // xterm.js honors only with this set (Shift does not select there).
     macOptionClickForcesSelection: true,
     // The kitty keyboard protocol, which the program turns on to tell keys
     // apart that a plain terminal sends alike, such as Shift-Enter and Enter.
@@ -328,8 +328,9 @@ function terminal() {
 // one is how the mouse works them on a desktop, and the wheel is how a pane, a
 // list and a page of help are scrolled.
 //
-// xterm.js hears nothing from a finger - it reports mouse buttons and has no
-// touch handling at all - so the reports are written by hand and fed back in as
+// xterm.js does not turn touches into mouse reports - its only touch handling
+// scrolls its own viewport, which has no scrollback here - so the reports are
+// written by hand and fed back in as
 // if the terminal had sent them. SGR, because that is the encoding the driver
 // turned on, and it is the only one that says which button was released.
 //
@@ -451,15 +452,14 @@ function backing(term) {
   };
 }
 
-// WebGL, with canvas behind it. The two are pixel-identical - they share the
-// glyph drawing and differ in how the result reaches the screen - so the
-// fallback costs nothing in appearance, and the DOM renderer, which does not
-// draw box glyphs itself, is not used at all.
+// WebGL, with canvas behind it. Both draw box-drawing and block glyphs
+// themselves, to the cell, which is all the program's output relies on; the
+// DOM renderer takes those from the font and is not used at all.
 //
 // A dropped context is the reason this is a function rather than four lines:
 // the addon stops drawing and the terminal is left blank forever unless
 // something puts a renderer back. One more attempt at WebGL, then canvas,
-// which needs no context to lose.
+// whose context is far less likely to be lost.
 function render(term, retry) {
   try {
     const webgl = new WebglAddon.WebglAddon();
@@ -511,7 +511,7 @@ function spawn(manifest) {
 // page's own rather than any one control's.
 //
 // **The keyboard belongs to the program, whatever on the page is pressed.** A
-// button or a link takes the focus when it is clicked, and the keystroke after
+// button or a link can take the focus when it is clicked, and the keystroke after
 // that would be the page's rather than the program's - a `q` that quits nothing
 // - so the press's default is cancelled, which leaves the focus in the terminal
 // and still delivers the click. One listener for the whole corner, since this
