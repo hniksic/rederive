@@ -821,14 +821,16 @@ class Solid {
   }
 
   // Which axes point so nearly at the camera that they have no length on the
-  // screen. The camera looks along the line from itself to the box's center, so
-  // an axis is edge-on exactly when it is parallel to that line - which is what
-  // each of the three presets makes one of them.
+  // screen. The camera looks along the line from itself to the point it orbits,
+  // which is the box's center until a pan moves it, so an axis is edge-on exactly
+  // when it is parallel to that line - which is what each of the three presets
+  // makes one of them. The desktop's `_head_on` measures from its view center
+  // the same way.
   _headOn() {
-    const at = this.camera.position;
-    const length = Math.hypot(at.x, at.y, at.z);
+    const away = this.camera.position.clone().sub(this.controls.target);
+    const length = away.length();
     if (!length) return [false, false, false];
-    return [at.x, at.y, at.z].map((value) => Math.abs(value) / length > look.edge);
+    return [away.x, away.y, away.z].map((value) => Math.abs(value) / length > look.edge);
   }
 
   // The dashes as geometry and the words as DOM, both from what `_anchor` just
