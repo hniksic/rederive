@@ -559,6 +559,15 @@ def test_the_page_is_handed_its_colors_in_the_units_a_page_reads(session, page):
             "color": (red << 16) | (green << 8) | blue,
             "alpha": alpha / 255,
         }
+    # The export's colors, the desktop's paper ones, in the same units.
+    sheet = look["sheet"]
+    assert sheet["ground"] == appearance.PAPER_GROUND
+    assert sheet["text"] == appearance.PAPER_TEXT
+    red, green, blue, alpha = appearance.PAPER_BOX
+    assert sheet["box"] == {
+        "color": (red << 16) | (green << 8) | blue,
+        "alpha": alpha / 255,
+    }
 
 
 async def test_a_pane_renders_the_menu_the_desktop_renders(session, page):
@@ -1897,7 +1906,7 @@ class _Landing:
 # -- what the worker makes of a surface ---------------------------------------------
 
 
-def _geometry(text, grid=(16, 16), domain=(-5.0, 5.0), zrange=None):
+def _geometry(text, grid=(16, 16), domain=(-5.0, 5.0), zrange=None, color="#ffff55"):
     """Build a surface the way the desktop window does."""
     from rederive.plot import evaluate
     from rederive.plot.surface import Box, brightened, extent, mesh, wire
@@ -1916,9 +1925,9 @@ def _geometry(text, grid=(16, 16), domain=(-5.0, 5.0), zrange=None):
         "wanted": found[0],
         "vertices": vertexes,
         "faces": faces,
-        "colors": brightened(shading, "#ffff55"),
+        "colors": brightened(shading, color),
         "wire": points,
-        "wirecolors": brightened(shades, "#ffff55"),
+        "wirecolors": brightened(shades, color),
     }
 
 
@@ -1932,6 +1941,17 @@ def test_a_surface_crosses_as_the_geometry_plot_surface_builds():
     assert answer["vertices"].dtype == np.float32
     assert answer["faces"].dtype == np.uint32
     assert answer["vertices"].ndim == 1 and answer["vertices"].flags["C_CONTIGUOUS"]
+
+def test_a_surface_crosses_with_its_shading_in_paper_colors_too():
+    # The page exports on white, as the desktop does, so each answer carries the same
+    # shading in the surface's paper color beside its screen color.
+    request = _grid("SIN(x y)")
+    answer = _standing(request)
+    paper = request.model.paper
+    built = _geometry("SIN(x y)", color=paper)
+    assert paper != request.model.color
+    assert np.array_equal(answer["papercolors"], built["colors"][:, :3].ravel())
+    assert np.array_equal(answer["paperwirecolors"], built["wirecolors"][:, :3].ravel())
 
 
 def test_a_surfaces_box_is_the_one_the_desktops_inspector_reads():

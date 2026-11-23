@@ -1497,6 +1497,7 @@ class Solid:
                 "label": plot.label,
                 "name": plot.named,
                 "color": plot.color,
+                "paper": plot.paper,
                 "wire": bool(plot.wire),
                 "hidden": bool(plot.hidden),
             }
@@ -1695,6 +1696,14 @@ def _look() -> Any:
             "box": _ink(appearance.BOX_COLOR),
             "ray": _ink(appearance.RAY_COLOR),
             "tick": _ink(appearance.TICK_COLOR),
+            # The 3D export's colors, on white as on the desktop.
+            "sheet": {
+                "ground": appearance.PAPER_GROUND,
+                "box": _ink(appearance.PAPER_BOX),
+                "ray": _ink(appearance.PAPER_RAY),
+                "tick": _ink(appearance.PAPER_TICK),
+                "text": appearance.PAPER_TEXT,
+            },
             "wire": {
                 "offset": list(appearance.WIRE_OFFSET),
                 "width": appearance.CURVE_WIDTH,

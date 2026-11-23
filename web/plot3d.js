@@ -1079,24 +1079,69 @@ class Solid {
     }, 'image/png');
   }
 
-  // The pane as one image: the card, and the names of what is standing on it.
+  // The pane as one image in paper colors, as the desktop's export is: the card,
+  // the writing on the box, and the names of what is standing on it.
   //
-  // The legend is DOM over the card, so the plot list is written onto the copy
-  // afterwards. The numbers and names on the box are DOM too and are not in the
-  // picture. A pane with no card answers with nothing, and the caller says so.
+  // The card is painted on paper and read back in the same task, then painted
+  // dark again, so the screen never shows the paper colors. The numbers and names
+  // on the box and the legend are DOM over the card, so they are written onto the
+  // copy afterwards, where `_write` last put them. A pane with no card answers
+  // with nothing, and the caller says so.
   _photograph() {
     if (this.renderer === undefined) return null;
-    this._paint();
     const source = this.renderer.domElement;
     const shot = document.createElement('canvas');
     shot.width = source.width;
     shot.height = source.height;
     const ctx = shot.getContext('2d');
-    ctx.fillStyle = look.ground;
-    ctx.fillRect(0, 0, shot.width, shot.height);
-    ctx.drawImage(source, 0, 0);
-    this._namePlots(ctx, shot.width / Math.max(source.clientWidth, 1));
+    this._onPaper(true);
+    try {
+      this._paint();
+      ctx.drawImage(source, 0, 0);
+    } finally {
+      this._onPaper(false);
+      this._paint();
+    }
+    const ratio = shot.width / Math.max(source.clientWidth, 1);
+    this._letter(ctx, ratio);
+    this._namePlots(ctx, ratio);
     return shot;
+  }
+
+  // The card's colors switched between the screen's and paper's: the ground, the
+  // box, its rays and dashes, and every surface.
+  _onPaper(on) {
+    const inks = on ? look.sheet : look;
+    this.renderer.setClearColor(new THREE.Color(inks.ground), 1);
+    for (const [lines, ink] of [
+      [this.frame, inks.box], [this.rays, inks.ray], [this.marks, inks.tick],
+    ]) {
+      lines.material.color.setHex(ink.color);
+      lines.material.opacity = ink.alpha;
+    }
+    for (const plot of this.plots.values()) plot.onPaper(on);
+  }
+
+  // The numbers along the box edges and the names of the axes, written onto a
+  // photograph where they stand over the card, in their own font and in the
+  // paper's text color.
+  _letter(ctx, ratio) {
+    ctx.save();
+    ctx.scale(ratio, ratio);
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = look.sheet.text;
+    for (const label of this.labels) {
+      if (label.style.display === 'none') continue;
+      const style = getComputedStyle(label);
+      ctx.font = `${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+      ctx.fillText(
+        label.textContent,
+        parseFloat(label.style.left),
+        parseFloat(label.style.top),
+      );
+    }
+    ctx.restore();
   }
 
   _namePlots(ctx, ratio) {
@@ -1110,7 +1155,7 @@ class Solid {
     for (const serial of this.order) {
       const plot = this.plots.get(serial);
       if (plot === undefined || plot.hidden) continue;
-      ctx.fillStyle = plot.color;
+      ctx.fillStyle = plot.paper;
       ctx.fillText(plot.name, LEGEND_MARGIN_PX * ratio, down);
       down += size * 1.4;
     }
@@ -1225,6 +1270,7 @@ class Standing {
     this.label = spec.label;
     this.name = spec.name;
     this.color = spec.color;
+    this.paper = spec.paper;
     this.wire = Boolean(spec.wire);
     this.hidden = Boolean(spec.hidden);
     this.mesh.material = this.wire ? this.occluder : this.solid;
@@ -1258,6 +1304,8 @@ class Standing {
     const vertices = typed(message.vertices, this.label);
     const faces = typed(message.faces, this.label, Uint32Array);
     const colors = typed(message.colors, this.label);
+    // The colors on the screen and on paper; the attribute holds a copy of one.
+    this.tints = [colors, typed(message.papercolors, this.label)];
     this.vertices = vertices.length / 3;
     this.triangles = faces.length / 3;
     if (this._rewritable(vertices, faces)) {
@@ -1270,7 +1318,7 @@ class Standing {
     } else {
       this.geometry.setIndex(new THREE.BufferAttribute(faces, 1));
       this.geometry.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
-      this.geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+      this.geometry.setAttribute('color', new THREE.BufferAttribute(colors.slice(), 3));
     }
     this.geometry.computeBoundingSphere();
     this._strands(message);
@@ -1298,6 +1346,7 @@ class Standing {
   _strands(message) {
     const points = typed(message.wire, this.label);
     const colors = typed(message.wirecolors, this.label);
+    this.wireTints = [colors, typed(message.paperwirecolors, this.label)];
     const position = this.strands.attributes.position;
     if (position !== undefined && position.array.length === points.length) {
       position.array.set(points);
@@ -1307,9 +1356,24 @@ class Standing {
       color.needsUpdate = true;
     } else {
       this.strands.setAttribute('position', new THREE.BufferAttribute(points, 3));
-      this.strands.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+      this.strands.setAttribute('color', new THREE.BufferAttribute(colors.slice(), 3));
     }
     this.strands.computeBoundingSphere();
+  }
+
+  // The surface in its paper colors, or back in its screen colors. The wire's
+  // occluder takes the ground's color, so it hides what is behind on either.
+  onPaper(on) {
+    const pick = on ? 1 : 0;
+    for (const [attribute, tints] of [
+      [this.geometry.attributes.color, this.tints],
+      [this.strands.attributes.color, this.wireTints],
+    ]) {
+      if (attribute === undefined || tints === undefined) continue;
+      attribute.array.set(tints[pick]);
+      attribute.needsUpdate = true;
+    }
+    this.occluder.color.set(on ? look.sheet.ground : look.ground);
   }
 
   _shown() {

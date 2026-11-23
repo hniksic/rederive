@@ -49,6 +49,11 @@ from rederive.plot.appearance import (
     LABEL_OUT,
     NAME_OUT,
     NAME_RISE,
+    PAPER_BOX,
+    PAPER_GROUND,
+    PAPER_RAY,
+    PAPER_TEXT,
+    PAPER_TICK,
     RAY_COLOR,
     TICK_COLOR,
     TICK_OUT,
@@ -85,12 +90,6 @@ __all__ = ["Drawn", "Window3D"]
 #: Tick label color, matching the 2D window. The background, box and tick mark colors
 #: are in `plot.appearance`, shared with the page.
 TEXT_COLOR = "#d0d0d0"
-
-#: Box, ray, tick and label colors for image exports, which use a white background.
-PAPER_BOX = (40, 40, 40, 230)
-PAPER_RAY = (40, 40, 40, 160)
-PAPER_TICK = (60, 60, 60, 255)
-PAPER_TEXT = "#000000"
 
 #: GL state of the wireframe's occluding solid: the stock opaque state used by all
 #: other items, plus the polygon offset.
@@ -746,7 +745,7 @@ class Window3D(QtWidgets.QMainWindow):
             surface.item.setGLOptions(WIRE_OCCLUDER)
             # The occluder gets no vertex colors, since those would override the flat
             # canvas color it should be drawn in.
-            surface.item.setColor(pg.mkColor("w" if self._papered else BACKGROUND))
+            surface.item.setColor(pg.mkColor(PAPER_GROUND if self._papered else BACKGROUND))
             if faces.size:
                 surface.item.setMeshData(vertexes=vertexes, faces=faces)
             surface.item.setVisible(surface.visible and bool(faces.size))
@@ -1128,8 +1127,13 @@ class Window3D(QtWidgets.QMainWindow):
         return image
 
     def _name_surfaces(self, image: Any) -> None:
-        """Paint the plot list into the corner of an exported image."""
-        if not self._legend or not self.plots:
+        """Paint the plot list into the corner of an exported image.
+
+        Only the surfaces in the picture are named; one switched off in the legend
+        isn't drawn, so it isn't listed.
+        """
+        shown = [surface for surface in self.plots if not surface.hidden]
+        if not self._legend or not shown:
             return
         painter = QtGui.QPainter(image)
         # The frame buffer is in device pixels and the widget in logical ones, so
@@ -1137,7 +1141,7 @@ class Window3D(QtWidgets.QMainWindow):
         painter.scale(*([image.height() / max(self.view.height(), 1)] * 2))
         painter.setFont(QtGui.QFont("Helvetica", 9))
         painter.setRenderHint(QtGui.QPainter.RenderHint.TextAntialiasing)
-        for index, surface in enumerate(self.plots):
+        for index, surface in enumerate(shown):
             painter.setPen(pg.mkColor(surface.paper))
             painter.drawText(16, 20 + index * 14, surface.named)
         painter.end()
@@ -1380,7 +1384,7 @@ class _on_paper:
     def __enter__(self) -> None:
         window = self._window
         window._papered = True
-        window.view.setBackgroundColor("w")
+        window.view.setBackgroundColor(PAPER_GROUND)
         window.box.setColor(PAPER_BOX)
         window.rays.setData(color=pg.glColor(PAPER_RAY))
         for surface in window.plots:

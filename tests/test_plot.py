@@ -2687,6 +2687,33 @@ def _gl_state(item):
     return item._GLGraphicsItem__glOpts
 
 
+def test_an_export_names_only_the_surfaces_in_the_picture(deep, space, monkeypatch):
+    # A surface switched off in the legend isn't drawn, so the exported image doesn't
+    # list it.
+    from pyqtgraph.Qt import QtCore, QtGui
+
+    one = deep.add(_surface("x + y", label="#1"))
+    deep.add(_surface("x - y", label="#2"))
+    deep._legend_picked(1, QtCore.Qt.MouseButton.LeftButton)
+    written = []
+
+    class Painter:
+        RenderHint = QtGui.QPainter.RenderHint
+
+        def __init__(self, _image):
+            pass
+
+        def drawText(self, _x, _y, text):
+            written.append(text)
+
+        def __getattr__(self, _name):
+            return lambda *_arguments: None
+
+    monkeypatch.setattr(space.QtGui, "QPainter", Painter)
+    deep._name_surfaces(QtGui.QImage(10, 10, QtGui.QImage.Format.Format_RGB32))
+    assert written == [one.named]
+
+
 def test_a_wire_hides_behind_a_solid_painted_in_the_canvas(deep, solid, space):
     import pyqtgraph as pg
 

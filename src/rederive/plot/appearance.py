@@ -37,6 +37,11 @@ __all__ = [
     "NUDGE_FAST_PX",
     "NUDGE_PX",
     "PAPER_AXIS",
+    "PAPER_BOX",
+    "PAPER_GROUND",
+    "PAPER_RAY",
+    "PAPER_TEXT",
+    "PAPER_TICK",
     "POLAR_CLOSEST_PX",
     "POLAR_RINGS",
     "POLAR_SPOKES",
@@ -117,6 +122,14 @@ STEP_FAST_SHARE = 1 / 50
 BOX_COLOR = (150, 150, 150, 110)
 RAY_COLOR = (150, 150, 150, 160)
 TICK_COLOR = (150, 150, 150, 200)
+
+#: The same for 3D image exports, with their background and text color: exports are
+#: on white so they paste well into documents.
+PAPER_GROUND = "#ffffff"
+PAPER_BOX = (40, 40, 40, 230)
+PAPER_RAY = (40, 40, 40, 160)
+PAPER_TICK = (60, 60, 60, 255)
+PAPER_TEXT = "#000000"
 
 #: Polygon offset (OpenGL/WebGL factor, units) pushing the surface's occluding
 #: triangles away from the camera. The wireframe lies exactly on them, so without the
