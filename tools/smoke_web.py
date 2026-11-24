@@ -6,9 +6,10 @@
 
 It opens the page, waits for the menu, authors `(x + 1)^2 - (x - 1)^2`, simplifies
 it, and reads `4·x` off the screen. Then it authors an expression on two rows, broken
-with Shift-Enter, which checks that the key reaches the program as itself. That exercises the whole build (two Pyodide
-instances, the Textual driver, xterm.js, the engine worker and the pickles between
-them), and a failure reports which step it stopped at.
+with Shift-Enter, and one started with Alt-A, which checks that both keys reach the
+program as themselves. That exercises the whole build (two Pyodide instances, the
+Textual driver, xterm.js, the engine worker and the pickles between them), and a
+failure reports which step it stopped at.
 
 The screen is read from xterm.js's buffer rather than from pixels, giving the exact
 characters the program wrote.
@@ -41,6 +42,11 @@ ANSWER = "4·x"
 #: complete, and how it is entered.
 ROWS = ("23", "+ 45")
 JOINED = "23 + 45"
+
+#: An expression started with an Alt key, which inserts a Greek letter, and how it is
+#: entered.
+ALT_KEY = "Alt+a"
+GREEK = ("+1", "α + 1")
 
 #: A word from the opening menu, whose appearance means the program is up.
 MENU = "Author"
@@ -168,12 +174,22 @@ def _asked(page, url: str, name: str, shots: Path | None, troubles: list[str]) -
     if not _waiting(page, JOINED, 30):
         return _failed(name, "Shift-Enter did not start a row", page, shots, troubles)
 
+    # An Alt key inserts its glyph rather than its letter.
+    page.keyboard.press("a")
+    page.wait_for_timeout(500)
+    page.keyboard.press(ALT_KEY)
+    page.keyboard.type(GREEK[0])
+    page.keyboard.press("Enter")
+    if not _waiting(page, GREEK[1], 30):
+        return _failed(name, f"{ALT_KEY} did not insert α", page, shots, troubles)
+
     if shots is not None:
         page.screenshot(path=str(shots / f"{name}.png"))
     if troubles:
         return _failed(name, "the page reported errors", page, shots, troubles)
     print(f"{name}: authored, simplified, and read {ANSWER} off the screen, and "
-          f"entered {JOINED} from two rows", file=sys.stderr)
+          f"entered {JOINED} from two rows and {GREEK[1]} with {ALT_KEY}",
+          file=sys.stderr)
     return True
 
 
