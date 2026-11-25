@@ -2379,6 +2379,19 @@ def test_the_real_branch_takes_the_real_root_of_a_negative_number():
     assert simp("SOLVE(x^(1/3) = -2, x)", real) == "x = -8"
 
 
+def test_nsolve_on_the_real_branch_takes_the_real_root_of_a_negative_number():
+    """The real root of a negative number is no proof of a root's absence there."""
+    real = Context(branch=Branch.REAL, precision_digits=10, notation_digits=10)
+    assert simp("NSOLVE(x^(1/3) = -2, x)", real) == "x = -8"
+    assert simp("NSOLVE(x^(2/3) - 2*x^(1/3) = 35, x, -1000, 0)", real) == "x = -125"
+    assert simp("NSOLVE(x^(1/5) + x^(2/5) = 2, x, -100, 0)", real) == "x = -32"
+    assert simp("NSOLVE(x^(2/3) - 2*x^(1/3) = 35, x, -10, 0)", real) == "false"
+    # On any branch a root of a negative number may be any of its roots.
+    whichever = Context(branch=Branch.ANY, precision_digits=10, notation_digits=10)
+    text = "NSOLVE(x^(1/3) = -2, x)"
+    assert simp(text, whichever).startswith("NSOLVE(")
+
+
 def test_a_declared_parameter_decides_a_conditional_solution():
     state = words()
     for declaration, expected in (

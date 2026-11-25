@@ -3541,7 +3541,7 @@ def numeric_roots(
         found = _unbounded(residual, variable, low, high, context)
     if found:
         return [entry.rhs for entry in found]
-    search = _explored(residual, variable, first, last, context)
+    search = _explored(residual, variable, low, high, context)
     if search.root is not None:
         return [search.root]
     return [] if search.rootless else None
@@ -4135,11 +4135,11 @@ class _Search:
 def _explored(
     residual: sp.Basic,
     variable: sp.Symbol,
-    first: float,
-    last: float,
+    low: sp.Basic,
+    high: sp.Basic,
     context: Context,
 ) -> _Search:
-    """A root of `residual` in `[first, last]` found by interval arithmetic, or the proof
+    """A root of `residual` in `[low, high]` found by interval arithmetic, or the finding
     that it has none there.
 
     The interval is cut in halves, leftmost first. A piece on which the enclosure of
@@ -4149,10 +4149,22 @@ def _explored(
     told apart once the pieces are narrow enough to put a cut between them. If every
     piece is dropped, there is no root; a piece that gets too narrow, a residual that
     has no enclosure, or running out of `_EXPLORATION` proves nothing. An infinite end
-    is reached by pieces that double in length.
+    is reached by pieces that double in length. The pieces cover the doubles from the
+    one at or below `low` to the one at or above `high`, so the bounds themselves are
+    covered whatever their value. A finding of no root is as sound as the enclosures of
+    `_enclosing`, short of the reals strictly between an end of a piece whose sign is
+    proved and the next double, which no enclosure looks at (see below).
+
+    On the real branch an odd root of a negative value is real (`_on_real_branch_form`),
+    and the residual is enclosed, bisected and refined in that form.
     """
-    enclose = _enclosing(residual, variable)
-    if enclose is None:
+    principal = context.branch is Branch.PRINCIPAL
+    if context.branch is Branch.REAL:
+        residual = _on_real_branch_form(residual)
+        principal = True
+    enclose = _enclosing(residual, variable, principal)
+    first, last = _outward(low, -math.inf), _outward(high, math.inf)
+    if enclose is None or first is None or last is None:
         return _Search(None, False)
     budget = _EXPLORATION
     complete = True
@@ -4189,6 +4201,45 @@ def _explored(
         pieces.append((middle, high, sign, above))
         pieces.append((low, middle, below, sign))
     return _Search(None, complete)
+
+
+def _outward(bound: sp.Basic, toward: float) -> float | None:
+    """The double nearest `bound` on its side `toward` (minus or plus infinity) or at
+    it, as SymPy decides the sign of their difference, or None if it can't."""
+    if bound.is_infinite:
+        return toward if (bound > 0) == (toward > 0) else -toward
+    if bound.is_Float:
+        bound = sp.Rational(bound)
+    try:
+        point = float(bound.evalf(20))
+    except Exception:
+        return None
+    for _ in range(4):
+        if math.isinf(point):
+            return None
+        difference = sp.Rational(point) - bound
+        if (difference.is_nonpositive if toward < 0 else difference.is_nonnegative):
+            return point
+        point = math.nextafter(point, toward)
+    return None
+
+
+def _on_real_branch_form(expression: sp.Basic) -> sp.Basic:
+    """`expression` with each odd root of a value taken as Branch Real takes it, real
+    for a negative value: `u^(p/q)` with `q` odd is `SIGN(u)^p*ABS(u)^(p/q)`."""
+    if not expression.args:
+        return expression
+    args = [_on_real_branch_form(arg) for arg in expression.args]
+    changed = args != list(expression.args)
+    if (
+        isinstance(expression, sp.Pow)
+        and expression.exp.is_Rational
+        and not expression.exp.is_Integer
+        and expression.exp.q % 2 == 1
+    ):
+        base = args[0]
+        return sp.sign(base) ** int(expression.exp.p) * sp.Abs(base) ** expression.exp
+    return expression.func(*args) if changed else expression
 
 
 def _cut(low: float, high: float) -> float | None:
@@ -4279,26 +4330,32 @@ class _NoEnclosure(Exception):
     """A residual with a part interval arithmetic has no rule for."""
 
 
-def _enclosing(residual: sp.Basic, variable: sp.Symbol) -> Callable | None:
+def _enclosing(
+    residual: sp.Basic, variable: sp.Symbol, principal: bool
+) -> Callable | None:
     """A function from an interval of `variable` to an enclosure of every value of
     `residual` on it, its real and imaginary parts, or None if a part of it has no
     such rule.
 
-    The rules are those of `mpmath.iv`, which rounds outwards, so the result is a
-    proof. A constant is enclosed by evaluating it to more digits than the interval
-    arithmetic carries. A power of a negative base is complex, `x^(1/3)` being
-    `ABS(x)^(1/3)*#e^(#i*pi/3)` there, so `x^(2/3) - 2*x^(1/3) = 35` is proved to
-    have no root below 0 by its imaginary part. A function of a complex value, a power
-    of a base whose values have both signs and `LN` of one not positive have no rule;
-    they raise, and the piece they are on is then not dropped.
+    The rules are those of `mpmath.iv`, which rounds outwards. A constant other than a
+    rational is enclosed by SymPy's 30-digit evaluation of it, widened by 10^-25 of its
+    size (`_constant_enclosure`): that evaluation's accuracy is what SymPy's error
+    tracking estimates, not a bound it proves, so an enclosure holding such a constant
+    is only as good as that estimate. A power of a negative base is complex on the
+    principal branch, `x^(1/3)` being `ABS(x)^(1/3)*#e^(#i*pi/3)` there, so `x^(2/3) -
+    2*x^(1/3) = 35` is proved to have no root below 0 by its imaginary part. Off it
+    (`principal` false) a fractional power of a base that may be negative has no rule.
+    A function of a complex value, a fractional power of a base whose values have both
+    signs and `LN` of one not positive have no rule either; they raise, and the piece
+    they are on is then not dropped.
     """
     try:
-        return _enclosure(residual, variable)
+        return _enclosure(residual, variable, principal)
     except Exception:
         return None
 
 
-def _enclosure(expression: sp.Basic, variable: sp.Symbol) -> Callable:
+def _enclosure(expression: sp.Basic, variable: sp.Symbol, principal: bool) -> Callable:
     iv = mpmath.iv
     if not expression.has(variable):
         constant = _constant_enclosure(expression)
@@ -4306,7 +4363,7 @@ def _enclosure(expression: sp.Basic, variable: sp.Symbol) -> Callable:
     if expression == variable:
         return lambda box: (box, None)
     if isinstance(expression, (sp.Add, sp.Mul)):
-        parts = [_enclosure(part, variable) for part in expression.args]
+        parts = [_enclosure(part, variable, principal) for part in expression.args]
         operation = _sum if isinstance(expression, sp.Add) else _product
 
         def combined(box):
@@ -4318,20 +4375,20 @@ def _enclosure(expression: sp.Basic, variable: sp.Symbol) -> Callable:
         return combined
     if isinstance(expression, sp.Pow):
         base, exponent = expression.args
-        lower = _enclosure(base, variable)
+        lower = _enclosure(base, variable, principal)
         if exponent.is_Integer:
             power = int(exponent)
             return lambda box: _integer_power(lower(box), power)
         if exponent.is_Rational:
-            turn = _constant_enclosure(exponent)[0] * iv.pi
+            turn = _constant_enclosure(exponent)[0] * iv.pi if principal else None
             return lambda box: _rational_power(_real(lower(box)), exponent, turn)
-        upper = _enclosure(exponent, variable)
+        upper = _enclosure(exponent, variable, principal)
         return lambda box: (_real_power(_real(lower(box)), _real(upper(box))), None)
     if isinstance(expression, sp.Abs):
-        inner = _enclosure(expression.args[0], variable)
+        inner = _enclosure(expression.args[0], variable, principal)
         return lambda box: (_absolute(inner(box)), None)
     if isinstance(expression, sp.sign):
-        inner = _enclosure(expression.args[0], variable)
+        inner = _enclosure(expression.args[0], variable, principal)
         return lambda box: (_signs(_real(inner(box))), None)
     calls = {
         sp.exp: iv.exp,
@@ -4344,12 +4401,13 @@ def _enclosure(expression: sp.Basic, variable: sp.Symbol) -> Callable:
     call = calls.get(type(expression))
     if call is None or len(expression.args) != 1:
         raise _NoEnclosure(type(expression).__name__)
-    inner = _enclosure(expression.args[0], variable)
+    inner = _enclosure(expression.args[0], variable, principal)
     return lambda box: (call(_real(inner(box))), None)
 
 
 def _constant_enclosure(constant: sp.Basic):
-    """An enclosure of a constant, real or complex."""
+    """An enclosure of a constant, real or complex: exact for a rational, otherwise
+    SymPy's 30-digit value widened by 10^-25 of its size and rounded outwards."""
     iv = mpmath.iv
     if constant.is_Rational:
         return iv.mpf(int(constant.p)) / iv.mpf(int(constant.q)), None
@@ -4357,13 +4415,20 @@ def _constant_enclosure(constant: sp.Basic):
     real, imaginary = value.as_real_imag()
     if not (real.is_Number and imaginary.is_Number):
         raise _NoEnclosure("not a number")
+    with mpmath.workprec(256):
+        # A 30-digit value converts to an mpf exactly at this precision.
+        parts = [mpmath.mpf(sp.Float(part, 30)._mpf_) for part in (real, imaginary)]
+        size = max(abs(part) for part in parts)
+        if not size or not mpmath.isfinite(size):
+            raise _NoEnclosure("no size to widen by")
+        radius = size * mpmath.mpf(10) ** -25
+    # `iv` keeps the exact endpoints it is given and rounds the sum outwards.
+    widening = iv.mpf([-radius, radius])
 
-    def interval(part: sp.Basic):
-        number = mpmath.mpf(str(part))
-        radius = abs(number) * mpmath.mpf(10) ** -25 + mpmath.mpf(10) ** -300
-        return iv.mpf([number - radius, number + radius])
+    def interval(part):
+        return iv.mpf(part) + widening
 
-    return interval(real), None if imaginary == 0 else interval(imaginary)
+    return interval(parts[0]), None if imaginary == 0 else interval(parts[1])
 
 
 def _real(values):
@@ -4406,13 +4471,14 @@ def _integer_power(values, power: int):
 
 
 def _rational_power(base, exponent: sp.Rational, turn):
-    """`base^exponent` on the principal branch, for a real base of one sign: the turn
-    of a negative base is `exponent*pi`."""
+    """`base^exponent` for a real base of one sign: on the principal branch the turn of
+    a negative base is `exponent*pi`; with no `turn`, off it, a base that may be
+    negative has no rule."""
     iv = mpmath.iv
     if base.a >= 0:
         return _real_power(base, iv.mpf(int(exponent.p)) / iv.mpf(int(exponent.q))), None
-    if base.b > 0:
-        raise ValueError("a power of a value of either sign")
+    if base.b > 0 or turn is None:
+        raise ValueError("a power of a value that may be negative")
     size = _real_power(-base, iv.mpf(int(exponent.p)) / iv.mpf(int(exponent.q)))
     return size * iv.cos(turn), size * iv.sin(turn)
 
