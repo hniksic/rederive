@@ -48,6 +48,7 @@ from rederive.engine.ordering import main_order
 from rederive.engine.sets import is_set
 from rederive.engine.solving import (
     Outcome,
+    _cancels,
     arbitrary,
     between,
     confined,
@@ -1269,6 +1270,11 @@ def nsolve_head(
     of variables, an inequality, or an equation with a parameter in it. For `NSOLVE`
     None also if the search neither finds a root nor proves there is none; `NSOLUTIONS`
     lists the roots found.
+
+    An equation already decided, as `1/(x - 1/3) = 0` is in the bounds 0 and 1, has no
+    root if false. If true, or if the difference of its sides is zero exactly, every
+    value solves it, and the answer is the one `SOLVE` or `SOLUTIONS` gives
+    (`_identity`).
     """
     call = _read(args, one=False)
     if call is None or call.listed or len(call.names) != 1:
@@ -1276,9 +1282,16 @@ def nsolve_head(
     target = call.target
     if isinstance(target, Relational) and not isinstance(target, sp.Equality):
         return None
-    if isinstance(target, (Vector, Boolean)) and not isinstance(target, sp.Equality):
+    if isinstance(target, (Vector, Boolean)) and not isinstance(
+        target, (sp.Equality, BooleanAtom)
+    ):
         return None
-    residual = target.lhs - target.rhs if isinstance(target, sp.Equality) else target
+    if target is sp.false:
+        return Vector() if listing else sp.false
+    if target is sp.true:
+        residual = sp.S.Zero
+    else:
+        residual = target.lhs - target.rhs if isinstance(target, sp.Equality) else target
     if not isinstance(residual, sp.Expr):
         return None
     symbols = _symbols(residual, call.names)
@@ -1291,6 +1304,8 @@ def nsolve_head(
             return None
         if low is sp.oo or high is -sp.oo:
             return None
+    if residual.is_zero or _cancels(residual, symbol):
+        return _identity(symbol, call, context, listing)
     roots = numeric_roots(residual, symbol, context, call.real, call.bounds)
     if listing:
         return Vector(*(roots or ()))
@@ -1298,3 +1313,24 @@ def nsolve_head(
         return None
     disjuncts = [sp.Eq(symbol, root, evaluate=False) for root in roots]
     return sp.Or(*disjuncts) if disjuncts else sp.false
+
+
+def _identity(
+    symbol: sp.Symbol, call: _Call, context: Context, listing: bool
+) -> sp.Basic | None:
+    """`NSOLVE` or `NSOLUTIONS` of an equation every value solves, as `SOLVE` or
+    `SOLUTIONS` gives it: `true` or the range of the bounds, `[@1]` or, with bounds,
+    no vector of values (None)."""
+    found = _Found(everything=True)
+    if call.bounds is not None:
+        found = _bounded(found, (symbol,), call.bounds, context, call.real)
+    if listing:
+        if found.intervals:
+            return None
+        if found.everything:
+            return Vector(arbitrary(context))
+        return Vector(*(row[0] for row in found.rows))
+    disjuncts = _disjuncts(found, (symbol,), context)
+    if disjuncts == [(sp.true, ())]:
+        return sp.true
+    return _either(list(reversed(disjuncts)))

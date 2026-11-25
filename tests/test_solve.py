@@ -1400,6 +1400,27 @@ def test_every_value_in_the_bounds_solves_an_identity(text, expected):
     assert simp(text) == expected
 
 
+NUMERIC_DECIDED = [
+    # An identity is answered as SOLVE and SOLUTIONS answer it.
+    ("NSOLVE(x = x, x)", "true"),
+    ("NSOLVE(x + 1 = 1 + x, x, Real)", "true"),
+    ("NSOLVE(SIN(x)^2 + COS(x)^2 = 1, x)", "true"),
+    ("NSOLVE(x = x, x, 1, 3)", "1 <= x <= 3"),
+    ("NSOLVE(x = x, x, -inf, 3)", "x <= 3"),
+    ("NSOLVE(x = x, x, -inf, inf)", "true"),
+    ("NSOLUTIONS(x = x, x)", "[@1]"),
+    ("NSOLUTIONS(x = x, x, 1, 3)", "NSOLUTIONS(true, x, 1, 3)"),
+    # In its bounds the equation is decided before it is searched.
+    ("NSOLVE(1/(x - 1/3) = 0, x, 0, 1)", "false"),
+    ("NSOLUTIONS(1/(x - 1/3) = 0, x, 0, 1)", "[]"),
+]
+
+
+@pytest.mark.parametrize(("text", "expected"), NUMERIC_DECIDED, ids=str)
+def test_nsolve_of_a_decided_equation_answers_without_a_search(text, expected):
+    assert simp(text) == expected
+
+
 #: Solutions under conditions on the parameters, in answers a second Simplify keeps. A
 #: condition in none of the variables is solved by every value of them where it holds,
 #: and a solution under conditions that hold for no value of the parameters is none:
