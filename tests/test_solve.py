@@ -2631,6 +2631,12 @@ def test_a_jump_across_zero_is_no_root():
     assert simp("NSOLVE(FLOOR(x) = 1/2, x)", TEN).startswith("NSOLVE(")
 
 
+def test_a_search_undefined_on_many_short_intervals_ends():
+    # Each piece next to where `SIN(x) < 0` is scanned again; the search's budget of
+    # evaluations stops it long before the last window.
+    assert simp("NSOLVE(SQRT(SIN(x)) = 2, x)", TEN) == "NSOLVE(SQRT(SIN(x)) = 2, x)"
+
+
 def test_a_root_near_zero_has_all_its_digits():
     assert simp("NSOLVE(SIN(x) = 10^-30, x, -1, 1)", TEN) == "x = 1.000000000*10^-30"
     assert simp("NSOLVE(#e^x - 1 = 10^-20, x)", TEN) == "x = 1.000000000*10^-20"

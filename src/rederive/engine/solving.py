@@ -4087,17 +4087,6 @@ def _approximate_number(value: sp.Basic, context: Context) -> sp.Basic:
     return parts[0] + parts[1] * sp.I
 
 
-def _real_roots(
-    residual: sp.Basic,
-    variable: sp.Symbol,
-    low: sp.Basic,
-    high: sp.Basic,
-    context: Context,
-) -> list[sp.Basic]:
-    root = _bracketed(residual, variable, low, high, context)
-    return [] if root is None else [root]
-
-
 def _finite(low: sp.Basic, high: sp.Basic) -> bool:
     """Whether neither end of a search interval is infinite."""
     ends = (_number(low), _number(high))
@@ -4113,12 +4102,14 @@ def _unbounded(
 ) -> tuple[sp.Basic, ...] | None:
     """A root in an interval with an infinite end, or None.
 
-    This searches a doubling window like Mixed mode's, from `_REACH` to `_REACH_CAP`.
-    Finding nothing proves nothing, hence None rather than an empty tuple.
+    This searches a doubling window like Mixed mode's, from `_REACH` to `_REACH_CAP`,
+    within one `_Budget`. Finding nothing proves nothing, hence None rather than an
+    empty tuple.
     """
     first, last = _number(low), _number(high)
     if first is None or last is None or not first < last:
         return None
+    budget = _Budget()
     reach = _REACH
     while reach <= _REACH_CAP:
         if math.isinf(first) and math.isinf(last):
@@ -4128,9 +4119,9 @@ def _unbounded(
         else:
             window = (max(first, last - reach), last)
         start, end = (sp.Rational(bound) for bound in window)
-        found = _real_roots(residual, variable, start, end, context)
-        if found:
-            return tuple(_equated(variable, root, context) for root in found)
+        root = _bracketed(residual, variable, start, end, context, budget)
+        if root is not None:
+            return (_equated(variable, root, context),)
         reach *= 2
     return None
 
@@ -4160,14 +4151,38 @@ def _bracketed(
     low: sp.Basic,
     high: sp.Basic,
     context: Context,
+    budget: _Budget | None = None,
 ) -> sp.Basic | None:
     """One root of `residual` in `[low, high]`, found by scanning and bisection. The scan
-    finds a piece whose ends straddle a single root.
+    finds a piece whose ends straddle a single root. The evaluations are counted
+    against `budget`, a search's, or else a budget of their own.
     """
     first, last = _number(low), _number(high)
     if first is None or last is None or not first < last:
         return None
-    return _scanned(residual, variable, first, last, context, _RESCANS, _EDGE_RESCANS)
+    budget = budget or _Budget()
+    return _scanned(
+        residual, variable, first, last, context, budget, _RESCANS, _EDGE_RESCANS
+    )
+
+
+#: The most times one search may evaluate its residual, scanning and bisecting. A
+#: residual undefined on many short intervals has every piece next to one scanned again,
+#: and one with many poles has each bisected: `SQRT(SIN(x)) = 2`, which has no root,
+#: would take minutes over all the windows.
+_SEARCH_BUDGET = 5000
+
+
+class _Budget:
+    """The evaluations left to a search (see `_SEARCH_BUDGET`)."""
+
+    def __init__(self) -> None:
+        self.left = _SEARCH_BUDGET
+
+    def spend(self) -> bool:
+        """Whether one more evaluation is allowed, counting it."""
+        self.left -= 1
+        return self.left >= 0
 
 
 def _scanned(
@@ -4176,10 +4191,12 @@ def _scanned(
     first: float,
     last: float,
     context: Context,
+    budget: _Budget,
     depth: int,
     edges: int = 0,
 ) -> sp.Basic | None:
-    """One root in `[first, last]` by a scan of `_SCAN` pieces, or None.
+    """One root in `[first, last]` by a scan of `_SCAN` pieces, or None, also once
+    `budget` runs out.
 
     The scan evaluates in floats, which only picks what to try: a sign change is
     bisected (`_bisect`), and a point where the value comes to 0 is evaluated again
@@ -4210,6 +4227,8 @@ def _scanned(
         point = last if index == _SCAN else first + index * step
         piece = (start, point, index in (1, _SCAN))
         start = point
+        if not budget.spend():
+            return None
         sign = _scan_sign(residual, variable, point)
         if sign == 0:
             exact = _value_at(residual, variable, point, digits)
@@ -4226,7 +4245,7 @@ def _scanned(
         if index and not defined:
             suspect.append(piece)
         elif previous is not None and previous[1] != sign:
-            found = _bisect(residual, variable, previous[0], point, context)
+            found = _bisect(residual, variable, previous[0], point, context, budget)
             if found is not None:
                 return found
         previous, defined = (point, sign), True
@@ -4239,6 +4258,7 @@ def _scanned(
             low,
             high,
             context,
+            budget,
             max(depth - 1, 0),
             edges - 1 if at_edge and edges else 0,
         )
@@ -4278,7 +4298,12 @@ def _substituted(
 
 
 def _bisect(
-    residual: sp.Basic, variable: sp.Symbol, low: float, high: float, context: Context
+    residual: sp.Basic,
+    variable: sp.Symbol,
+    low: float,
+    high: float,
+    context: Context,
+    budget: _Budget | None = None,
 ) -> sp.Basic | None:
     """The root of `residual` between `low` and `high`, where its sign changes, or None
     if it changes sign without vanishing there, as at a pole or a jump.
@@ -4286,11 +4311,13 @@ def _bisect(
     The residual is evaluated at exact points (`_value_at`), so its signs are right
     however much its terms cancel: `PHI^n/SQRT(5) - 10^100` is zero at its root to a
     hundred digits less than its terms. `_root_between` narrows the bracket and judges
-    what it holds.
+    what it holds. Each evaluation is counted against `budget` if there is one.
     """
     digits = context.precision_digits + GUARD
 
     def value(point) -> _Value | None:
+        if budget is not None and not budget.spend():
+            return None
         return _value_at(residual, variable, point, digits)
 
     root = _root_between(value, low, high, digits)
@@ -4540,7 +4567,7 @@ def _searched(
     """The last resort of Mixed and Approximate modes: every root of a polynomial with
     number coefficients (the real ones with `real`), and of anything else the first
     real root of `[-10, 10]`, doubling the interval until one turns up, as the manual
-    describes for Mixed. The cap is ours.
+    describes for Mixed. The cap is ours, and so is the `_Budget` of the search.
     """
     polynomial = _number_polynomial(residual, variable)
     if polynomial is not None:
@@ -4548,13 +4575,14 @@ def _searched(
         if not roots:
             return None
         return tuple(_equated(variable, root, context) for root in roots)
+    budget = _Budget()
     reach = _REACH
     while reach <= _REACH_CAP:
-        found = _real_roots(
-            residual, variable, sp.Integer(-reach), sp.Integer(reach), context
+        root = _bracketed(
+            residual, variable, sp.Integer(-reach), sp.Integer(reach), context, budget
         )
-        if found:
-            return tuple(_equated(variable, root, context) for root in found)
+        if root is not None:
+            return (_equated(variable, root, context),)
         reach *= 2
     return None
 
