@@ -2972,6 +2972,8 @@ def _completed(
     if polynomial is None or polynomial.degree() < 1:
         return None
     roots = _polynomial_roots(polynomial, working, real)
+    if roots is None:
+        return None
     return [{**known, unknown[0]: root} for root in roots]
 
 
@@ -3496,7 +3498,9 @@ def numeric_roots(
     None if the search found none without proving that there is none.
 
     A polynomial gives every distinct root (`_polynomial_roots`), only the real ones
-    with `real` and only those in `bounds` with bounds; that list is complete. Anything
+    with `real` and only those in `bounds` with bounds. Its real roots are isolated
+    exactly and the nonreal ones make up its degree, so that list is complete; where
+    they can't be found that way, the answer is None. Anything
     else gives one real root: the leftmost one a scan of `bounds` detects, or without
     bounds that of the first window of `[-10, 10]`, `[-20, 20]`, ... that holds one.
     Where the scan detects none, interval arithmetic searches the whole range (see
@@ -3523,9 +3527,7 @@ def numeric_roots(
     """
     polynomial = _number_polynomial(residual, variable)
     if polynomial is not None:
-        low, high = bounds if bounds is not None else (-sp.oo, sp.oo)
-        roots = _polynomial_roots(polynomial, context, real or bounds is not None)
-        return [root for root in roots if bounds is None or _within(root, low, high)]
+        return _polynomial_roots(polynomial, context, real, bounds)
     if _calls_defined(residual, context):
         return _pointwise_roots(residual, variable, context, bounds)
     low, high = bounds if bounds is not None else (-sp.oo, sp.oo)
@@ -3673,102 +3675,421 @@ def _number_polynomial(residual: sp.Basic, variable: sp.Symbol) -> sp.Poly | Non
 
 
 def _polynomial_roots(
-    polynomial: sp.Poly, context: Context, real: bool
-) -> list[sp.Basic]:
-    """Every distinct root of a polynomial with number coefficients, approximated, or
-    its real roots with `real`.
+    polynomial: sp.Poly,
+    context: Context,
+    real: bool,
+    bounds: tuple[sp.Basic, sp.Basic] | None = None,
+) -> list[sp.Basic] | None:
+    """Every distinct root of a polynomial with number coefficients, approximated; with
+    `real` only its real roots, and with `bounds` only the real roots in them. None if
+    the roots couldn't be found or told apart, which proves nothing.
 
     The polynomial is made square-free and factored exactly first, so a multiple root
-    is one root and a linear factor gives its root exactly: `3*x - 4` gives 4/3. Real
-    roots of a factor with real coefficients are isolated exactly before they are
-    refined, so they come out real however close together they lie, and complex ones
-    come in conjugate pairs.
+    is one root and a linear factor gives its root exactly: `3*x - 4` gives 4/3. A
+    decimal coefficient is taken as the rational it stands for. Which roots are real,
+    and which real ones lie in the bounds, is decided exactly (see `_real_intervals`
+    and `_side`), so a real root is never written with an imaginary part, nor a
+    nonreal one without one, however close the roots lie, and a root at a bound is in.
     """
+    approximate = any(
+        coefficient.has(sp.Float) for coefficient in polynomial.all_coeffs()
+    )
     try:
-        square_free = polynomial.sqf_part()
+        square_free = _exact_polynomial(polynomial).sqf_part()
         _, factors = square_free.factor_list()
     except Exception:
-        factors = [(polynomial, 1)]
+        return None
+    real = real or bounds is not None
     found: list[sp.Basic] = []
     for factor, _ in factors:
         if factor.degree() < 1:
             continue
         if factor.degree() == 1:
-            slope, offset = factor.all_coeffs()
-            root = -offset / slope
-            if real and root.is_extended_real is not True:
-                continue
-            exact = root.is_Rational or root in (sp.I, -sp.I)
-            found.append(root if exact else _approximate_number(root, context))
-            continue
-        found.extend(_approximate_roots(factor, context, real))
+            roots = _linear_root(factor, context, real, bounds, approximate)
+        else:
+            roots = _approximate_roots(factor, context, real, bounds)
+        if roots is None:
+            return None
+        found.extend(roots)
     return _ordered(found)
 
 
-def _approximate_roots(
-    factor: sp.Poly, context: Context, real: bool
-) -> list[sp.Basic]:
-    """The roots of a square-free polynomial of degree 2 or more, approximated.
-
-    The roots are refined together at a working precision well past the digits shown.
-    With real coefficients the number of real roots is counted exactly first (Sturm),
-    and that many roots nearest the real axis are the real ones, so a real root never
-    gains an imaginary part however close the roots lie; the others are written as
-    conjugate pairs.
+def _exact_polynomial(polynomial: sp.Poly) -> sp.Poly:
+    """`polynomial` with each float coefficient replaced by the rational it stores,
+    over the smallest domain holding its coefficients exactly: `SQRT(2)` makes an
+    algebraic field, where arithmetic decides zero exactly, not an expression domain.
     """
+    coefficients = [
+        sp.nsimplify(coefficient, rational=True)
+        if coefficient.has(sp.Float)
+        else coefficient
+        for coefficient in polynomial.all_coeffs()
+    ]
+    try:
+        return sp.Poly(coefficients, polynomial.gen, extension=True)
+    except Exception:
+        return sp.Poly(coefficients, polynomial.gen)
+
+
+def _linear_root(
+    factor: sp.Poly,
+    context: Context,
+    real: bool,
+    bounds: tuple[sp.Basic, sp.Basic] | None,
+    approximate: bool,
+) -> list[sp.Basic] | None:
+    """The root of a linear factor, exact where it is rational or `#i` and the
+    polynomial had no decimal coefficient, as a list of the one root, or none if it is
+    not real and `real` or outside `bounds`; None if that can't be decided."""
+    slope, offset = factor.all_coeffs()
+    root = sp.sympify(-offset / slope)
+    if real:
+        imaginary = _number_sign(sp.im(root))
+        if imaginary is None:
+            return None
+        if imaginary:
+            return []
+    if bounds is not None:
+        low, high = bounds
+        above = low == -sp.oo or _number_sign(root - low)
+        below = high == sp.oo or _number_sign(high - root)
+        if above is None or below is None:
+            return None
+        if above < 0 or below < 0:
+            return []
+    exact = not approximate and (root.is_Rational or root in (sp.I, -sp.I))
+    return [root if exact else _approximate_number(root, context)]
+
+
+def _approximate_roots(
+    factor: sp.Poly,
+    context: Context,
+    real: bool,
+    bounds: tuple[sp.Basic, sp.Basic] | None,
+) -> list[sp.Basic] | None:
+    """The roots of a square-free polynomial of degree 2 or more, approximated (the
+    real ones with `real`, those in `bounds` with bounds), or None if they couldn't be
+    found.
+
+    The real roots come from exact isolating intervals (`_real_intervals`); with a
+    coefficient that isn't real, they are those of the greatest common divisor of the
+    real and the imaginary part, the polynomials of the coefficients' real and
+    imaginary parts. The other roots are computed numerically, as many as the degree
+    leaves (`_nonreal_roots`), so every root is there once and each nonreal one is
+    known to be nonreal. Where only real roots are asked for, nonreal ones aren't
+    computed at all.
+    """
+    parts = [sp.sympify(c).as_real_imag() for c in factor.all_coeffs()]
+    imaginary = [_number_sign(part) for _, part in parts]
+    if None in imaginary:
+        return None
+    symmetric = not any(imaginary)
+    if symmetric:
+        divisor = factor
+    else:
+        try:
+            divisor = _exact_polynomial(
+                sp.Poly([re for re, _ in parts], factor.gen)
+            ).gcd(_exact_polynomial(sp.Poly([im for _, im in parts], factor.gen)))
+        except Exception:
+            return None
+    intervals = _real_intervals(divisor, context)
+    if intervals is None:
+        return None
+    if bounds is not None:
+        kept = []
+        for interval in intervals:
+            sides = [_side(divisor, interval, bound) for bound in bounds]
+            if None in sides:
+                return None
+            if sides[0] >= 0 and sides[1] <= 0:
+                kept.append(interval)
+        intervals = kept
+    found = [_approximate_number((low + high) / 2, context) for low, high, _ in intervals]
+    if real:
+        return found
+    nonreal = _nonreal_roots(
+        factor, [(low + high) / 2 for low, high, _ in intervals], symmetric, context
+    )
+    return None if nonreal is None else found + nonreal
+
+
+#: An isolating interval `(low, high, sign)` of a real root of a square-free
+#: polynomial: the root is its only one in `[low, high]`, and `sign` is the sign of
+#: the polynomial at `low`, nonzero unless `low == high` is the root itself.
+_Isolated = tuple[sp.Rational, sp.Rational, int]
+
+
+def _real_intervals(polynomial: sp.Poly, context: Context) -> list[_Isolated] | None:
+    """Isolating intervals of every real root of a square-free polynomial with real
+    coefficients, each narrower than the root's size by the digits shown and the
+    guard, ascending; None if they couldn't be found.
+
+    With rational coefficients the intervals are SymPy's, found and refined exactly.
+    Otherwise the polynomial's real roots are counted with a Sturm sequence over its
+    own coefficient domain, and the intervals are those of a rational approximation of
+    the polynomial, each widened a little and checked to have a sign change of the
+    polynomial itself across it: disjoint intervals with a sign change, as many as the
+    count, hold one root each and are all of them. A sign is decided exactly where it
+    is zero and by evaluation with SymPy's error bound otherwise (`_number_sign`).
+    """
+    if polynomial.degree() < 1:
+        return []
+    tolerance = sp.Rational(1, 10 ** (context.precision_digits + GUARD))
+    if polynomial.domain in (sp.ZZ, sp.QQ):
+        found = []
+        for (low, high), _ in polynomial.intervals():
+            refined = _refined(polynomial, low, high, tolerance)
+            if refined is None:
+                return None
+            low, high = refined
+            sign = _number_sign(polynomial.eval(low))
+            if sign is None or (sign == 0) != (low == high):
+                return None
+            found.append((low, high, sign))
+        return found
+    count = _sturm_count(polynomial)
+    if count is None:
+        return None
+    if count == 0:
+        return []
+    working = 2 * (context.precision_digits + GUARD) + 20
+    for _ in range(3):
+        found = _checked_intervals(polynomial, count, working, tolerance)
+        if found is not None:
+            return found
+        working *= 2
+    return None
+
+
+def _checked_intervals(
+    polynomial: sp.Poly, count: int, working: int, tolerance: sp.Rational
+) -> list[_Isolated] | None:
+    """The isolating intervals of `_real_intervals` from a rational approximation of
+    `polynomial` to `working` digits, if they check out against the polynomial."""
+    try:
+        approximation = sp.Poly(
+            [
+                sp.Rational(str(sp.sympify(coefficient).evalf(working)))
+                for coefficient in polynomial.all_coeffs()
+            ],
+            polynomial.gen,
+        )
+        intervals = approximation.intervals()
+    except Exception:
+        return None
+    if len(intervals) != count:
+        return None
+    found: list[_Isolated] = []
+    for (low, high), _ in intervals:
+        refined = _refined(approximation, low, high, tolerance)
+        if refined is None:
+            return None
+        low, high = refined
+        width = max(high - low, abs(low) * tolerance, tolerance**2)
+        low, high = low - width, high + width
+        signs = [_number_sign(polynomial.eval(end)) for end in (low, high)]
+        if None in signs:
+            return None
+        if signs[0] * signs[1] >= 0 or (found and found[-1][1] >= low):
+            return None
+        found.append((low, high, signs[0]))
+    return found
+
+
+def _refined(
+    polynomial: sp.Poly, low: sp.Rational, high: sp.Rational, tolerance: sp.Rational
+) -> tuple[sp.Rational, sp.Rational] | None:
+    """An isolating interval of a rational polynomial's root narrowed by bisection
+    until its width is `tolerance` of its distance from 0, or None if that takes too
+    long. Signs are computed exactly, in integers."""
+    numerators = [sp.Rational(coefficient) for coefficient in polynomial.all_coeffs()]
+    scale = math.lcm(*(int(coefficient.q) for coefficient in numerators))
+    coefficients = [int(coefficient * scale) for coefficient in numerators]
+
+    def sign(point: Fraction) -> int:
+        top, bottom = point.numerator, point.denominator
+        value = coefficients[0]
+        for power, coefficient in enumerate(coefficients[1:], 1):
+            value = value * top + coefficient * bottom**power
+        return (value > 0) - (value < 0)
+
+    first, last = Fraction(int(low.p), int(low.q)), Fraction(int(high.p), int(high.q))
+    at_first = sign(first)
+    if at_first == 0:
+        return low, low
+    narrow = Fraction(int(tolerance.p), int(tolerance.q))
+    for _ in range(_REFINEMENT):
+        if first == last or (
+            first * last > 0 and last - first <= min(abs(first), abs(last)) * narrow
+        ):
+            return sp.Rational(first), sp.Rational(last)
+        middle = Fraction(0) if first < 0 < last else (first + last) / 2
+        at_middle = sign(middle)
+        if at_middle == 0:
+            return sp.Rational(middle), sp.Rational(middle)
+        if at_middle == at_first:
+            first = middle
+        else:
+            last = middle
+    return None
+
+
+#: The most bisections `_refined` makes of one interval.
+_REFINEMENT = 20000
+
+
+def _sturm_count(polynomial: sp.Poly) -> int | None:
+    """The number of real roots of a square-free polynomial with real coefficients,
+    by its Sturm sequence over its own coefficient domain, or None if a sign in it
+    can't be decided."""
+    try:
+        field = polynomial if polynomial.domain.is_Field else polynomial.to_field()
+        sequence = field.sturm()
+    except Exception:
+        return None
+    signs = [_number_sign(member.LC()) for member in sequence]
+    if None in signs or 0 in signs:
+        return None
+    at_minus = [sign * (-1) ** member.degree() for sign, member in zip(signs, sequence)]
+    return _variations(at_minus) - _variations(signs)
+
+
+def _variations(signs: list[int]) -> int:
+    return sum(1 for first, second in itertools.pairwise(signs) if first != second)
+
+
+def _side(polynomial: sp.Poly, interval: _Isolated, bound: sp.Basic) -> int | None:
+    """The sign of `root - bound` for the root of `polynomial` in `interval`, or None
+    if it can't be decided. That the root is the bound is decided exactly."""
+    if bound == -sp.oo:
+        return 1
+    if bound == sp.oo:
+        return -1
+    low, high, sign = interval
+    if low == high:
+        return _number_sign(low - bound)
+    below = _number_sign(bound - low)
+    if below is None or below <= 0:
+        return None if below is None else 1
+    above = _number_sign(high - bound)
+    if above is None or above <= 0:
+        return None if above is None else -1
+    value = _number_sign(polynomial.as_expr().subs(polynomial.gen, bound))
+    if value is None or value == 0:
+        return value
+    # The polynomial keeps its sign at `low` from `low` up to the root.
+    return 1 if value == sign else -1
+
+
+def _number_sign(value: sp.Basic) -> int | None:
+    """The sign of a real number, or None if it can't be decided.
+
+    Zero is decided exactly: by SymPy's arithmetic, or for an algebraic number by its
+    minimal polynomial. A nonzero number's sign is that of its evaluation, which
+    SymPy gives only once its error bound excludes 0.
+    """
+    value = sp.sympify(value)
+    if value.is_Rational:
+        return int(sp.sign(value))
+    try:
+        if value.is_extended_positive:
+            return 1
+        if value.is_extended_negative:
+            return -1
+        if sp.expand(value) == 0:
+            return 0
+        if value.is_algebraic and sp.minimal_polynomial(value).is_Symbol:
+            return 0
+    except Exception:
+        return None
+    return None
+
+
+def _nonreal_roots(
+    factor: sp.Poly, real: list[sp.Rational], symmetric: bool, context: Context
+) -> list[sp.Basic] | None:
+    """The nonreal roots of a square-free polynomial whose real roots are `real`, or
+    None if they couldn't be computed to the digits shown.
+
+    All roots are computed together (mpmath's `polyroots`), the one nearest each real
+    root is set aside, and the others are the nonreal ones. Each must be accurate to
+    the digits shown and the guard in its imaginary part, which is known not to be
+    zero, and in its real part unless that is negligible beside the root's size (then
+    it is 0, as `#i` is). With real coefficients (`symmetric`) the nonreal roots come
+    in conjugate pairs, written as such. Where that isn't reached, the working
+    precision is doubled.
+    """
+    count = factor.degree() - len(real)
+    if count == 0:
+        return []
     digits = context.precision_digits + GUARD
     working = 2 * digits + 20
-    coefficients = factor.all_coeffs()
-    with mpmath.workdps(working):
-        try:
-            values = [
-                mpmath.mpc(*(mpmath.mpf(str(part.evalf(working))) for part in parts))
-                for parts in (c.as_real_imag() for c in coefficients)
-            ]
-            roots = mpmath.polyroots(values, maxsteps=200, extraprec=4 * working)
-        except Exception:
-            return []
-        found: list[sp.Basic] = []
-        if all(coefficient.is_extended_real for coefficient in coefficients):
+    parts = [sp.sympify(c).as_real_imag() for c in factor.all_coeffs()]
+    for attempt in range(4):
+        with mpmath.workdps(working):
             try:
-                count = _real_count(factor, coefficients, working)
+                values = [
+                    mpmath.mpc(*(mpmath.mpf(str(part.evalf(working))) for part in pair))
+                    for pair in parts
+                ]
+                roots, error = mpmath.polyroots(
+                    values,
+                    maxsteps=200 << attempt,
+                    cleanup=False,
+                    extraprec=4 * working,
+                    error=True,
+                )
             except Exception:
-                return []
-            ordered = sorted(roots, key=lambda root: abs(mpmath.im(root)))
-            for root in ordered[:count]:
-                found.append(_approximate_number(_mp(mpmath.re(root)), context))
-            if not real:
-                for root in ordered[count:]:
-                    if mpmath.im(root) > 0:
-                        value = _approximate_number(_mp(root), context)
-                        found += [value, sp.conjugate(value)]
-            return found
-        for root in roots:
-            number = _approximate_number(_mp(root), context)
-            if real and sp.im(number) != 0:
+                working *= 2
                 continue
-            found.append(number)
-        return found
+            remaining = list(roots)
+            for root in real:
+                value = mpmath.mpf(root.p) / root.q
+                remaining.remove(min(remaining, key=lambda found: abs(found - value)))
+            found = _nonreal_found(remaining, error, symmetric, digits, context)
+            if found is not None:
+                return found
+        working *= 2
+    return None
 
 
-def _real_count(factor: sp.Poly, coefficients: list[sp.Basic], working: int) -> int:
-    """The number of real roots of a square-free polynomial with real coefficients,
-    counted exactly; irrational coefficients are first replaced by rationals agreeing
-    to `working` digits."""
-    if factor.domain not in (sp.ZZ, sp.QQ):
-        factor = sp.Poly(
-            [sp.Rational(str(c.evalf(working))) for c in coefficients], factor.gen
-        )
-    return factor.count_roots()
+def _nonreal_found(
+    roots: list, error, symmetric: bool, digits: int, context: Context
+) -> list[sp.Basic] | None:
+    """`roots`, nonreal roots computed with `error`, as numbers, if each is accurate to
+    `digits` (see `_nonreal_roots`); with `symmetric` they must pair up as conjugates.
+    """
+    tolerance = mpmath.mpf(10) ** -digits
+    if any(
+        error > min(abs(root.imag), abs(root) * tolerance) * tolerance for root in roots
+    ):
+        return None
+    if symmetric:
+        upper = sorted((root for root in roots if root.imag > 0), key=_key)
+        lower = sorted((mpmath.conj(root) for root in roots if root.imag < 0), key=_key)
+        if len(upper) != len(lower) or any(
+            abs(first - second) > 2 * error for first, second in zip(upper, lower)
+        ):
+            return None
+        roots = upper
+    found: list[sp.Basic] = []
+    for root in roots:
+        size = abs(root) * tolerance
+        real = sp.S.Zero if abs(root.real) <= size else _rounded(root.real, context)
+        value = real + _rounded(root.imag, context) * sp.I
+        found += [value, sp.conjugate(value)] if symmetric else [value]
+    return found
 
 
-def _mp(value) -> sp.Basic:
-    """An mpmath number as a sympy one, keeping its digits."""
-    if isinstance(value, mpmath.mpc):
-        return sp.Float(str(value.real), mpmath.mp.dps) + sp.I * sp.Float(
-            str(value.imag), mpmath.mp.dps
-        )
-    return sp.Float(str(value), mpmath.mp.dps)
+def _key(root) -> tuple:
+    return (root.real, root.imag)
+
+
+def _rounded(value, context: Context) -> sp.Rational:
+    """An mpmath real as the simplest rational with the digits shown."""
+    number = sp.Float(str(value), mpmath.mp.dps)
+    return simplest_rational(number, context.precision_digits)
 
 
 def _approximate_number(value: sp.Basic, context: Context) -> sp.Basic:
@@ -3795,15 +4116,6 @@ def _real_roots(
     high: sp.Basic,
     context: Context,
 ) -> list[sp.Basic]:
-    polynomial = _number_polynomial(residual, variable)
-    if polynomial is not None:
-        # Each distinct root once, collapsing multiplicity as the exact path does:
-        # `(x - 1)^2` has the single solution 1.
-        return [
-            root
-            for root in _polynomial_roots(polynomial, context, True)
-            if _within(root, low, high)
-        ]
     root = _bracketed(residual, variable, low, high, context)
     return [] if root is None else [root]
 
@@ -3851,13 +4163,6 @@ def _approximate(root: sp.Basic, context: Context) -> sp.Basic:
     """
     digits = context.precision_digits
     return simplest_rational(root.evalf(digits + GUARD), digits)
-
-
-def _within(root: sp.Basic, low: sp.Basic, high: sp.Basic) -> bool:
-    value, first, last = _number(root), _number(low), _number(high)
-    if value is None or first is None or last is None:
-        return False
-    return first <= value <= last
 
 
 def _number(value: sp.Basic) -> float | None:

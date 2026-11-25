@@ -2251,6 +2251,51 @@ def test_nsolve_in_bounds_finds_the_roots_there():
     assert simp(text, TEN) == "[0, 1.324194449, 4.640683630, 7.811334475]"
 
 
+def test_nsolve_keeps_a_polynomial_root_at_a_bound():
+    """Whether a root lies in the bounds is decided exactly, not on rounded values."""
+    assert simp("NSOLVE(x^2 = 2, x, SQRT(2), 3)", TEN) == "x = 1.414213562"
+    assert simp("NSOLVE(x^2 = 2, x, 0, SQRT(2))", TEN) == "x = 1.414213562"
+    assert simp("NSOLVE(x^3 = 3, x, 3^(1/3), 2)", TEN) == "x = 1.442249570"
+    assert simp("NSOLVE(x^2 = 2, x, SQRT(2) + 10^-40, 3)", TEN) == "false"
+    assert simp("NSOLVE(x^2 - pi^2 = 0, x, -4, -pi)", TEN) == "x = -3.141592653"
+    assert disjuncts(
+        "NSOLVE(x^2 - (SQRT(2) + SQRT(3))*x + SQRT(6) = 0, x, SQRT(2), SQRT(3))", TEN
+    ) == {"x = 1.414213562", "x = 1.732050807"}
+
+
+def test_nsolve_finds_the_roots_of_a_widely_scaled_polynomial():
+    """Real roots come from exact isolation, refined relative to their size."""
+    assert disjuncts("NSOLVE(x^2/10^200 + x - 1 = 0, x)", TEN) == {
+        "x = -10^200", "x = 1"
+    }
+    assert disjuncts("NSOLVE(x^2 - 10^120*x + 1 = 0, x)", TEN) == {
+        "x = 1.000000000*10^-120", "x = 10^120"
+    }
+
+
+def test_nsolve_gives_a_nonreal_root_its_imaginary_part_however_small():
+    """The real roots are counted exactly, so a root that isn't one keeps its
+    imaginary part, to the digits shown: a polynomial of degree 4 has four roots."""
+    assert disjuncts("NSOLVE((x^2 - 2)^2 + 10^-60 = 0, x)", TEN) == {
+        "x = -1.414213562 - 3.535533906*10^-31*#i",
+        "x = -1.414213562 + 3.535533906*10^-31*#i",
+        "x = 1.414213562 - 3.535533906*10^-31*#i",
+        "x = 1.414213562 + 3.535533906*10^-31*#i",
+    }
+    assert disjuncts("NSOLVE(x^2 - 2*x + 1 + 10^-40 = 0, x)", TEN) == {
+        "x = 1 - 1.000000000*10^-20*#i", "x = 1 + 1.000000000*10^-20*#i"
+    }
+    assert simp("NSOLVE(x^2 - 2*x + 1 + 10^-40 = 0, x, Real)", TEN) == "false"
+
+
+def test_nsolve_finds_the_real_roots_of_a_polynomial_without_its_complex_ones():
+    assert simp("NSOLVE(x^150 + x + 1 = 0, x, Real)", TEN) == "false"
+    assert simp("NSOLVE(x^151 + x + 1 = 0, x, Real)", TEN) == "x = -0.9756864152"
+    assert disjuncts("NSOLVE(x^3 - #i*x^2 - 2*x + 2*#i, x, Real)", TEN) == {
+        "x = -1.414213562", "x = 1.414213562"
+    }
+
+
 def test_nsolve_tells_roots_apart_that_lie_closer_than_its_scan():
     """`SIN(x^2) = #e^x` has pairs of roots about 0.00015 apart near each zero of
     `SIN(x^2)`; between them the scan sees no sign change, interval arithmetic does."""
