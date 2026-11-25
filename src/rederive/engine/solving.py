@@ -4221,8 +4221,8 @@ def _scanned(
     defined = False
     for index in range(_SCAN + 1):
         point = first + index * step
-        evaluated = residual.subs(variable, sp.Float(point))
-        value = _number(evaluated)
+        evaluated = _substituted(residual, variable, point)
+        value = None if evaluated is None else _number(evaluated)
         if value is None:
             if defined:
                 suspect.append((point - step, point))
@@ -4255,6 +4255,15 @@ def _scanned(
         if found is not None:
             return found
     return None
+
+
+def _substituted(residual: sp.Basic, variable: sp.Symbol, point: float) -> sp.Basic | None:
+    """`residual` with `point` substituted as a float, or None where that fails, as
+    `GAMMA` does at a pole: the residual is undefined there."""
+    try:
+        return residual.subs(variable, sp.Float(point))
+    except Exception:
+        return None
 
 
 def _vanishes(value: sp.Basic) -> bool:

@@ -2594,6 +2594,12 @@ def test_a_root_next_to_an_end_where_the_equation_is_undefined():
     assert simp("NSOLVE((x - 10^(-6))/x, x, 0, 1)") == "x = 10^-6"
 
 
+def test_a_point_where_evaluating_fails_is_where_the_equation_is_undefined():
+    # Evaluating `GAMMA` at its pole raises; the scan steps over the point.
+    assert simp("NSOLVE(GAMMA(x) = 5, x, 0, 10)", TEN) == "x = 0.1844872755"
+    assert simp("NSOLVE(x! = 5, x, -1, 10)", TEN) == "x = -0.8155127244"
+
+
 def test_a_candidate_offered_under_a_condition_holds_where_its_parameter_allows():
     assert simp("SOLVE(t + 2*SQRT(v) = 24, v)") == "v = IF(t <= 24, (t - 24)^2/4)"
 
