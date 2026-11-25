@@ -2143,3 +2143,13 @@ async def test_nsolve_evaluates_a_program_at_each_point():
         ("NSOLUTIONS(sq(x) = 3, x, 1, 20)", "[9]"),
         ("NSOLVE(sq(x) = -3, x, 1, 20)", "NSOLVE(sq(x) = -3, x, 1, 20)"),
     )
+
+
+async def test_nsolve_takes_no_jump_of_a_program_for_a_root():
+    # The program's value jumps from -5 to 10^-7 at 5 without passing 0.
+    await run(
+        "> jm(a) := PROG(IF(a < 5, RETURN a - 10), 1/10^7)",
+        ("NSOLVE(jm(x) = 0, x, 1, 20)", "NSOLVE(jm(x) = 0, x, 1, 20)"),
+        "> jr(a) := PROG(IF(a < 5, RETURN a - 10), a - 7)",
+        ("NSOLVE(jr(x) = 0, x, 1, 20)", "x = 7"),
+    )

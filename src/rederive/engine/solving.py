@@ -3574,10 +3574,9 @@ def _pointwise_roots(
     evaluating it anew at each point with its programs running, as a plot does (see
     `plot_form.Pointwise`), or None if none is found.
 
-    The range, `bounds` or else `[-10, 10]` doubled until one turns up, is sampled for
-    a sign change between two values, which is bisected; the root is taken only if
-    the value there is small next to those at the bracket's ends, which a pole is
-    not. Finding none proves nothing, so the answer is then None, never empty.
+    The range, `bounds` or else `[-10, 10]` quadrupled until one turns up, is sampled
+    for a sign change between two values, which `_root_between` narrows to a root or
+    rejects. Finding none proves nothing, so the answer is then None, never empty.
     """
     from rederive.engine.from_sympy import from_sympy
     from rederive.engine.plot_form import Pointwise
@@ -3586,15 +3585,21 @@ def _pointwise_roots(
         node = from_sympy(residual, context).node
     except Exception:
         return None
-    # Past the digits asked for, so that the bisection settles the digits shown.
-    working = context.with_precision(Precision.APPROXIMATE, context.precision_digits + 5)
+    digits = context.precision_digits + GUARD
+    # Past the digits the root is narrowed to, so that the signs there are right.
+    working = context.with_precision(Precision.APPROXIMATE, digits + 5)
     pointwise = Pointwise([node], working, [variable.name], _POINTWISE_STEPS)
 
-    def value(point: float) -> float | None:
-        (found,) = pointwise.at(point)
-        if found is None or abs(found.imag) > 1e-9 * max(1.0, abs(found.real)):
+    def value(point) -> _Value | None:
+        (found,) = pointwise.at(_exact(point))
+        if found is None or not cmath.isfinite(found):
             return None
-        return found.real
+        if abs(found.imag) > 1e-9 * max(1.0, abs(found.real)):
+            return None
+        # A program computes in floats: its 0 has no sign.
+        if found.real == 0:
+            return _UNSIGNED
+        return _Value(1 if found.real > 0 else -1, mpmath.mpf(abs(found.real)))
 
     if bounds is not None:
         first, last = _number(bounds[0]), _number(bounds[1])
@@ -3610,57 +3615,30 @@ def _pointwise_roots(
             windows.append((-reach, reach))
             reach *= 4
     for low, high in windows:
-        root = _sign_change(value, low, high)
+        root = _sign_change(value, low, high, digits)
         if root is not None:
-            return [_approximate(sp.Float(root, 17), context)]
+            return [_approximate(_exact(root), context)]
     return None
 
 
 def _sign_change(
-    value: Callable[[float], float | None], low: float, high: float
-) -> float | None:
-    """The leftmost root of `value` a scan of `[low, high]` brackets, bisected, or
-    None (see `_pointwise_roots`)."""
+    value: Callable[[float], _Value | None], low: float, high: float, digits: int
+) -> mpmath.mpf | None:
+    """The leftmost root of `value` that a scan of `[low, high]` brackets, or None (see
+    `_pointwise_roots`). A point whose sign can't be told is passed over."""
     step = (high - low) / _POINTWISE_SAMPLES
-    before_point, before = None, None
+    before: tuple[float, int] | None = None
     for index in range(_POINTWISE_SAMPLES + 1):
-        point = low + index * step
+        point = high if index == _POINTWISE_SAMPLES else low + index * step
         here = value(point)
-        if here == 0:
-            return point
-        if here is not None and before is not None and (here < 0) != (before < 0):
-            root = _bisected_points(value, before_point, point, before)
+        if here is None or here.sign is None:
+            continue
+        if before is not None and before[1] != here.sign:
+            root = _root_between(value, before[0], point, digits)
             if root is not None:
                 return root
-        if here is not None:
-            before_point, before = point, here
+        before = (point, here.sign)
     return None
-
-
-def _bisected_points(
-    value: Callable[[float], float | None], start: float, end: float, before: float
-) -> float | None:
-    """The root of `value` in `[start, end]`, where its sign changes, or None."""
-    scale = abs(before)
-    for _ in range(80):
-        middle = (start + end) / 2
-        if middle in (start, end):
-            break
-        here = value(middle)
-        if here is None:
-            return None
-        if here == 0:
-            return middle
-        if (here < 0) == (before < 0):
-            start, before = middle, here
-        else:
-            end = middle
-        scale = max(scale, abs(here))
-    middle = (start + end) / 2
-    here = value(middle)
-    if here is None or abs(here) > scale * 1e-6:
-        return None
-    return middle
 
 
 def _number_polynomial(residual: sp.Basic, variable: sp.Symbol) -> sp.Poly | None:
@@ -4203,6 +4181,11 @@ def _scanned(
 ) -> sp.Basic | None:
     """One root in `[first, last]` by a scan of `_SCAN` pieces, or None.
 
+    The scan evaluates in floats, which only picks what to try: a sign change is
+    bisected (`_bisect`), and a point where the value comes to 0 is evaluated again
+    exactly (`_value_at`), a root only if that proves it zero. A point where the sign
+    can't be told is passed over, the points beside it compared instead.
+
     A point where the residual is undefined tells nothing about the sign beside it, so
     a root next to it is missed: `ATAN(z - 0.1/z) + ATAN(z + 0.1/z) = 0.5` is undefined
     at 0 and has its root at 0.28, short of the next point. Once the whole interval is
@@ -4213,41 +4196,48 @@ def _scanned(
     A piece at an end of the interval where the residual is undefined is scanned again
     up to `edges` levels deep: a single piece per level, the one next to the end.
     """
+    digits = context.precision_digits + GUARD
     step = (last - first) / _SCAN
-    suspect: list[tuple[float, float]] = []
-    previous: float | None = None
-    # Whether the previous point was defined; a piece undefined at both ends, as `LN(x)`
-    # is to the left of 0 over the reals, is not rescanned.
+    # The pieces to scan again, and whether each is at an end of the interval.
+    suspect: list[tuple[float, float, bool]] = []
+    # The last point whose sign is known, and that sign.
+    previous: tuple[float, int] | None = None
+    # Whether the last point told was defined; a piece undefined at both ends, as
+    # `LN(x)` is to the left of 0 over the reals, is not rescanned.
     defined = False
+    start = first
     for index in range(_SCAN + 1):
-        point = first + index * step
-        evaluated = _substituted(residual, variable, point)
-        value = None if evaluated is None else _number(evaluated)
-        if value is None:
+        point = last if index == _SCAN else first + index * step
+        piece = (start, point, index in (1, _SCAN))
+        start = point
+        sign = _scan_sign(residual, variable, point)
+        if sign == 0:
+            exact = _value_at(residual, variable, point, digits)
+            if exact is not None and exact.sign == 0:
+                return _approximate(_exact(point), context)
+            if exact is not None and exact.sign is None:
+                continue
+            sign = None if exact is None else exact.sign
+        if sign is None:
             if defined:
-                suspect.append((point - step, point))
+                suspect.append(piece)
             previous, defined = None, False
             continue
-        # A value too small for a float is 0.0 without being zero: `#e^x` far to
-        # the left is not a root.
-        if value == 0.0 and _vanishes(evaluated):
-            return _approximate(sp.Float(point), context)
         if index and not defined:
-            suspect.append((point - step, point))
-        elif previous is not None and (previous < 0) != (value < 0):
-            found = _bisect(residual, variable, point - step, point, context)
+            suspect.append(piece)
+        elif previous is not None and previous[1] != sign:
+            found = _bisect(residual, variable, previous[0], point, context)
             if found is not None:
                 return found
-        previous, defined = value, True
-    for start, end in suspect:
-        at_edge = start == first or end == last
+        previous, defined = (point, sign), True
+    for low, high, at_edge in suspect:
         if not (depth or (edges and at_edge)):
             continue
         found = _scanned(
             residual,
             variable,
-            start,
-            end,
+            low,
+            high,
             context,
             max(depth - 1, 0),
             edges - 1 if at_edge and edges else 0,
@@ -4257,7 +4247,28 @@ def _scanned(
     return None
 
 
-def _substituted(residual: sp.Basic, variable: sp.Symbol, point: float) -> sp.Basic | None:
+def _scan_sign(residual: sp.Basic, variable: sp.Symbol, point: float) -> int | None:
+    """The sign of `residual` at `point` as evaluating it in floats gives it, 0 where
+    that comes to zero, or None where it is undefined or not real.
+
+    The sign is that of the sympy float, whose exponent has no limit: a value too small
+    for a Python float keeps its sign.
+    """
+    evaluated = _substituted(residual, variable, point)
+    if evaluated is None:
+        return None
+    try:
+        real, imaginary = evaluated.evalf().as_real_imag()
+    except Exception:
+        return None
+    if imaginary != 0 or not (real.is_Float or real.is_Rational):
+        return None
+    return 1 if real.is_positive else -1 if real.is_negative else 0
+
+
+def _substituted(
+    residual: sp.Basic, variable: sp.Symbol, point: float
+) -> sp.Basic | None:
     """`residual` with `point` substituted as a float, or None where that fails, as
     `GAMMA` does at a pole: the residual is undefined there."""
     try:
@@ -4266,147 +4277,261 @@ def _substituted(residual: sp.Basic, variable: sp.Symbol, point: float) -> sp.Ba
         return None
 
 
-def _vanishes(value: sp.Basic) -> bool:
-    try:
-        return sp.sympify(value).evalf().is_zero is True
-    except Exception:
-        return False
-
-
 def _bisect(
     residual: sp.Basic, variable: sp.Symbol, low: float, high: float, context: Context
 ) -> sp.Basic | None:
     """The root of `residual` between `low` and `high`, where its sign changes, or None
-    if it changes sign without vanishing there, as at a pole.
+    if it changes sign without vanishing there, as at a pole or a jump.
 
-    A root is where the residual is zero to the working precision, measured against
-    the size of its terms there: `PHI^n/SQRT(5) - 10^100` is zero at its root to a
-    hundred digits less than its terms. A residual that can't be evaluated in floating
-    point, such as a conditional in a user's function, is bisected by evaluating it
-    at each point (`_bisected_by_value`).
+    The residual is evaluated at exact points (`_value_at`), so its signs are right
+    however much its terms cancel: `PHI^n/SQRT(5) - 10^100` is zero at its root to a
+    hundred digits less than its terms. `_root_between` narrows the bracket and judges
+    what it holds.
     """
     digits = context.precision_digits + GUARD
-    # Each step halves the bracket: enough steps to narrow it to the digits wanted.
-    width = max(abs(low), abs(high), 1.0)
-    steps = int((digits + 5) * math.log2(10) + math.log2(width)) + 20
-    try:
-        found = sp.nsolve(
-            residual,
-            variable,
-            (low, high),
-            solver="bisect",
-            prec=digits,
-            verify=False,
-            maxsteps=steps,
-        )
-    except Exception:
-        return _bisected_by_value(residual, variable, low, high, context)
-    if not _vanishing(residual, variable, found, digits) and not _dips(
-        residual, variable, found, digits
-    ):
-        return None
-    return _approximate(found, context)
+
+    def value(point) -> _Value | None:
+        return _value_at(residual, variable, point, digits)
+
+    root = _root_between(value, low, high, digits)
+    return None if root is None else _approximate(_exact(root), context)
 
 
-def _dips(residual: sp.Basic, variable: sp.Symbol, point, digits: int) -> bool:
-    """Whether `residual` is smaller at `point` than a little to either side, as at a
-    root and unlike at a pole. This accepts a root where the residual is ill
-    conditioned, `SIN(x^2) = #e^x` far from 0, whose value at the root is far above
-    the precision of its terms.
+#: How far, as a power of 2, the bracket of `_root_between` narrows between two brackets
+#: whose values it compares, and the least power of that narrowing by which a root's
+#: values shrink: a simple root's shrink by all of it, and over a narrowing of 65536
+#: they must shrink by 16 at least.
+_NARROWING = 16
+_ORDER = mpmath.mpf(1) / 4
 
-    Nor where its denominator dips too: a residual divided by `x - r`, `r` a root found
-    before and rounded, has a root within the rounding of `r`, the same root again.
+#: How far, as a power of 2, the bracket of `_root_between` narrows before a value
+#: larger than at the wider bracket marks a pole.
+_POLE_NARROWING = 10
+
+#: The most points `_root_between` evaluates, enough to narrow a bracket of 1 to every
+#: digit of a root near 10^-300 by halving alone.
+_NARROWING_STEPS = 1200
+
+
+def _root_between(
+    value: Callable[[mpmath.mpf], _Value | None], low, high, digits: int
+) -> mpmath.mpf | None:
+    """The root between `low` and `high` of the residual that `value` evaluates, to
+    `digits` digits, or None if the bracket holds none it can show.
+
+    The residual must have opposite signs at the ends, or be proved zero at one. The
+    bracket is narrowed by the secant method, as the Illinois variant keeps both ends
+    moving, with a halving wherever that is slow, until it is `digits` digits of the
+    root wide and `_NARROWING` halvings narrower than it was. A bracket holding 0 is cut
+    there first, so that a root at 0 or next to it has its digits too. A point where
+    the residual is undefined ends the search; one where its sign can't be told is
+    stepped around (`_stepped_around`).
+
+    What the bracket holds is judged by how the larger of the values at its ends
+    changes as it narrows: at a root it shrinks with the bracket, at a pole it grows,
+    and at a jump, as of `FLOOR(x) - 1/2` at 1, it comes to a side of the jump and
+    stays. The search gives up where the value is larger than `_POLE_NARROWING`
+    halvings before, or has not shrunk by the power `_ORDER` of the narrowing over
+    three times `_NARROWING`, and takes the root only if it shrank by that power over
+    the last `_NARROWING`. No size of a value could tell these apart: a jump can be
+    small, and a root's residual large next to its digits.
     """
-    try:
-        step = sp.Float(10, digits) ** (-(digits // 2)) * max(1, abs(sp.Float(point)))
-        denominator = sp.fraction(sp.together(residual))[1]
-
-        def dips(expression: sp.Basic) -> bool:
-            left, middle, right = (
-                abs(complex(expression.evalf(digits, subs={variable: point + offset})))
-                for offset in (-step, 0, step)
-            )
-            return middle * 100 < min(left, right)
-
-        if denominator.has(variable) and dips(denominator):
-            return False
-        return dips(residual)
-    except Exception:
-        return False
-
-
-def _bisected_by_value(
-    residual: sp.Basic, variable: sp.Symbol, low: float, high: float, context: Context
-) -> sp.Basic | None:
-    """The root between `low` and `high` of a residual evaluated by substitution, or
-    None. The bracket is halved until it is narrower than the digits wanted; it holds a
-    root rather than a pole if the residual there is small next to its values at the
-    ends."""
-    digits = context.precision_digits + GUARD
-    with mpmath.workdps(digits + 10):
-        start, end = mpmath.mpf(low), mpmath.mpf(high)
-        values = [_value_at(residual, variable, point, digits) for point in (start, end)]
-        if None in values or (values[0] < 0) == (values[1] < 0):
+    with mpmath.workprec(int((digits + 10) * 3.33) + 10):
+        a, b = mpmath.mpf(low), mpmath.mpf(high)
+        if not a < b:
             return None
-        scale = max(abs(values[0]), abs(values[1]))
-        before = values[0]
-        tolerance = mpmath.mpf(10) ** (-digits) * max(1, abs(start), abs(end))
-        middle = start
-        for _ in range(int((digits + 5) * math.log2(10)) + 60):
-            if end - start <= tolerance:
+        fa, fb = value(a), value(b)
+        if fa is None or fb is None:
+            return None
+        if fa.sign == 0:
+            return a
+        if fb.sign == 0:
+            return b
+        if fa.sign is None or fb.sign is None or fa.sign == fb.sign:
+            return None
+        if a < 0 < b:
+            zero = mpmath.mpf(0)
+            middle = value(zero)
+            if middle is not None and middle.sign == 0:
+                return zero
+            if middle is not None and middle.sign == fa.sign:
+                a, fa = zero, middle
+            elif middle is not None and middle.sign == fb.sign:
+                b, fb = zero, middle
+        # The width of the bracket and the larger value at its ends, step by step.
+        history = [(b - a, max(fa.size, fb.size))]
+        tolerance = mpmath.mpf(2) ** -int(digits * 3.33)
+        enough = history[0][0] * mpmath.mpf(2) ** -_NARROWING
+        # The secant's weights on the values at the ends: an end kept twice running
+        # has the other's halved, so that it moves too.
+        weights = [mpmath.mpf(1), mpmath.mpf(1)]
+        kept = None
+        for _ in range(_NARROWING_STEPS):
+            width = b - a
+            if width <= enough and width <= tolerance * _magnitude(a, b):
                 break
-            middle = (start + end) / 2
-            value = _value_at(residual, variable, middle, digits)
-            if value is None:
+            middle = (a + b) / 2
+            # Halved where the last two steps didn't halve the bracket.
+            if len(history) < 3 or width <= history[-3][0] / 2:
+                left, right = fa.size * weights[0], fb.size * weights[1]
+                if left + right > 0:
+                    middle = a + width * left / (left + right)
+            if not a < middle < b:
+                middle = (a + b) / 2
+                if not a < middle < b:
+                    break
+            here = value(middle)
+            if here is None:
                 return None
-            if value == 0:
-                break
-            if (value < 0) == (before < 0):
-                start, before = middle, value
+            if here.sign == 0:
+                return middle
+            if here.sign is None:
+                stepped = _stepped_around(value, (a, fa), (b, fb), middle)
+                if stepped is None or isinstance(stepped, mpmath.mpf):
+                    return stepped
+                (a, fa), (b, fb) = stepped
+                weights, kept = [mpmath.mpf(1), mpmath.mpf(1)], None
+            elif here.sign == fa.sign:
+                a, fa = middle, here
+                weights = [mpmath.mpf(1), weights[1] / 2 if kept == 1 else weights[1]]
+                kept = 1
             else:
-                end = middle
-        middle = (start + end) / 2
-        value = _value_at(residual, variable, middle, digits)
-        if value is None or abs(value) > scale * mpmath.mpf(10) ** (2 - digits // 2):
+                b, fb = middle, here
+                weights = [weights[0] / 2 if kept == 0 else weights[0], mpmath.mpf(1)]
+                kept = 0
+            width, size = b - a, max(fa.size, fb.size)
+            # A pole, and a jump: neither can be narrowed to a root.
+            wider = _wider(history, width, _POLE_NARROWING)
+            if wider is not None and size > wider[1]:
+                return None
+            wider = _wider(history, width, 3 * _NARROWING)
+            if wider is not None and size > wider[1] * (width / wider[0]) ** _ORDER:
+                return None
+            history.append((width, size))
+        else:
             return None
-        return _approximate(sp.Float(middle, digits + 10), context)
+        width, size = b - a, max(fa.size, fb.size)
+        wider = _wider(history, width, _NARROWING) or history[0]
+        if size > wider[1] * (width / wider[0]) ** _ORDER:
+            return None
+        return a + (b - a) * fa.size / (fa.size + fb.size)
+
+
+def _magnitude(low: mpmath.mpf, high: mpmath.mpf) -> mpmath.mpf:
+    """The least magnitude in `[low, high]`, the scale of a root there."""
+    if low <= 0 <= high:
+        return mpmath.mpf(0)
+    return min(abs(low), abs(high))
+
+
+def _wider(
+    history: list[tuple[mpmath.mpf, mpmath.mpf]], width: mpmath.mpf, halvings: int
+) -> tuple[mpmath.mpf, mpmath.mpf] | None:
+    """The last bracket of `history` at least `halvings` halvings wider than `width`."""
+    for entry in reversed(history):
+        if entry[0] >= width * 2**halvings:
+            return entry
+    return None
+
+
+def _stepped_around(
+    value: Callable[[mpmath.mpf], _Value | None],
+    low: tuple[mpmath.mpf, _Value],
+    high: tuple[mpmath.mpf, _Value],
+    middle: mpmath.mpf,
+):
+    """The bracket `[low, high]` narrowed around `middle`, a point where the residual's
+    sign can't be told, by its values a little to either side: a root there if one is
+    proved zero, None if a sign there can't be told either."""
+    offset = (high[0] - low[0]) * mpmath.mpf(2) ** -20
+    beside = []
+    for point in (middle - offset, middle + offset):
+        here = value(point)
+        if here is None or here.sign is None:
+            return None
+        if here.sign == 0:
+            return point
+        beside.append((point, here))
+    left, right = beside
+    if left[1].sign != right[1].sign:
+        return left, right
+    if left[1].sign == low[1].sign:
+        return right, high
+    return low, left
+
+
+@dataclass(frozen=True)
+class _Value:
+    """The residual's value at a point as far as its sign is known: `sign` is 1 or -1,
+    0 where the value is proved zero, or None where it is too small for its sign to be
+    told; `size` is its absolute value."""
+
+    sign: int | None
+    size: mpmath.mpf
+
+
+#: A value whose sign can't be told.
+_UNSIGNED = _Value(None, mpmath.mpf(0))
 
 
 def _value_at(
     residual: sp.Basic, variable: sp.Symbol, point, digits: int
-) -> mpmath.mpf | None:
-    """The real value of `residual` at `point`, or None.
+) -> _Value | None:
+    """The value of `residual` at `point`, or None where it is undefined or not real.
 
     The point is substituted as the exact rational it is, so a conditional evaluated
-    at it computes exactly and only the result is rounded, to `digits` digits.
+    at it computes exactly, and the value is evaluated to `digits` correct digits,
+    with the working precision that takes; a value that needs more than evaluation
+    allows has no sign. It is proved zero only where substitution computes an exact 0:
+    a residual with float coefficients computes in floats, and its 0 has no sign.
     """
     try:
-        sign, mantissa, exponent, _ = mpmath.mpf(point)._mpf_
-        exact = (-1) ** sign * sp.Integer(mantissa) * sp.Integer(2) ** exponent
-        value = residual.subs(variable, exact).evalf(digits)
-        number = complex(value)
+        exact = residual.subs(variable, _exact(point))
+        if exact == 0:
+            return _Value(0, mpmath.mpf(0)) if exact is sp.S.Zero else _UNSIGNED
+        real, imaginary = exact.evalf(digits, strict=True).as_real_imag()
+    except sp.core.evalf.PrecisionExhausted:
+        return _UNSIGNED
     except Exception:
         return None
-    if number.imag and abs(number.imag) > 1e-12 * max(1.0, abs(number.real)):
+    if imaginary != 0 or not real.is_Float:
         return None
-    try:
-        return mpmath.mpf(sp.re(value).evalf(digits))
-    except Exception:
-        return None
+    if real == 0:
+        return _UNSIGNED
+    return _Value(1 if real > 0 else -1, abs(mpmath.mpf(real)))
+
+
+def _exact(point) -> sp.Rational:
+    """A float, sympy's or mpmath's or Python's, as the rational it is."""
+    if isinstance(point, sp.Rational):
+        return point
+    if isinstance(point, float):
+        return sp.Rational(point)
+    # Read without rounding to the working precision, as `mpmath.mpf` would.
+    sign, mantissa, exponent, _ = point._mpf_
+    return (-1) ** sign * sp.Integer(mantissa) * sp.Integer(2) ** exponent
 
 
 def _vanishing(residual: sp.Basic, variable: sp.Symbol, point, digits: int) -> bool:
-    """Whether `residual` is zero at `point` to `digits` digits of its largest term."""
-    try:
-        terms = sp.Add.make_args(residual)
-        values = [
-            abs(complex(term.evalf(digits, subs={variable: point}))) for term in terms
-        ]
-        total = abs(complex(residual.evalf(digits, subs={variable: point})))
-    except Exception:
-        return False
-    scale = max(values) if len(values) > 1 else 1.0
-    return total <= scale * 10.0 ** (2 - digits)
+    """Whether `residual` has a root at `point` to `digits - 2` digits: whether it is
+    proved zero there, or `_root_between` finds a root in a bracket that wide around
+    it."""
+
+    def value(at) -> _Value | None:
+        return _value_at(residual, variable, at, digits)
+
+    with mpmath.workprec(int((digits + 10) * 3.33) + 10):
+        try:
+            center = mpmath.mpf(point)
+        except Exception:
+            return False
+        here = value(center)
+        if here is None:
+            return False
+        if here.sign == 0:
+            return True
+        offset = (abs(center) or mpmath.mpf(1)) * mpmath.mpf(10) ** (2 - digits)
+        return _root_between(value, center - offset, center + offset, digits) is not None
 
 
 def _searched(

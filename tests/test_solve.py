@@ -25,6 +25,7 @@ from rederive.engine.computing import (
     solve,
     to_sympy,
 )
+from rederive.engine import solving
 from rederive.engine.context import Angle, Branch, Precision
 from rederive.model.expr import Kind
 from rederive.model.session import Session
@@ -2598,6 +2599,79 @@ def test_a_point_where_evaluating_fails_is_where_the_equation_is_undefined():
     # Evaluating `GAMMA` at its pole raises; the scan steps over the point.
     assert simp("NSOLVE(GAMMA(x) = 5, x, 0, 10)", TEN) == "x = 0.1844872755"
     assert simp("NSOLVE(x! = 5, x, -1, 10)", TEN) == "x = -0.8155127244"
+
+
+def test_a_value_too_small_for_a_float_keeps_its_sign():
+    # Left of -745 `#e^x` is below the smallest float, and the residual still negative:
+    # no sign change, and no root.
+    assert simp("NSOLVE(#e^x*(x - 1000000) = 0, x)", TEN).startswith("NSOLVE(")
+    assert simp("NSOLVE(-#e^x = 0, x)", TEN).startswith("NSOLVE(")
+    assert simp("NSOLVE(#e^(-x^2)*(x - 50) = 0, x)", TEN) == "x = 50"
+    assert simp("NSOLVE(#e^(-x^2)*(x - 50) = 0, x, 0, 100)", TEN) == "x = 50"
+    assert simp("SOLVE(#e^(-x^2)*(x - 50 + SIN(x)) = 0, x)", APPROXIMATE) == (
+        "x = 50.13254562"
+    )
+
+
+def test_a_zero_of_a_float_evaluation_is_no_root_until_proved():
+    # In floats `SQRT(x^2 + 10^40)` is 10^20 at every point of the scan; exactly, it is
+    # 10^20 + 10^-10 only at +-141421.3562, beyond the search.
+    answer = simp("NSOLVE(SQRT(x^2 + 10^40) = 10^20 + 10^-10, x)", TEN)
+    assert answer.startswith("NSOLVE(")
+    assert simp("NSOLVE(SQRT(x^2 + 10^40) = 10^20 + 10^-10, x, 0, 10^6)", TEN) == (
+        "x = 1.414213562*10^5"
+    )
+
+
+def test_a_jump_across_zero_is_no_root():
+    assert simp("NSOLVE(IF(x < 1, x - 2, 10^-6) = 0, x)", TEN).startswith("NSOLVE(")
+    assert simp("NSOLVE((FLOOR(x) + 1/2)*#e^(-40) = 0, x)", TEN).startswith("NSOLVE(")
+    # With bounds the variable is real, and the equation is decided before any search.
+    assert simp("NSOLVE(FLOOR(x) = 1/2, x, 0, 3)", TEN) == "false"
+    assert simp("NSOLVE(FLOOR(x) = 1/2, x)", TEN).startswith("NSOLVE(")
+
+
+def test_a_root_near_zero_has_all_its_digits():
+    assert simp("NSOLVE(SIN(x) = 10^-30, x, -1, 1)", TEN) == "x = 1.000000000*10^-30"
+    assert simp("NSOLVE(#e^x - 1 = 10^-20, x)", TEN) == "x = 1.000000000*10^-20"
+    assert simp("NSOLVE(x*#e^x = 10^-30, x, -1, 1)", TEN) == "x = 1.000000000*10^-30"
+
+
+def test_a_root_where_the_residual_cancels_to_many_digits():
+    # The residual is x^5/120 and some: at 10^-5 its terms cancel to 25 digits.
+    assert simp("NSOLVE(SIN(x) - x + x^3/6 = 0, x, -1, 2)", TEN) == "x = 0"
+
+
+X = sp.Symbol("x", real=True)
+
+
+def bisected(residual, low, high):
+    """What NSOLVE's bisection makes of `residual` between `low` and `high`."""
+    return solving._bisect(residual, X, low, high, TEN)
+
+
+def test_the_bisection_narrows_a_sign_change_to_a_root():
+    assert bisected(X**2 - 2, 1.0, 2.0) == sp.Rational(275807, 195025)
+    assert bisected(sp.sin(X), -1.0, 2.0) == 0
+    # The product's values are far below the smallest float.
+    assert bisected(sp.exp(-(X**2)) * (X - 50), 40.0, 61.0) == 50
+    assert bisected(-sp.exp(X), -900.0, -800.0) is None
+
+
+def test_the_bisection_rejects_a_pole_and_a_jump():
+    assert bisected(1 / (X - 1), 0.0, 3.0) is None
+    assert bisected(sp.tan(X), 1.0, 2.0) is None
+    jump = sp.Piecewise((X - 2, X < 1), (sp.Rational(1, 10**6), True))
+    assert bisected(jump, 0.0, 3.0) is None
+    assert bisected((sp.floor(X) + sp.S.Half) * sp.exp(-40), -0.5, 0.5) is None
+
+
+def test_a_point_is_a_root_if_a_sign_change_beside_it_narrows_to_one():
+    digits = TEN.precision_digits + 5
+    assert solving._vanishing(sp.sin(X), X, sp.Float(sp.pi.evalf(20), 20), digits)
+    assert not solving._vanishing(sp.sin(X), X, sp.Float(3.1, 20), digits)
+    jump = sp.Piecewise((X - 2, X < 1), (sp.Rational(1, 10**6), True))
+    assert not solving._vanishing(jump, X, sp.Float(1, 20), digits)
 
 
 def test_a_candidate_offered_under_a_condition_holds_where_its_parameter_allows():
