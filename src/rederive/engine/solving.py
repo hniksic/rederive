@@ -3502,6 +3502,24 @@ def numeric_roots(
     Where the scan detects none, interval arithmetic searches the whole range (see
     `_explored`): it finds roots too close together for the scan to see a sign change
     between them, and an empty list is its proof that the range holds no root.
+
+    One root for anything but a polynomial is Derive's contract: "given a polynomial
+    equation with numeric coefficients, NSOLVE and NSOLUTIONS return all the real and
+    complex solutions to the equation. However, for any other type of equation, NSOLVE
+    and NSOLUTIONS return only one solution" (Derive 6 help, Solving Equations
+    Numerically), and another root is found by giving bounds that exclude the known
+    ones. Derive programs depend on it: `RHS(NSOLVE(u, x))` is their way to the number,
+    and `RHS` of a disjunction of several roots is not a number. The scan could report
+    every sign change it passes, but that list would hold whichever roots its step
+    happens to separate, written like the complete list a polynomial gives. So the rule
+    is that several roots are given only where the list is known to be complete.
+
+    Which root is ours. Derive doesn't document its choice, and its recorded answers
+    follow no rule: `3*x*COS(x) - SIN(x) = 0` between 1 and 10 gave it 7.81, the third
+    root of three. The leftmost one is at least the same every time. Derive's help
+    gives one root for a polynomial with bounds as well; here it gives all of those in
+    the bounds, that list being complete. The doubling window is the one the Derive 3
+    manual describes for Mixed mode.
     """
     polynomial = _number_polynomial(residual, variable)
     if polynomial is not None:

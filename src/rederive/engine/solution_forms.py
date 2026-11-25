@@ -22,9 +22,10 @@ solved by every value where it holds: `SOLUTIONS(a = b, x)` is `[IF(a - b = 0, @
 
 `NSOLVE` and `NSOLUTIONS` solve one equation in one variable numerically, in the forms
 of `SOLVE` and `SOLUTIONS`: every root of a polynomial, or one real root of anything
-else. `NSOLVE` answers `false` only where a polynomial's roots or interval arithmetic
-prove there is no root, and a search that finds none without proving it leaves the call
-as written; `NSOLUTIONS` lists the roots found, `[]` when there are none.
+else (why one, see `solving.numeric_roots`). `NSOLVE` answers `false` only where a
+polynomial's roots or interval arithmetic prove there is no root, and a search that
+finds none without proving it leaves the call as written; `NSOLUTIONS` lists the roots
+found, `[]` when there are none.
 
 A call of none of these forms stays as it is written. The answers are built from the
 first argument as simplified, with equations not decided (see `pipeline._commanded`).
