@@ -55,9 +55,6 @@ class PageApp(RederiveApp):
     """
 
     CSS_PATH = str(Path(ui.__file__).parent / RederiveApp.CSS_PATH)
-    #: The greeting's last line, without the demonstrations hint: the page has its own
-    #: button for them.
-    GREETING_LINE = ui.GREETING_HELP
 
     def __init__(
         self,

@@ -428,24 +428,25 @@ class WorkArea(VerticalScroll):
         self.call_after_refresh(self.scroll_to, 0, 0, animate=False)
 
     def show_greeting(
-        self, lines: Sequence[str], footer: str, rows: int, width: int
+        self, lines: Sequence[str], footer: Sequence[str], rows: int, width: int
     ) -> None:
         """Paint the opening notice in place of this window's expressions.
 
-        Centered horizontally, with the name block in the upper third and the footer a
-        couple of rows from the bottom, spaced like a title page as in Derive. It is
-        padded to the pane's full height. If the pane is too short, the end of the block
-        is dropped rather than the footer, which names a key.
+        Centered horizontally, with the name block `lines` in the upper third and the
+        `footer` lines a row from the bottom, spaced like a title page as in Derive. It
+        is padded to the pane's full height. If the pane is too short, the end of the
+        name block is dropped before any of the footer, which names the keys, and the
+        footer loses its last lines first.
         """
         styles = self.app.palette.styles
         self._drawn, self._shifted, self._revealing = [], None, None
         centred = [line.center(width).rstrip()[:width] for line in lines]
-        above = max(1, (rows - len(centred) - 3) // 3)
-        page = ([""] * above + centred)[: max(0, rows - 2)]
-        at = max(len(page), rows - 3)
+        foot = [line.center(width).rstrip()[:width] for line in footer]
+        above = max(1, (rows - len(centred) - len(foot) - 2) // 3)
+        page = ([""] * above + centred)[: max(0, rows - len(foot) - 1)]
+        at = max(len(page), rows - len(foot) - 2)
         page += [""] * (at - len(page))
-        if len(page) < rows:
-            page.append(footer.center(width).rstrip()[:width])
+        page += foot[: max(0, rows - len(page))]
         page += [""] * (rows - len(page))
         self.content.paint(page, styles["work"])
 

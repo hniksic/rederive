@@ -29,8 +29,6 @@ from rederive import fetch, platform
 from rederive.model import demos as catalogue
 from rederive.model import worksheet
 from rederive.platform.web import Web
-from rederive.ui.app import RederiveApp
-from rederive.web.boot import PageApp
 from rederive.web.demos import Demos
 
 SCRIPT = b"; adds two numbers\r\n2 + 3\r\n\x1a"
@@ -310,13 +308,6 @@ async def test_a_download_the_page_refuses_says_so_in_one_sentence(demos, arith)
     with pytest.raises(OSError, match="^the server said 503$"):
         await demos.brought(arith)
     assert not platform.current().storage().exists(Path("ARITH.DMO"))
-
-
-def test_the_pages_opening_notice_points_at_the_button_and_not_the_keystrokes():
-    """In a page, demonstrations are a click away, so the greeting doesn't suggest T D."""
-    assert "T D" in RederiveApp.GREETING_LINE
-    assert "T D" not in PageApp.GREETING_LINE
-    assert "help" in PageApp.GREETING_LINE
 
 
 # -- the desktop's own download -----------------------------------------------

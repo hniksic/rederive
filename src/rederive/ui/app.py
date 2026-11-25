@@ -509,13 +509,13 @@ GREETING = (
     "",
     f"Version {__version__}",
 )
-#: The notice's footer line. It says how to start typing, for users who don't know
-#: Derive's menu (Enter invokes Author, the highlighted word), and mentions the demos,
+#: The notice's footer lines. They say how to start typing, for users who don't know
+#: Derive's menu (Enter invokes Author, the highlighted word), and mention the demos,
 #: which nothing else on screen would.
-GREETING_FOOTER = "Press Enter to type an expression, H for help, T D for demos"
-#: The footer when the demos are already offered elsewhere, such as a button on a web
-#: page.
-GREETING_HELP = "Press Enter to type an expression, H for help"
+GREETING_FOOTER = (
+    "Press Enter to type an expression",
+    "H for help  \N{MIDDLE DOT}  T D for demos",
+)
 
 
 class FileNames(Suggester):
@@ -1052,9 +1052,6 @@ class RederiveApp(App[None]):
     CSS_PATH = "rederive.tcss"
     TITLE = "Rederive"
     AUTO_FOCUS = None
-    #: The last line of the opening notice. Subclasses whose environment already
-    #: offers the demos use `GREETING_HELP` instead.
-    GREETING_LINE = GREETING_FOOTER
     # The screen belongs entirely to the pane.
     ENABLE_COMMAND_PALETTE = False
     # Leave screen text selection to the terminal; see "mouse routing".
@@ -1530,7 +1527,7 @@ class RederiveApp(App[None]):
             elif self.greeting:
                 # There is only one window while the notice is shown.
                 pane.show_greeting(
-                    GREETING, self.GREETING_LINE, rect.height, rect.width
+                    GREETING, GREETING_FOOTER, rect.height, rect.width
                 )
             else:
                 session = window.session
