@@ -18,6 +18,9 @@ terminal UIO over over a SymPy-based engine. Python 3.14+, managed with `uv`.
 - Derive's behavior is used as a guideline, and we try to remain compatible with Derive's
   utility files and demos. Where Derive is buggy, limited or arbitrary, do what a good
   algebra system would do instead.
+- In Character mode (the default) a name is one letter: `c1` is `c*1` and `xy` is
+  `x*y`, as in Derive. Use `@1` or Word mode when typing multi-character names into a
+  session or test.
 - Don't edit `README.md` unless asked to.
 - Update a document where a change makes it wrong or incomplete by its own standard: a
   new built-in gets an entry where the built-ins are listed, a changed command gets its
