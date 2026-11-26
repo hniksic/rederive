@@ -125,7 +125,7 @@ highlighted expression instead of along the line:
 | Left | back to the part before it |
 | Down | deeper into the highlighted part |
 | Up | back out to the part holding it |
-| Home, End | the first, the last part at this depth |
+| Home, End | the first, the last part at this depth; on a whole expression, the first, the last expression |
 
 What is highlighted is what a command acts on, so a subexpression can be factored,
 approximated or substituted for on its own without the expression around it being

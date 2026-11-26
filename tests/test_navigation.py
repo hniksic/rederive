@@ -224,9 +224,17 @@ def test_home_and_end_move_between_siblings(session):
     assert selected_text(session) == "c"
     assert session.move_first_sibling()
     assert selected_text(session) == "a"
-    # A whole expression has no siblings to move among.
+
+def test_home_and_end_on_a_whole_expression_move_to_the_first_and_last():
+    session = Session()
+    for text in ("a", "b", "c"):
+        session.author(text)
     session.move_up()
+    assert session.move_first_sibling()
+    assert selected_text(session) == "a"
     assert not session.move_first_sibling()
+    assert session.move_last_sibling()
+    assert selected_text(session) == "c"
     assert not session.move_last_sibling()
 
 

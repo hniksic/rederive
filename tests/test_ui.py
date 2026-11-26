@@ -1917,6 +1917,15 @@ async def test_the_cursor_keys_move_no_highlight_while_a_line_is_up(app):
             assert highlighted_expression(app) == "x·(x + 1)"
 
 
+async def test_home_and_end_at_the_menu_move_to_the_first_and_last_expression(app):
+    async with app.run_test() as pilot:
+        authored(app, "x", "y", "z")
+        await pilot.press("up", "home")
+        assert highlighted_expression(app) == "x"
+        await pilot.press("end")
+        assert highlighted_expression(app) == "z"
+
+
 # -- copying an expression and pasting it -------------------------------------
 #
 # Ctrl-C copies the highlighted expression and Ctrl-V pastes it on the line being

@@ -2743,16 +2743,22 @@ class Session:
         return True
 
     def move_first_sibling(self) -> bool:
-        if self.selected_entry is None or not self.route:
+        """The first operand at this depth, or the first entry from a whole one."""
+        if self.selected_entry is None:
             return False
+        if not self.route:
+            return self.move_first_entry()
         moved = self.route[-1] != 0
         self.route = self.route[:-1] + (0,)
         self._remember()
         return moved
 
     def move_last_sibling(self) -> bool:
-        if self.selected_entry is None or not self.route:
+        """The last operand at this depth, or the last entry from a whole one."""
+        if self.selected_entry is None:
             return False
+        if not self.route:
+            return self.move_last_entry()
         last = len(self._siblings()) - 1
         moved = self.route[-1] != last
         self.route = self.route[:-1] + (last,)
