@@ -155,6 +155,7 @@ from rederive.plot import protocol as plots
 from rederive.plot.proxy import PlotError, PlotProxy
 from rederive.syntax import LANGUAGES, DeriveSyntaxError, Language, write_expression
 from rederive.ui import menu as menus
+from rederive.ui.help import Closed, HelpScreen
 from rederive.ui.menu import ALGEBRA, COLORS, ENTER_OPTION, Menu, MenuCursor
 from rederive.ui.theme import COLOR_SETTINGS, Palette
 from rederive.ui.widgets import (
@@ -205,15 +206,12 @@ MODE_DEMO = "demo"
 #: The mode while a computation runs. It is modal because the command owns the session
 #: until done: nothing may read the worksheet, and only Esc is active.
 MODE_COMPUTE = "compute"
-#: The mode while help is shown. A menu mode like the command menu, but the work area
-#: shows a document, so the history navigation keys turn pages.
+#: The mode while the help dialog is up. Like a computation it leaves the worksheet
+#: alone, and no binding of the app applies: the dialog's screen has the keys.
 MODE_HELP = "help"
 
 #: Modes in which the menu band has the keys.
-MENU_MODES = (MODE_MENU, MODE_HELP)
-
-#: Help paging direction per key: the keys that move through the history elsewhere.
-HELP_PAGING = {"down": 1, "page_down": 1, "up": -1, "page_up": -1}
+MENU_MODES = (MODE_MENU,)
 
 #: Modes in which the prompt band is shown and has the keys.
 PROMPT_MODES = (
@@ -760,11 +758,7 @@ Chooser = Callable[
 
 @dataclass
 class Helping:
-    """The help on screen, and what leaving it returns to.
-
-    `topic` is None on the subject menu; from a subject, Esc and `Resume` return there,
-    and from the subject menu they leave help. `pages` is the subject's page count at
-    the last layout; it depends on the pane size, so it is updated on every paint.
+    """The help dialog on screen, and what closing it returns to.
 
     `resume` and `message` record the screen's mode and message when help was opened.
     Help can be opened from a partly typed line, which must come back intact along with
@@ -773,9 +767,6 @@ class Helping:
 
     resume: str = MODE_MENU
     message: str = ENTER_OPTION
-    topic: helps.Topic | None = None
-    page: int = 0
-    pages: int = 1
 
 
 @dataclass
@@ -1200,8 +1191,8 @@ class RederiveApp(App[None]):
         self.spare: list[WorkArea] = []
         #: The initial worksheet, and whether the opening notice is still shown. As in
         #: Derive, the notice is replaced by whatever draws the work area next (an
-        #: expression, help, a window command, a Clear) and never returns, while menus
-        #: and dialogs leave it in place. See `_opening_screen`.
+        #: expression, a window command, a Clear) and never returns, while menus,
+        #: dialogs and help leave it in place. See `_opening_screen`.
         self.opening_session = self.windows.session
         self.greeting = True
         #: The plot windows, in a child process started on the first plot. Constructing
@@ -1287,6 +1278,8 @@ class RederiveApp(App[None]):
         self.simplifying: tuple[sessions.Entry, ...] | None = None
         #: The help on screen, or None.
         self.helping: Helping | None = None
+        #: Where Help opens: the page last read, or the first page.
+        self.help_place = helps.Place(helps.START)
         #: The current demo, running or paused.
         self.demo: Demonstration | None = None
         #: The demo being downloaded, or None. Only one at a time, since two would race
@@ -1520,11 +1513,7 @@ class RederiveApp(App[None]):
             pane.styles.height = rect.height
             if not painting:
                 continue
-            if self.helping is not None and window is self.windows.active:
-                # Help appears only in the window it was opened from.
-                page, titled = self._help_page(rect.height, rect.width)
-                pane.show_help(page, rect.height, rect.width, titled)
-            elif self.greeting:
+            if self.greeting:
                 # There is only one window while the notice is shown.
                 pane.show_greeting(
                     GREETING, GREETING_FOOTER, rect.height, rect.width
@@ -1542,15 +1531,14 @@ class RederiveApp(App[None]):
     def _opening_screen(self) -> bool:
         """Whether the screen is still as the program started, for the opening notice.
 
-        True if there is one session, the initial one, it is empty, and no help is
-        shown. Everything in Derive that replaces the notice (an expression, help, a
-        split or overlay) breaks one of these, except the Clear commands, which clear
-        the notice themselves.
+        True if there is one session, the initial one, and it is empty. Everything that
+        replaces the notice (an expression, a split or overlay) breaks one of these,
+        except the Clear commands, which clear the notice themselves. Help is a dialog
+        over the screen, so the notice is still there when it closes.
         """
         sessions = self.windows.sessions()
         return (
-            self.helping is None
-            and len(sessions) == 1
+            len(sessions) == 1
             and sessions[0] is self.opening_session
             and not sessions[0].entries
         )
@@ -1762,15 +1750,14 @@ class RederiveApp(App[None]):
         - F3, F4 and F6 apply only on expression lines. The Alt keys, Ctrl-V and the
           insert toggle apply on every line.
         - Ctrl-C copies the highlighted expression when nothing is selected, so it also
-          works at the menu, but only when the worksheet is shown (not in help or a
-          demo). Ctrl-X applies wherever Ctrl-C does, so it can report that there's
-          nothing to cut.
+          works at the menu, but not in a demo. Ctrl-X applies wherever Ctrl-C does, so
+          it can report that there's nothing to cut.
         - Completion list keys apply only while the list is open; otherwise Up and Down
           move through the history as on other lines.
 
         During a computation no bindings apply; Esc is handled with the unbound keys.
         """
-        if self.mode == MODE_COMPUTE:
+        if self.mode in (MODE_COMPUTE, MODE_HELP):
             return False
         if action == "complete_file":
             return self.mode == MODE_FILE
@@ -1786,8 +1773,7 @@ class RederiveApp(App[None]):
             # Like the Ctrl keys, except that a text field takes the characters.
             return self.mode == MODE_MENU and self.editor is None
         if action == "help":
-            # As in Derive, F1 is help on a line and the next window elsewhere. Help
-            # can't be opened from within help.
+            # As in Derive, F1 is help on a line and the next window elsewhere.
             return self.mode in PROMPT_MODES
         if action.startswith("window_"):
             # Only at the command menu, not even in a Window submenu, so windows never
@@ -1796,13 +1782,6 @@ class RederiveApp(App[None]):
         if action == "nav":
             if self.mode == MODE_MENU:
                 return True
-            if self.mode == MODE_HELP:
-                # History keys turn the pages of a subject; the subject menu has none.
-                return (
-                    self.helping is not None
-                    and self.helping.topic is not None
-                    and parameters[0] in HELP_PAGING
-                )
             if self.mode not in WALKED_MODES:
                 return False
             if parameters[0] in ENTRY_MOVES:
@@ -1836,7 +1815,7 @@ class RederiveApp(App[None]):
         protocol report, isn't a key here: Shift on the way to a capital Y doesn't
         answer a question, and doesn't step a demo.
         """
-        if event.key in LONE_KEYS:
+        if event.key in LONE_KEYS or self.mode == MODE_HELP:
             return
         if self.mode == MODE_COMPUTE:
             event.stop()
@@ -1951,7 +1930,7 @@ class RederiveApp(App[None]):
         through to this window. That click is dropped so that closing a plot doesn't
         step the demo and open another one.
         """
-        if self.mode == MODE_COMPUTE:
+        if self.mode in (MODE_COMPUTE, MODE_HELP):
             return
         if self.mode == MODE_DEMO:
             if self.closed_window:
@@ -1996,12 +1975,12 @@ class RederiveApp(App[None]):
     def wants_typing(self) -> bool:
         """Whether the screen is waiting for typed input.
 
-        True for a prompt line, a yes/no question, or a typed dialog field. Menus and
-        dialog choices can be clicked, so they don't count. A touch screen uses this to
-        decide whether to show its on-screen keyboard.
+        True for a prompt line, help's search box, a yes/no question, or a typed dialog
+        field. Menus and dialog choices can be clicked, so they don't count. A touch
+        screen uses this to decide whether to show its on-screen keyboard.
         """
         if (
-            isinstance(self.focused, (PromptLine, AuthorText))
+            isinstance(self.focused, (Input, AuthorText))
             or self.mode == MODE_CONFIRM
         ):
             return True
@@ -2092,7 +2071,7 @@ class RederiveApp(App[None]):
         mode, which only resolves a key conflict the mouse doesn't have.
         """
         window = next((each for each in self.panes if self.panes[each] is pane), None)
-        if window is None or self.mode == MODE_HELP:
+        if window is None:
             return
         editor = self.editor
         if window is not self.windows.active:
@@ -2119,10 +2098,10 @@ class RederiveApp(App[None]):
         """Handle the wheel over whatever it points at.
 
         Textual already scrolls a history pane, leaving the highlight in place. This
-        handles what doesn't scroll itself: the completion list, help pages, and
-        sideways scrolling, which repaints one entry rather than scrolling the pane.
+        handles what doesn't scroll itself: the completion list, and sideways
+        scrolling, which repaints one entry rather than scrolling the pane.
         """
-        if self.mode == MODE_COMPUTE:
+        if self.mode in (MODE_COMPUTE, MODE_HELP):
             return
         if event.shift or event.ctrl:
             self._wheel_across(direction, event)
@@ -2135,12 +2114,6 @@ class RederiveApp(App[None]):
                     self.action_browse_next()
                 else:
                     self.action_browse_previous()
-            return
-        if _pane_of(widget) is not self.work_area or self.helping is None:
-            return
-        if self.helping.topic is not None:
-            # Turn the subject's pages, like the history keys.
-            self._turn_help(direction)
 
     def _wheel_across(self, direction: int, event: events.MouseEvent) -> None:
         """Scroll the pane under the pointer sideways.
@@ -2250,13 +2223,9 @@ class RederiveApp(App[None]):
         question, and the Declare Variable questions replace each other, so Esc returns
         to the Declare menu as in Derive.
 
-        In help, Esc is `Resume`: from a subject to the subject menu, and from there
-        out of help. On the command menu, with nothing to pop, it moves the highlight
-        back to the first word.
+        On the command menu, with nothing to pop, it moves the highlight back to the
+        first word.
         """
-        if self.mode == MODE_HELP:
-            self._help_back()
-            return
         if len(self.stack) == 1:
             self._restart_menu()
             self.refresh_screen()
@@ -2293,16 +2262,13 @@ class RederiveApp(App[None]):
     def action_nav(self, movement: str) -> None:
         """Arrow keys move the highlight, or a number field's cursor.
 
-        In help they turn pages. With a prompt line up, only history movements reach
-        here; `check_action` leaves the rest to the line. Choice fields have no cursor,
-        so as in Derive they ignore arrows.
+        With a prompt line up, only history movements reach here; `check_action` leaves
+        the rest to the line. Choice fields have no cursor, so as in Derive they ignore
+        arrows.
 
         In dialogs whose fields name expressions, history keys move the highlight and
         the field takes its label, which the manual recommends over typing the number.
         """
-        if self.mode == MODE_HELP:
-            self._turn_help(HELP_PAGING[movement])
-            return
         if self.mode in WALKED_MODES:
             self._walk_prompt(movement)
             return
@@ -2588,13 +2554,6 @@ class RederiveApp(App[None]):
         if cursor.menu is menus.BUILD_OPERATOR:
             self._chose_operator(word)
             return
-        # The help menus choose a subject and turn its pages.
-        if cursor.menu is menus.HELP:
-            self._chose_subject(word)
-            return
-        if cursor.menu in menus.HELP_TOPICS:
-            self._read_help(word)
-            return
         if cursor.menu is menus.DECLARE_VARIABLE:
             self._chose_domain(word)
             return
@@ -2766,136 +2725,68 @@ class RederiveApp(App[None]):
 
     # -- Help --------------------------------------------------------------
     #
-    # Help replaces the expressions in the window it was opened from, with no border,
-    # overlay or dimming. As in Derive it has two levels, a subject menu and a subject
-    # read page by page, navigated with Next, Previous and Resume; there is no search
-    # and no links.
-    #
-    # Help menus go on the regular menu stack, so leaving help uncovers whatever
-    # opened it. The prompt line isn't on the stack, so its state is kept in `Helping`.
-    #
-    # F1 on a line opens the line editing subject directly, one level deep. Resume
-    # returns to the line, and a `Subjects` word replaces the subject with the subject
-    # menu.
+    # Help is a dialog over the whole screen (`rederive.ui.help`). While it is up the
+    # mode is `MODE_HELP`, in which none of the app's bindings apply, so the dialog
+    # gets every key. The menu stack and the prompt line stay as they were under it,
+    # and closing it restores the mode and message, so a partly typed line comes back
+    # intact.
 
     def _command_help(self) -> None:
-        """The Help command: show the subject menu."""
-        self._open_help(MODE_MENU, ENTER_OPTION)
+        """The Help command: open help at the page last read."""
+        self._open_help(self.help_place)
 
     def action_help(self) -> None:
-        """F1 on an input line: open the line editing subject, keeping the line.
+        """F1 on an input line: open help at line editing, keeping the line.
 
-        Resume returns straight to the line, and `Subjects` opens the subject menu.
+        From a line that takes an expression, F3 in help inserts an example there.
         """
-        self._open_help(self.mode, self.message, helps.EDITING)
+        self._open_help(
+            helps.Place(helps.LINE_EDITING), line=self.mode in EXPRESSION_LINES
+        )
 
-    def _open_help(self, resume: str, message: str, word: str | None = None) -> None:
-        """Show help, remembering what the screen was doing.
-
-        A `word` opens that subject directly instead of the subject menu.
-        """
-        self.helping = Helping(resume, message)
+    def _open_help(self, place: helps.Place, line: bool = False) -> None:
+        """Show the help dialog at `place`, remembering what the screen was doing."""
+        self.helping = Helping(self.mode, self.message)
         self.mode = MODE_HELP
-        if word is None:
-            self.stack.append(MenuCursor(menus.HELP))
-        else:
-            self.helping.topic = helps.BY_WORD[word]
-            self.stack.append(MenuCursor(menus.HELP_PAGES_ALONE[word]))
-        # The line is hidden with its text intact. The completion list is closed, since
-        # help takes its rows and its current name is already on the line.
         self._close_list()
-        self.query_one("#prompt-band").display = False
-        self.set_focus(None)
-        self.message = ENTER_OPTION
-        self.refresh_screen()
+        self.push_screen(
+            HelpScreen(helps.document(), self.settings, place, line),
+            self._help_closed,
+        )
 
-    def _chose_subject(self, word: str) -> None:
-        """Handle a choice from the subject menu: a subject, or Resume."""
-        assert self.helping is not None
-        if word == helps.RESUME:
-            self._help_back()
-            return
-        self.helping.topic = helps.BY_WORD[word]
-        self.helping.page = 0
-        self.stack.append(MenuCursor(menus.HELP_PAGES[word]))
-        self.refresh_screen()
+    def _help_closed(self, closed: Closed | None) -> None:
+        """Return to what help was opened from; the next Help opens where it left.
 
-    def _read_help(self, word: str) -> None:
-        """Handle a word from a subject's page menu."""
-        if word == helps.RESUME:
-            self._help_back()
-        elif word == helps.SUBJECTS:
-            self._show_subjects()
-        else:
-            self._turn_help(1 if word == helps.NEXT else -1)
-
-    def _show_subjects(self) -> None:
-        """Subjects: replace the current subject with the subject menu.
-
-        Replacing rather than pushing means one Resume still returns to the line that F1
-        was pressed on. Subjects chosen from that menu are pushed on top of it as usual.
+        Text help was closed to insert goes onto the line at the cursor, as a paste
+        does.
         """
-        assert self.helping is not None
-        self.helping.topic = None
-        self.helping.page = 0
-        self.stack[-1] = MenuCursor(menus.HELP)
-        self.refresh_screen()
-
-    def _turn_help(self, step: int) -> None:
-        """Turn a page. Past the last page, leave the subject, as in Derive.
-
-        Before the first page it stops rather than wrapping to the last.
-        """
-        assert self.helping is not None
-        page = self.helping.page + step
-        if page >= self.helping.pages:
-            self._help_back()
-            return
-        self.helping.page = max(0, page)
-        self.refresh_screen()
-
-    def _help_back(self) -> None:
-        """Resume: go up one level, or leave help from the top level.
-
-        A subject opened from the subject menu returns to it; one opened directly by F1
-        leaves help.
-        """
-        assert self.helping is not None
-        self.stack.pop()
-        if isinstance(self.top, MenuCursor) and self.top.menu is menus.HELP:
-            self.helping.topic = None
-            self.helping.page = 0
-            self._restart_menu()
-            self.refresh_screen()
+        if closed is not None:
+            self.help_place = helps.Place(closed.address)
+        if self.helping is None:
             return
         resume, message = self.helping.resume, self.helping.message
         self.helping = None
         self.mode = resume
         if resume in PROMPT_MODES:
             # The line comes back exactly as it was left, cursor included.
-            self.query_one("#prompt-band").display = True
-            self._line.focus()
+            self._focus_line()
+            if closed is not None and closed.insert is not None:
+                self._paste_on_line(closed.insert)
         else:
             self._restart_menu()
         self.message = message
         self.refresh_screen()
 
-    def _help_page(self, rows: int, width: int) -> tuple[list[str], bool]:
-        """The current page laid out for the pane size, and whether it has a title row.
+    def _focus_line(self) -> None:
+        """Give the line the keys back, once the dialog's screen is gone.
 
-        Pagination depends on the pane size, so it is redone on every paint, and the
-        page number is clamped after a split or resize. The subject menu has no title
-        row, since its heading is part of its centered layout.
+        The dialog's result arrives while its screen may still be the current one, and
+        focus given then would go to that screen.
         """
-        assert self.helping is not None
-        topic = self.helping.topic
-        if topic is None:
-            self.helping.pages = 1
-            return helps.menu_page(rows, width), False
-        pages = helps.pages(topic, self.settings, rows, width)
-        self.helping.pages = len(pages)
-        self.helping.page = min(self.helping.page, len(pages) - 1)
-        return pages[self.helping.page], True
+        if self.screen is self.default_screen:
+            self._line.focus()
+        elif self.mode in PROMPT_MODES:
+            self.call_after_refresh(self._focus_line)
 
     # -- Jump --------------------------------------------------------------
 
@@ -4418,7 +4309,9 @@ class RederiveApp(App[None]):
         unavailable.
         """
         self.greeting = False
-        self.helping = None
+        if self.helping is not None:
+            self.helping = None
+            self.pop_screen()
         self.mode = MODE_MENU
         # Abandon any half-answered command.
         self._end_prompt()

@@ -10,7 +10,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from rederive.model import building, demos, settings
-from rederive.model import help as helps
 from rederive.model.session import Bounds
 
 MENU_TITLE = "COMMAND:"
@@ -733,39 +732,6 @@ def _strictness(setting: str, message: str, closed: bool) -> settings.ChoiceFiel
 def closed(value: str | int) -> bool:
     """Whether a strictness field is set to the nonstrict symbol."""
     return value == CLOSED
-
-
-#: The help subjects, plus the word that exits help. Help replaces the expression view
-#: rather than overlaying it, so its menus are ordinary: this one picks a subject, and
-#: the ones below page through it.
-HELP = Menu("HELP:", tuple(topic.word for topic in helps.TOPICS) + (helps.RESUME,))
-
-#: The menu for reading a subject chosen from the subject menu, one per subject since
-#: each is titled with its name. As in Derive, `Next` past the last page returns to
-#: where the subject was opened rather than wrapping around.
-HELP_PAGES: dict[str, Menu] = {
-    topic.word: Menu(
-        f"HELP {topic.word.upper()}:", (helps.NEXT, helps.PREVIOUS, helps.RESUME)
-    )
-    for topic in helps.TOPICS
-}
-
-#: The menu for a subject opened by F1 from a line. `Resume` returns to the line, and
-#: `Subjects` leads to the rest of the help.
-HELP_PAGES_ALONE: dict[str, Menu] = {
-    topic.word: Menu(
-        f"HELP {topic.word.upper()}:",
-        (helps.NEXT, helps.PREVIOUS, helps.SUBJECTS, helps.RESUME),
-    )
-    for topic in helps.TOPICS
-}
-
-#: The subject each help page menu shows, for lookup by the app.
-HELP_TOPICS: dict[Menu, str] = {
-    menu: word
-    for pages in (HELP_PAGES, HELP_PAGES_ALONE)
-    for word, menu in pages.items()
-}
 
 
 #: Color names as spelled on the color menu. Derive asked for a number, so these

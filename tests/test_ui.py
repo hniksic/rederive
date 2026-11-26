@@ -64,8 +64,8 @@ def authored(app, *texts):
 # -- the opening notice --------------------------------------------------------
 
 # As in the original, the notice is just what was painted, not a state: it survives
-# menus, dialogs and abandoned lines, and is gone for good once anything else draws the
-# work area (an expression, a help page, a window command, a Clear).
+# menus, dialogs, help and abandoned lines, and is gone for good once anything else
+# draws the work area (an expression, a window command, a Clear).
 
 
 async def test_the_opening_notice_stands_across_the_empty_pane(app):

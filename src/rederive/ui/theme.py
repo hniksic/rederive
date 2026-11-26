@@ -106,4 +106,6 @@ class Palette:
         """Palette slots as Textual CSS variables, e.g. `$rd-option`."""
         variables = {f"rd-{slot}": self.color(slot) for slot in SLOTS}
         variables["rd-selection-background"] = self.dimmed("work-foreground")
+        # The highlighted menu option's background, for highlights drawn in CSS.
+        variables["rd-option-highlight-background"] = self.dimmed("option")
         return variables

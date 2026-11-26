@@ -142,3 +142,191 @@ Screen {
 #status {
     height: 1;
 }
+
+/* The help dialog, over the worksheet dimmed by its own background. Every
+   part of Textual's Markdown and list widgets that brings a color of its own
+   is given one of the slots here, so no theme color shows through. */
+HelpScreen {
+    background: $rd-menu-background 60%;
+    align: center middle;
+}
+
+#help-dialog {
+    width: 100%;
+    height: 100%;
+    margin: 1 2;
+    border: round $rd-frame;
+    border-title-color: $rd-option;
+    border-title-style: bold;
+    background: $rd-work-background;
+    color: $rd-work-foreground;
+}
+
+#help-dialog.-narrow {
+    margin: 0;
+}
+
+#help-body {
+    height: 1fr;
+}
+
+#help-side {
+    width: 30%;
+    min-width: 24;
+    max-width: 34;
+    border-right: solid $rd-frame;
+}
+
+#help-dialog.-narrow #help-side {
+    width: 1fr;
+    max-width: 100%;
+    border-right: none;
+}
+
+#help-dialog.-narrow.-reading #help-side,
+#help-dialog.-narrow #help-reader {
+    display: none;
+}
+
+#help-dialog.-narrow.-reading #help-reader {
+    display: block;
+}
+
+#help-search {
+    height: 1;
+    margin: 0 1 1 1;
+    background: $rd-work-background;
+    background-tint: $rd-work-background 0%;
+    color: $rd-work-foreground;
+}
+
+#help-search > .input--placeholder {
+    color: $rd-frame;
+}
+
+#help-search > .input--cursor {
+    background: $rd-selection-background;
+    color: $rd-work-background;
+}
+
+#help-search > .input--selection {
+    background: $rd-selection-background;
+    color: $rd-work-background;
+}
+
+#help-topics {
+    height: 1fr;
+    max-height: 100%;
+    border: none;
+    padding: 0;
+    background: $rd-work-background;
+    background-tint: $rd-work-background 0%;
+    color: $rd-work-foreground;
+    scrollbar-size-vertical: 1;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
+
+#help-topics > .option-list--option-highlighted {
+    color: $rd-option;
+    background: $rd-work-background;
+    text-style: bold;
+}
+
+#help-topics:focus > .option-list--option-highlighted {
+    color: $rd-menu-background;
+    background: $rd-option-highlight-background;
+    text-style: bold;
+}
+
+#help-topics > .option-list--option-hover {
+    background: $rd-work-background;
+    text-style: underline;
+}
+
+#help-reader {
+    width: 1fr;
+}
+
+#help-crumb {
+    height: 1;
+    margin: 0 2 1 2;
+    color: $rd-option;
+    text-style: bold;
+}
+
+/* The scrollbar's column is kept whether or not the page scrolls, so a page is not
+   laid out a second time, a column narrower, when the bar appears. */
+#help-page {
+    height: 1fr;
+    scrollbar-size-vertical: 1;
+    scrollbar-gutter: stable;
+}
+
+#help-keys {
+    border-top: solid $rd-frame;
+    height: 2;
+    color: $rd-work-foreground;
+}
+
+/* Scrollbars in the frame color, on the text background. */
+#help-page, #help-topics {
+    scrollbar-background: $rd-work-background;
+    scrollbar-background-hover: $rd-work-background;
+    scrollbar-background-active: $rd-work-background;
+    scrollbar-color: $rd-frame;
+    scrollbar-color-hover: $rd-frame;
+    scrollbar-color-active: $rd-option;
+    scrollbar-corner-color: $rd-work-background;
+}
+
+HelpDocument {
+    padding: 0 2;
+    color: $rd-work-foreground;
+    background: $rd-work-background;
+}
+
+HelpDocument MarkdownBlock {
+    link-color: $rd-option;
+    link-background: $rd-work-background;
+    link-style: underline;
+    link-color-hover: $rd-option;
+    link-background-hover: $rd-work-background;
+    link-style-hover: bold underline;
+}
+
+HelpDocument MarkdownBlock > .code_inline {
+    color: $rd-work-foreground;
+    background: $rd-work-background;
+}
+
+HelpDocument MarkdownBlock > .strong {
+    color: $rd-option;
+}
+
+HelpDocument MarkdownBullet {
+    color: $rd-frame;
+}
+
+PlainFence {
+    margin: 0 0 1 0;
+    color: $rd-work-foreground;
+    background: $rd-work-background;
+}
+
+/* A code block's lines are cut at the pane's edge, where a snippet's copy marker is. */
+PlainFence {
+    overflow: hidden hidden;
+}
+
+PlainFence > FenceCode {
+    width: 1fr;
+    padding: 0 2;
+    text-wrap: nowrap;
+    text-overflow: clip;
+}
+
+HelpTable {
+    margin-bottom: 1;
+    text-wrap: nowrap;
+}

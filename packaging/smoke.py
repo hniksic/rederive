@@ -16,7 +16,7 @@ program through a terminal, each covering one way the bundle can be wrong:
   also shows that Qt and pyqtgraph survived the build, since the program imports them
   to report their versions.
 * The first frame: the stylesheet was found (Textual won't start without it).
-* The Help menu: `help.txt` was found and read as a resource.
+* The Help command: the help topics were found and read as resources.
 * A computation from each of several areas of mathematics: the worker spawned,
   re-entered the executable as a child, imported sympy and answered. Nothing else
   exercises the child process, and a module missing from the build only shows up when
@@ -392,8 +392,8 @@ def session_checks(binary: Path) -> None:
         report("first frame", "the stylesheet was found")
 
         terminal.type("H")
-        terminal.wait_for("Rederive Help Menu")
-        report("help", "help.txt was found")
+        terminal.wait_for("Pages in this topic")
+        report("help", "the help topics were found")
         terminal.escape()
 
         terminal.type("A")

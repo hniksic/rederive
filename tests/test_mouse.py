@@ -354,19 +354,6 @@ async def test_a_click_on_a_menu_word_does_nothing_while_a_question_is_up(app):
         await pilot.press("n")
 
 
-async def test_a_click_chooses_a_help_subject_and_comes_back(app):
-    async with app.run_test() as pilot:
-        await click_word(pilot, app, "Help")
-        assert band(app)[0].startswith(" HELP:")
-        await click_word(pilot, app, "Basics")
-        assert work_area(app)[0].strip()
-        assert band(app)[0].startswith(" HELP BASICS:")
-        await click_word(pilot, app, "Resume")
-        assert band(app)[0].startswith(" HELP:")
-        await click_word(pilot, app, "Resume")
-        assert band(app)[0].startswith(" COMMAND:")
-
-
 # -- pointing at a menu word ---------------------------------------------------
 
 
@@ -575,26 +562,6 @@ async def test_a_sideways_wheel_scrolls_a_wide_render_sideways(app):
         assert app.work_area.shift > 0
         await wheel(pilot, app, app.work_area, -1, offset=(2, 0), sideways=True)
         assert app.work_area.shift == 0
-
-
-async def test_the_wheel_turns_the_pages_of_a_help_subject(app):
-    async with app.run_test() as pilot:
-        await pilot.press("h", "a")
-        assert app.helping.pages > 1
-        assert app.helping.page == 0
-        await wheel(pilot, app, app.work_area, 1, offset=(2, 2))
-        assert app.helping.page == 1
-        await wheel(pilot, app, app.work_area, -1, offset=(2, 2))
-        assert app.helping.page == 0
-
-
-async def test_the_wheel_turns_no_page_on_the_subject_menu(app):
-    """The subject menu has no pages, just as Down turns none there."""
-    async with app.run_test() as pilot:
-        await pilot.press("h")
-        page = work_area(app)
-        await wheel(pilot, app, app.work_area, 1, offset=(2, 2))
-        assert work_area(app) == page
 
 
 # -- the list of names a file prompt opens -------------------------------------

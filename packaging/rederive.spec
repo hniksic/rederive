@@ -34,11 +34,12 @@ when the user asks for help.
 
 Four things about this program decide what has to be written here.
 
-The two data files are the first. Nothing in a bundle is found by walking a source
-tree, so `help.txt` and `rederive.tcss` have to be named and placed under the package
-directories that read them - `importlib.resources` for the one, the path Textual
-works out from the class's module for the other. Both are read at start-up, so
-forgetting either does not ship quietly: the program dies on the first frame.
+The data files are the first. Nothing in a bundle is found by walking a source
+tree, so the help topics and `rederive.tcss` have to be named and placed under the
+package directories that read them - `importlib.resources` for the one, the path
+Textual works out from the class's module for the other. Forgetting the stylesheet
+does not ship quietly, since the program dies on the first frame; forgetting the
+topics does, until someone asks for help, which is what `smoke.py` does.
 
 Sympy is the second. What the analysis finds by reading imports is about two thirds
 of it, and the third it leaves out is almost all parts this program never reaches -
@@ -49,7 +50,7 @@ die rather than answer. The corpus does not reach any of them, so this is insura
 and not a fix: it costs about eight megabytes, which is the cheaper side of the
 trade.
 
-PyOpenGL is the third, and it goes wrong the way `help.txt` would rather than the way
+PyOpenGL is the third, and it goes wrong the way the help topics would rather than the way
 sympy might. It chooses its platform backend - `egl`, `glx`, the Windows and macOS
 ones - by name at run time, so the analysis reads no import for any of them and a
 bundle built without this carries none. The build says nothing and the program starts,
@@ -83,7 +84,7 @@ a = Analysis(  # noqa: F821
     pathex=[str(ROOT / "src")],
     binaries=[],
     datas=[
-        (str(PACKAGE / "model" / "help.txt"), "rederive/model"),
+        (str(PACKAGE / "model" / "topics"), "rederive/model/topics"),
         (str(PACKAGE / "ui" / "rederive.tcss"), "rederive/ui"),
     ],
     hiddenimports=collect_submodules("sympy") + collect_submodules("OpenGL"),

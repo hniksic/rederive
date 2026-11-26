@@ -407,26 +407,6 @@ class WorkArea(VerticalScroll):
     def watch_virtual_size(self) -> None:
         self._reveal()
 
-    def show_help(self, lines: list[str], rows: int, width: int, titled: bool) -> None:
-        """Paint a help page over this window's expressions.
-
-        As in Derive, help is not an overlay: it replaces the expressions in this window
-        only, inside the window's border, with no border, scrollbar or shadow of its own.
-
-        The page is padded to the pane's full height so it reads from the top rather
-        than sitting at the bottom like the history. A titled page shows its title on
-        the first row in inverse video, covering only the title's columns.
-        """
-        styles = self.app.palette.styles
-        self._drawn, self._shifted, self._revealing = [], None, None
-        page = [line[:width] for line in lines[:rows]]
-        page += [""] * (rows - len(page))
-        marks = None
-        if titled and page[0].strip():
-            marks = {0: (len(page[0]) - len(page[0].lstrip()), len(page[0]))}
-        self.content.paint(page, styles["work"], styles["selection"], marks)
-        self.call_after_refresh(self.scroll_to, 0, 0, animate=False)
-
     def show_greeting(
         self, lines: Sequence[str], footer: Sequence[str], rows: int, width: int
     ) -> None:
