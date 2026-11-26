@@ -357,6 +357,17 @@ def test_a_reset_puts_the_settings_back_for_this_visit_and_the_next(page, storag
     assert returning.order == ("x", "y", "z")
 
 
+def test_a_reset_is_undone_like_a_command(page, storage):
+    session = Session()
+    session.settings.assign("Angle", "Degree")
+    session.order = ("z", "y")
+    files = Files(page, session, storage)
+    files.reset()
+    assert files.history.undo().description == "Reset settings"
+    assert session.settings["Angle"] == "Degree"
+    assert session.order == ("z", "y")
+
+
 # -- files arriving unrequested -----------------------------------------------
 
 

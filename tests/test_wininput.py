@@ -94,10 +94,12 @@ def test_altgr_types_the_character_rather_than_a_shortcut():
 
 
 def test_ctrl_with_a_letter_is_the_control_character():
-    assert keys(press(0x41, "\x01", CTRL), press(0x56, "\x16", CTRL)) == [
-        "ctrl+a",
-        "ctrl+v",
-    ]
+    assert keys(
+        press(0x41, "\x01", CTRL),
+        press(0x56, "\x16", CTRL),
+        press(0x59, "\x19", CTRL),
+        press(0x5A, "\x1a", CTRL),
+    ) == ["ctrl+a", "ctrl+v", "ctrl+y", "ctrl+z"]
 
 
 def test_alt_with_a_character_is_alt_and_the_key():

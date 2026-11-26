@@ -42,7 +42,11 @@ splice an answer back into.
 `solve` bypasses `_command`, because `_command` appends exactly one entry while soLve
 appends one per solution (possibly none). Like Substitute it works on the whole entry.
 It also owns `arbitrary`, the counter for `@n` values, which advances past every one
-that reaches the worksheet and never goes back.
+that reaches the worksheet and never goes back, except with an undo that takes the
+entries holding them away.
+
+Undo and redo return the whole session, settings included, to how a command found it
+or left it; see `rederive.model.undo`. Which file it is saved to is not part of that.
 """
 
 from __future__ import annotations
@@ -64,7 +68,8 @@ from rederive.engine import client as engine
 from rederive.engine.replacing import same_expression
 from rederive.model import data, dfw, markdown, state, worksheet
 from rederive.model.expr import VARIADIC, Kind, Node, parameter_names, variable_key
-from rederive.model.settings import DEFAULTS, FIELDS, Settings
+from rederive.model.settings import DEFAULTS, FIELDS, PLOT_PREFERENCES, Settings
+from rederive.model.undo import Snapshot
 from rederive.syntax import (
     PARSING_SETTINGS,
     ClearWhat,
@@ -441,8 +446,8 @@ class Session:
         self.domains: dict[str, engine.Domain] = {}
         #: The variable order list `Manage Ordering` writes, most main first.
         self.order: tuple[str, ...] = engine.ORDER_LIST
-        #: The next free `@n` for soLve's arbitrary values. It only increases: solving
-        #: `x = x` three times gives `@1`, `@2` and `@3`.
+        #: The next free `@n` for soLve's arbitrary values. It only increases, but for an
+        #: undo: solving `x = x` three times gives `@1`, `@2` and `@3`.
         self.arbitrary = 1
         #: The state of `RANDOM`'s generator, which each draw steps; a session starts
         #: at 0, so it draws reproducibly until seeded.
@@ -478,13 +483,7 @@ class Session:
         (annotating replaces the entry in the list).
         """
         other = Session(self.settings, self.runner, self.step_limit)
-        other.state = replace(
-            self.state,
-            functions=dict(self.state.functions),
-            variables=dict(self.state.variables),
-            _index={},
-            _index_stamp=(-1,),
-        )
+        other.state = _copied(self.state)
         other.entries = list(self.entries)
         other.selected = self.selected
         other.route = self.route
@@ -507,6 +506,60 @@ class Session:
         then.
         """
         self.settings.unwatch(self._settings_changed)
+
+    # -- undoing -----------------------------------------------------------
+
+    def snapshot(self) -> Snapshot:
+        """The state an undo would return to, as of now (see `rederive.model.undo`).
+
+        `file` and `source` are left out, as are the messages waiting to be taken and
+        the memory of the operand last selected.
+        """
+        return Snapshot(
+            entries=tuple(self.entries),
+            removed=tuple(self.removed),
+            state=_copied(self.state),
+            assignments=dict(self.assignments),
+            functions=dict(self.functions),
+            domains=dict(self.domains),
+            order=self.order,
+            arbitrary=self.arbitrary,
+            random=self.random,
+            next_number=self._next_number,
+            unsaved_objects=self._unsaved_objects,
+            settings={
+                setting: value
+                for setting, value in self.settings.values().items()
+                if setting not in PLOT_PREFERENCES
+            },
+            selected=self.selected,
+            route=self.route,
+        )
+
+    def return_to(self, snapshot: Snapshot) -> None:
+        """Put back `snapshot`, settings included (see `rederive.model.undo`).
+
+        The settings go back through `Settings`, so every watcher hears of them as of
+        any change: the other sessions mirror them into their parse states, and the
+        screen repaints for a color. The snapshot holds the notation with the precision,
+        so the precision brings no notation of its own. Entries keep the renders they
+        were made with, as they do when a display setting changes, so a restored entry
+        looks as it did.
+        """
+        self.entries = list(snapshot.entries)
+        self.removed = list(snapshot.removed)
+        self.state = _copied(snapshot.state)
+        self.assignments = dict(snapshot.assignments)
+        self.functions = dict(snapshot.functions)
+        self.domains = dict(snapshot.domains)
+        self.order = snapshot.order
+        self.arbitrary = snapshot.arbitrary
+        self.random = snapshot.random
+        self._next_number = snapshot.next_number
+        self._unsaved_objects = snapshot.unsaved_objects
+        self.selected = snapshot.selected
+        self.route = snapshot.route
+        self.settings.apply(snapshot.settings)
 
     # -- authoring ---------------------------------------------------------
 
@@ -727,7 +780,8 @@ class Session:
 
         This applies to every entry, not just soLve's, because a typed `SOLVE` mints them
         through Simplify, and a loaded worksheet carries whatever its session minted. The
-        counter never decreases, so no two arbitrary values in a worksheet collide.
+        counter never decreases, so no two arbitrary values in a worksheet collide; an
+        undo puts it back only with the entries and definitions it was advanced for.
         """
         for found in ARBITRARY.finditer(text):
             self.arbitrary = max(self.arbitrary, int(found.group(1)) + 1)
@@ -2783,6 +2837,18 @@ class Session:
             index += 1
             used += 1 + self.entries[index].height
         return index
+
+
+def _copied(state: ParseState) -> ParseState:
+    """A copy of `state` whose declarations are its own, for another session or for
+    an undo to return to."""
+    return replace(
+        state,
+        functions=dict(state.functions),
+        variables=dict(state.variables),
+        _index={},
+        _index_stamp=(-1,),
+    )
 
 
 def _is_infinite(bound: str) -> bool:

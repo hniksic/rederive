@@ -45,6 +45,14 @@ paste key works everywhere, and in a browser Ctrl-V goes to the browser. Derive'
 and F4, which copy the highlight onto the line, still work, but help documents copy
 and paste instead.
 
+At the command menu, Ctrl-Z undoes the last command that changed a worksheet, its
+definitions or the settings, in whichever window it ran, and Ctrl-Y redoes what it
+undid (see `rederive.model.undo`). Each command is one step, taken as it starts: in
+`invoke_command`, in `_commit` for a dialog of settings, and at each demo step; a point
+a plot window sends is a step of its own. Undo changes the window the step belongs to
+without switching to it, and the message line names that window if it is not the
+active one. On a line, Ctrl-Y is the line's own, putting back what was deleted.
+
 File name lines complete as you type. The first matching name appears dimmed after the
 cursor and Right accepts it. Tab inserts the common prefix of all matches and opens a
 list above the line: Up and Down move through it, updating the line, Enter enters a
@@ -149,6 +157,7 @@ from rederive.model.settings import (
     Settings,
     TextField,
 )
+from rederive.model.undo import History, Step
 from rederive.model.windows import Window, Windows
 from rederive.plot import PREFIX, UNAVAILABLE, available
 from rederive.plot import protocol as plots
@@ -409,6 +418,18 @@ LABEL_NUMBER = re.compile(r"[-+]?[0-9]+")
 #: Shown by Unremove when there is nothing to restore. Other refusals in Remove and
 #: Unremove only beep, but this one has no dialog to leave up.
 BUFFER_EMPTY = "Unremove buffer empty"
+
+#: What Ctrl-Z and Ctrl-Y say they did, naming the command undone or redone, and the
+#: window it ran in if that is not the active one; and what they say with nothing to do.
+UNDID = "Undid {command}"
+REDID = "Redid {command}"
+ELSEWHERE = "{done} in window {number}"
+NOTHING_TO_UNDO = "Nothing to undo"
+NOTHING_TO_REDO = "Nothing to redo"
+
+#: How undo names a step of a demo, and a point a plot window sent.
+DEMO_STEP = "Demo step"
+TRACED_POINT = "Trace point"
 
 #: Confirmation of Ctrl-C, since copying leaves no visible trace. The copied expression
 #: isn't quoted, since it may not fit on the line.
@@ -1094,6 +1115,10 @@ class RederiveApp(App[None]):
         # Ctrl-X cuts the selection on the line. It is bound at the app level because
         # the line's own binding would also cut a label offered by a command.
         Binding("ctrl+x", "cut_selected", "Cut", priority=True, show=False),
+        # Ctrl-Z and Ctrl-Y undo and redo commands at the command menu. On a line,
+        # `check_action` leaves Ctrl-Y to the line, which yanks.
+        Binding("ctrl+z", "undo", "Undo", priority=True, show=False),
+        Binding("ctrl+y", "redo", "Redo", priority=True, show=False),
         # Derive's equivalents, kept for users following the manual: F3 inserts the
         # highlighted expression onto the line, and F4 inserts it in parentheses. Help
         # documents copy and paste instead.
@@ -1232,6 +1257,8 @@ class RederiveApp(App[None]):
         self.refuses: Callable[[dict[str, str | int]], str | None] = _takes_anything
         #: The label range the next save writes, if one was asked for.
         self.block: tuple[int | None, int | None] = (None, None)
+        #: Every window's commands as steps for Ctrl-Z to undo, in the order they ran.
+        self.history = History()
         #: State of the Factor or Expand command in progress, if any.
         self.asking: Asking | None = None
         #: State of the Build in progress, if any.
@@ -1754,6 +1781,8 @@ class RederiveApp(App[None]):
           it can report that there's nothing to cut.
         - Completion list keys apply only while the list is open; otherwise Up and Down
           move through the history as on other lines.
+        - Ctrl-Z and Ctrl-Y apply only at the command menu, as window switching does, so
+          that nothing is undone under a half-answered question.
 
         During a computation no bindings apply; Esc is handled with the unbound keys.
         """
@@ -1775,7 +1804,7 @@ class RederiveApp(App[None]):
         if action == "help":
             # As in Derive, F1 is help on a line and the next window elsewhere.
             return self.mode in PROMPT_MODES
-        if action.startswith("window_"):
+        if action.startswith("window_") or action in ("undo", "redo"):
             # Only at the command menu, not even in a Window submenu, so windows never
             # switch under a half-answered question.
             return self.mode == MODE_MENU and len(self.stack) == 1
@@ -1809,7 +1838,8 @@ class RederiveApp(App[None]):
 
         During a computation only Esc (abort) works. Other keys are discarded rather
         than queued, so keys pressed at a seemingly frozen screen don't all fire when
-        the answer arrives.
+        the answer arrives. Ctrl-Z and Ctrl-Y beep, since what they would undo is still
+        being done.
 
         A modifier or lock key pressed alone, which terminals with the kitty keyboard
         protocol report, isn't a key here: Shift on the way to a capital Y doesn't
@@ -1822,6 +1852,8 @@ class RederiveApp(App[None]):
             event.prevent_default()
             if event.key == "escape":
                 self._abort()
+            elif event.key in ("ctrl+z", "ctrl+y"):
+                self._beep()
         elif self.mode in MENU_MODES:
             character = event.character
             if character and (
@@ -2568,6 +2600,7 @@ class RederiveApp(App[None]):
         if command is None:
             self._set_message(f"{word}: not implemented yet")
         else:
+            self.history.begin(self.session, _command_name(cursor.menu.title, word))
             command()
 
     # -- Options -----------------------------------------------------------
@@ -2649,6 +2682,7 @@ class RederiveApp(App[None]):
         if not editor.dialog.stored:
             self._answered(values)
             return
+        self.history.begin(self.session, _command_name(editor.dialog.title))
         changed = editor.changes(self.settings)
         if editor.dialog.keeps_menu:
             self.stack.pop()
@@ -4369,6 +4403,7 @@ class RederiveApp(App[None]):
         """
         demo = self.demo
         assert demo is not None
+        self.history.begin(self.session, DEMO_STEP)
         # The closed-window flag applies only within one wait between steps.
         self.closed_window = False
         while not demo.done:
@@ -4632,7 +4667,8 @@ class RederiveApp(App[None]):
             self.session,
         )
         try:
-            entry = session.author(event.text)
+            with self.history.aside(session, TRACED_POINT):
+                entry = session.author(event.text)
         except DeriveSyntaxError as error:
             # A point unparsable under the worksheet's settings (such as a digit invalid
             # in the input base) reports the parser's error, as Author would.
@@ -4640,6 +4676,40 @@ class RederiveApp(App[None]):
             return
         self.place_windows()
         self._set_message(POINT_ENTERED.format(text=event.text, label=f"#{entry.number}"))
+
+    # -- Undo --------------------------------------------------------------
+
+    def action_undo(self) -> None:
+        """Ctrl-Z: return to before the last command, in whichever window it ran."""
+        self._stepped(self.history.undo(), UNDID, NOTHING_TO_UNDO)
+
+    def action_redo(self) -> None:
+        """Ctrl-Y: return to before the last Ctrl-Z."""
+        self._stepped(self.history.redo(), REDID, NOTHING_TO_REDO)
+
+    def _stepped(self, step: Step | None, done: str, nothing: str) -> None:
+        """Say what was undone or redone, and in which window if not the active one, or
+        beep if nothing was.
+
+        The active window stays active, and the plot windows are left as they are,
+        showing what they were sent.
+        """
+        if step is None:
+            self._beep()
+            self._set_message(nothing)
+            return
+        self.message = done.format(command=step.description)
+        number = next(
+            (
+                number
+                for number, window in enumerate(self.windows.windows, 1)
+                if any(overlay.session is step.session for overlay in window.overlays)
+            ),
+            None,
+        )
+        if step.session is not self.session and number is not None:
+            self.message = ELSEWHERE.format(done=self.message, number=number)
+        self.refresh_screen()
 
     # -- Window ------------------------------------------------------------
     #
@@ -4693,6 +4763,7 @@ class RederiveApp(App[None]):
     def _drop_window(self, window: Window) -> None:
         for dropped in self.windows.close(window):
             dropped.discard()
+            self.history.forget(dropped)
         self._done_with_menu()
 
     def _command_window_goto(self) -> None:
@@ -5032,6 +5103,16 @@ class RederiveApp(App[None]):
         self.mode = MODE_MENU
         self.message = message
         self.refresh_screen()
+
+
+def _command_name(title: str, word: str = "") -> str:
+    """A command as undo names it, from its menu's title and its word, or from its
+    dialog's title: `Transfer Load Derive`, `Options Notation`, or just `Solve` for a
+    word of the command menu."""
+    words = [] if title == ALGEBRA.title else title.rstrip(":").split()
+    if word:
+        words.append(word)
+    return " ".join(each.capitalize() for each in words)
 
 
 def _last_name(name: str) -> str:

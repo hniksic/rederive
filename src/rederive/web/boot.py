@@ -151,6 +151,8 @@ async def start(
     # misses a file is told to the page, which says how to supply it.
     app.chooser = files.choose
     app.unfound = files.unfound
+    # A settings reset from the page's menu is undone like a command.
+    files.history = app.history
     # Kept alive while the program runs, since it holds the proxies the menu calls;
     # otherwise JS would call freed callbacks.
     demonstrations = Demos(demos, app, platform.current().storage())

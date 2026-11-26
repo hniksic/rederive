@@ -34,6 +34,8 @@ Transfer Demo runs Derive's demonstrations of arithmetic, algebra, calculus and 
 | Enter | run the highlighted option |
 | a letter | run the option that shows it as a capital: l for soLve |
 | Esc | leave a submenu, or abandon a command |
+| Ctrl-Z | undo the last command that changed a worksheet or the settings, in any window |
+| Ctrl-Y | redo what Ctrl-Z undid |
 
 Up and Down move the highlight between expressions, and Jump goes to one by its number. A
 command works on the highlighted expression unless another is named: on a command's line,

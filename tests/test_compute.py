@@ -252,6 +252,36 @@ async def test_a_command_after_an_abort_works(app, runner):
         assert message(app).startswith("Compute time:")
 
 
+async def test_undo_waits_for_the_running_command_and_then_undoes_it_whole(
+    app, runner, monkeypatch
+):
+    beeps = []
+    monkeypatch.setattr(app, "bell", lambda: beeps.append(True))
+    async with app.run_test() as pilot:
+        await author(pilot, "1+1")
+        await simplify(pilot, runner)
+        await pilot.press("ctrl+z", "ctrl+y")
+        assert app.mode == MODE_COMPUTE
+        assert len(beeps) == 2
+        runner.release()
+        assert await settle(pilot, lambda: app.mode == MODE_MENU)
+        assert entries(app) == ["1 + 1", "2"]
+        await pilot.press("ctrl+z")
+        assert entries(app) == ["1 + 1"]
+        assert message(app) == "Undid Simplify"
+
+
+async def test_an_aborted_command_leaves_nothing_to_undo(app, runner):
+    async with app.run_test() as pilot:
+        await author(pilot, "1+1")
+        await simplify(pilot, runner)
+        await pilot.press("escape")
+        assert await settle(pilot, lambda: app.mode == MODE_MENU)
+        await pilot.press("ctrl+z")
+        assert message(app) == "Undid Author"
+        assert entries(app) == []
+
+
 async def test_a_line_that_will_not_read_stays_up_to_be_corrected(app, runner):
     """The command parses the line, so the refusal comes back from the thread.
 

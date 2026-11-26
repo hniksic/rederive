@@ -39,6 +39,7 @@ from rederive.engine.client import ORDER_LIST
 from rederive.model import dfw, worksheet
 from rederive.model.session import Session
 from rederive.model.settings import DEFAULTS
+from rederive.model.undo import History
 from rederive.platform.web import WebStorage, received
 from rederive.ui.app import STATE_FILE
 
@@ -66,6 +67,9 @@ RESTORED = "Settings restored from your last visit; File > Reset settings forget
 #: Shown after a settings reset. It mentions the next visit because the stored reset
 #: isn't otherwise visible.
 RESET = "Every setting is back at its default, and will be on the next visit"
+
+#: How undo names a reset.
+RESET_STEP = "Reset settings"
 
 #: Shown when a link is made. It names the address bar, which has the link regardless of
 #: whether copying to the clipboard succeeded.
@@ -126,6 +130,9 @@ class Files:
         self._proxies: list[Any] = []
         #: Whether `settings` changed anything, for `opening` to report.
         self._restored = False
+        #: The history a reset is a step of, for Ctrl-Z to undo; the app's, once there
+        #: is one.
+        self.history = History()
         #: The command waiting on the file dialog, as the callbacks `choose` was given,
         #: or None.
         self._choosing: (
@@ -323,10 +330,11 @@ class Files:
 
         The store is written immediately rather than by `remember`, so the reset survives
         a forced close. As with any settings change, existing entries keep their
-        rendering.
+        rendering. Like a command, it can be undone.
         """
-        self._session.settings.apply(DEFAULTS)
-        self._session.order = ORDER_LIST
+        with self.history.aside(self._session, RESET_STEP):
+            self._session.settings.apply(DEFAULTS)
+            self._session.order = ORDER_LIST
         self._storage.keep(Path(STATE), self._session.state_written())
         self._page.said(RESET)
 

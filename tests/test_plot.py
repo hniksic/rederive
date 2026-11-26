@@ -3895,6 +3895,52 @@ async def test_a_point_arriving_mid_command_waits_its_turn(app):
         assert message(app) == "Entered [1.000000, 2.000000] as #1"
 
 
+async def test_a_point_sent_home_is_a_step_of_its_own(app):
+    async with app.run_test() as pilot:
+        # Sent while an Author line is half typed, the point is undone apart from the
+        # line, which is entered after it.
+        await pilot.press("a", "s", "i", "n")
+        app._plot_event(plots.Traced(id(app.session), "[1.000000, 2.000000]"))
+        await pilot.pause()
+        await pilot.press("enter", "ctrl+z")
+        assert message(app) == "Undid Author"
+        assert len(app.session.entries) == 1
+        await pilot.press("ctrl+z")
+        assert message(app) == "Undid Trace point"
+        assert app.session.entries == []
+
+
+async def test_undo_leaves_the_plot_windows_as_they_are(app):
+    async with app.run_test() as pilot:
+        await pilot.press("a", *"SIN(x)", "enter")
+        await pilot.press("p", "p")
+        await pilot.press("ctrl+z")
+        assert app.session.entries == []
+        await pilot.press("ctrl+y")
+        assert len(app.plots.sent) == 1
+        assert app.plots.described == 0
+
+
+async def test_a_key_in_a_plot_window_undoes_nothing(app):
+    async with app.run_test() as pilot:
+        await authored(pilot, app, "SIN(x)")
+        # A plot window passes on only the keys it doesn't use, and only a demo takes
+        # them.
+        app._plot_event(plots.Stepped())
+        await pilot.pause()
+        assert len(app.session.entries) == 1
+
+
+async def test_a_preference_a_plot_window_reports_is_not_undone(app):
+    async with app.run_test() as pilot:
+        await pilot.press("a", "x", "enter")
+        app._plot_event(plots.Preferred(plots.Prefer(connected=True)))
+        await pilot.pause()
+        await pilot.press("ctrl+z")
+        assert message(app) == "Undid Author"
+        assert app.settings["PlotPoints"] == "Connected"
+
+
 async def test_the_whole_loop_lands_a_parametric_plot_in_a_real_window(monkeypatch):
     """`P` `P` puts a curve in a real window, with no prompts.
 
