@@ -1666,7 +1666,21 @@ KINKED_ANTIDERIVATIVES = [
     ("INT(#e^ABS(x), x)", "(#e^ABS(x) - 1)*SIGN(x)"),
     ("INT(2*x*#e^ABS(x)/ABS(x), x)", "2*#e^ABS(x)"),
     ("INT(x*ABS(2*x - 3), x)", "(2*x - 3)*(4*x + 3)*ABS(2*x - 3)/24"),
-    ("INT(ABS(x - a), x)", "-(x - a)^2*SIGN(a - x)/2"),
+    ("INT(ABS(x - a), x)", "(x - a)*ABS(a - x)/2"),
+    # `F(x)*SIGN(u)` is `SIGN(u)*(G(x) - G(x0))`, for `G` an antiderivative of `F` and
+    # `x0` the zero of `u`, as Derive integrates it; other steps are constants at `x0`.
+    ("INT(COS(x)*SIGN(x - 5), x)", "(SIN(x) - SIN(5))*SIGN(x - 5)"),
+    ("INT(COS(x)*SIGN(x - a), x)", "(SIN(x) - SIN(a))*SIGN(x - a)"),
+    (
+        "INT(SIN(x)*CHI(5, x, inf), x)",
+        "COS(5)*SIGN(x - 5)/2 - (SIGN(x - 5) + 1)*COS(x)/2",
+    ),
+    ("INT(ABS(x)*#e^(-x^2), x)", "(1 - #e^(-x^2))*SIGN(x)/2"),
+    ("INT(SIGN(x)/(x^2 + 1), x)", "SIGN(x)*ATAN(x)"),
+    (
+        "INT(SIGN(x)*SIGN(x - 2)*COS(x), x)",
+        "((SIN(x) - SIN(2))*SIGN(x - 2) - SIN(2))*SIGN(x)",
+    ),
     # Each side's antiderivative is written over the argument's absolute value, so
     # that it is real on its own side.
     ("INT(1/ABS(x), x)", "SIGN(x)*LN(ABS(x))"),
@@ -1684,6 +1698,21 @@ def test_a_sign_of_a_linear_argument_is_integrated_on_each_side(text, expected):
     assert simp(text) == expected
 
 
+#: A function in pieces, from a comparison of Derive with the TI-Nspire.
+_PIECES = (
+    "(-CHI(-inf, x, 0) + x*CHI(0, x, 2) + (2 - x)*CHI(2, x, 5) + SIN(x)*CHI(5, x, inf))"
+)
+
+
+@pytest.mark.parametrize("integrand", [_PIECES, f"{_PIECES}*COS(x)"])
+def test_a_function_in_pieces_is_integrated_with_its_own_arguments(integrand):
+    """Each step's coefficient is integrated over `x` itself, so no `ABS(x - 5)` ends up
+    inside a sine or a cosine."""
+    answer = simp(f"INT({integrand}, x)")
+    assert "INT" not in answer
+    assert not re.search(r"(SIN|COS)\([^()]*ABS", answer)
+
+
 @pytest.mark.parametrize(
     ("integrand", "low", "high"),
     [
@@ -1695,6 +1724,13 @@ def test_a_sign_of_a_linear_argument_is_integrated_on_each_side(text, expected):
         ("ABS(COS(x))", "31/3", "113/3"),
         ("SIGN(SIN(x))", "-41/3", "-1/7"),
         ("x*ABS(SIN(x))", "-13", "17"),
+        ("COS(x)*ABS(x - 1)*SIGN(x + 1)", "-2", "3"),
+        (_PIECES, "-1", "1"),
+        (_PIECES, "1", "3"),
+        (_PIECES, "3", "6"),
+        (f"{_PIECES}*COS(x)", "-1", "1"),
+        (f"{_PIECES}*COS(x)", "1", "3"),
+        (f"{_PIECES}*COS(x)", "3", "6"),
         ("FLOOR(x)", "-37/3", "52/7"),
         ("x*FLOOR(x)", "-5/2", "100/3"),
     ],

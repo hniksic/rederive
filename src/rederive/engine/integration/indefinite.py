@@ -1098,14 +1098,17 @@ def _on_each_side_of_a_kink(head: sp.Basic) -> Candidate | None:
     """An antiderivative of an integrand with `ABS(u)` or `SIGN(u)`, where `u = a*x + b`
     with a numeric `a`, or None.
 
-    On each side of `u = 0` the integrand is an ordinary function, `ABS(u)` being `u`
-    or `-u` and `SIGN(u)` being 1 or -1. Each side is integrated over the positive `t =
+    Where the integrand is `A + B*SIGN(u)`, with an antiderivative of `B` finite at `u =
+    0`, it is integrated as Derive does (see `_by_the_sign_at_the_zero`). Otherwise, on
+    each side of `u = 0` the integrand is an ordinary function, `ABS(u)` being `u` or
+    `-u` and `SIGN(u)` being 1 or -1. Each side is integrated over the positive `t =
     ABS(u)`, giving `P(t)` for `u > 0` and `M(t)` for `u < 0`, so the antiderivative is
-    `(P + M)/2 + SIGN(u)*(P - M)/2` everywhere: `x*ABS(x)/2` for `ABS(x)`, and
-    `SIGN(x)*LN(ABS(x))` for `1/ABS(x)`. `M` is first shifted by a constant so the two
-    meet where both have a finite limit at `u = 0`, which keeps the antiderivative
-    continuous. Steps of other arguments are left to the integrals on each side, except
-    in a sum, whose terms are integrated apart, each with the jumps of its own steps.
+    `(P + M)/2 + SIGN(u)*(P - M)/2` everywhere: `(#e^ABS(x) - 1)*SIGN(x)` for
+    `#e^ABS(x)`, and `SIGN(x)*LN(ABS(x))` for `1/ABS(x)`. `M` is first shifted by a
+    constant so the two meet where both have a finite limit at `u = 0`, which keeps the
+    antiderivative continuous. Steps of other arguments are left to the integrals on
+    each side, except in a sum, whose terms are integrated apart, each with the jumps of
+    its own steps.
     """
     if len(head.limits) != 1 or len(head.limits[0]) != 1:
         return None
@@ -1133,7 +1136,9 @@ def _on_each_side_of_a_kink(head: sp.Basic) -> Candidate | None:
         slope, offset = polynomial.all_coeffs()
         if not slope.is_Rational:
             continue
-        found = _either_side(integrand, variable, argument, slope, offset)
+        found = _by_the_sign_at_the_zero(integrand, variable, argument, slope, offset)
+        if found is None:
+            found = _either_side(integrand, variable, argument, slope, offset)
         if found is not None:
             return Candidate(found, trusted=True, tabled=True)
     if len(arguments) == 1:
@@ -1345,6 +1350,83 @@ def _of_constant_sign(
         if at_zero is None or at_zero.is_zero is not True:
             return None
     return Candidate(folded_signs(sp.sign(argument) * found), trusted=True, formed=True)
+
+
+def _by_the_sign_at_the_zero(
+    integrand: sp.Basic,
+    variable: sp.Basic,
+    argument: sp.Basic,
+    slope: sp.Basic,
+    offset: sp.Basic,
+) -> sp.Basic | None:
+    """The antiderivative `_on_each_side_of_a_kink` builds at the zero `x0` of `argument`
+    when the integrand is `A + B*SIGN(u)`, or None.
+
+    `ABS(u)` is `u*SIGN(u)`, so where the steps of `u` (and of its multiples) enter
+    the integrand rationally, it is `A + B*SIGN(u)` away from `x0`, with `A` and `B`
+    free of them. If `G`, an antiderivative of `B`, has a finite limit `L` at `x0`,
+    `SIGN(u)*(G - L)` has the derivative `B*SIGN(u)` on each side and is continuous
+    across `x0`, as Derive integrates: `INT(COS(x)*SIGN(x - 5), x)` is `SIGN(x -
+    5)*(SIN(x) - SIN(5))`. Steps of other arguments are left to the integrals of `A`
+    and `B`, which is how a product of steps of several arguments is integrated.
+    """
+    sign = sp.Dummy("s")
+    held = {}
+    for step in integrand.atoms(sp.Abs, sp.sign):
+        ratio = attempt(step.args[0], lambda a: sp.cancel(a / argument))
+        if ratio is None or not ratio.is_Rational or ratio == 0:
+            continue
+        if isinstance(step, sp.Abs):
+            held[step] = abs(ratio) * argument * sign
+        else:
+            held[step] = sp.sign(ratio) * sign
+    written = integrand.xreplace(held)
+    if not written.has(sign) or written.is_rational_function(sign) is not True:
+        return None
+    sides = [attempt(written, lambda w: w.subs(sign, side)) for side in (1, -1)]
+    if any(side is None or side.has(sp.nan, sp.zoo) for side in sides):
+        return None
+    plus, minus = sides
+    found = [
+        integral(sp.Integral(part, variable)) if part != 0 else sp.S.Zero
+        for part in ((plus + minus) / 2, (plus - minus) / 2)
+    ]
+    if any(part.has(sp.Integral) for part in found):
+        return None
+    even, odd = found
+    zero = -offset / slope
+    size = sp.Dummy("t", positive=True)
+    near = [
+        attempt(
+            odd, lambda g: sp.limit(g.subs(variable, zero + side * size), size, 0, "+")
+        )
+        for side in (1, -1)
+    ]
+    if any(
+        value is None or value.has(sp.nan, sp.Limit, sp.oo, -sp.oo, sp.zoo)
+        for value in near
+    ):
+        return None
+    if near[0] != near[1] and attempt(near[0] - near[1], sp.simplify) != 0:
+        return None
+    odd -= near[0]
+    # `SIGN(u)*(G - L)` is `ABS(u)*(G - L)/u` where the quotient cancels, as for a
+    # polynomial `G`; that spelling is preferred where it is no longer.
+    spellings = []
+    quotient = attempt(odd / argument, sp.cancel)
+    if quotient is not None and not sp.denom(quotient).has(variable):
+        spellings.append(
+            attempt(quotient, lambda q: even + sp.Abs(argument) * sp.factor(q))
+        )
+    spellings += [
+        attempt(odd, lambda g: folded_signs(even + sp.sign(argument) * spell(g)))
+        for spell in (lambda g: g, sp.factor, sp.expand)
+    ]
+    return min(
+        (spelling for spelling in spellings if spelling is not None),
+        key=sp.count_ops,
+        default=None,
+    )
 
 
 def _either_side(
