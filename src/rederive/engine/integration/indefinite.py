@@ -69,7 +69,7 @@ from rederive.engine.integration.form import (
     somewhere_only,
     unwritable,
 )
-from rederive.engine.integration.proof import differentiates_back, holds
+from rederive.engine.integration.proof import differentiates_back, holds, unbroken
 from rederive.engine.integration.special import by_a_definite_rule
 from rederive.engine.printer import shadowed_names
 from rederive.engine.radical import radical_antiderivative
@@ -1513,6 +1513,189 @@ def _side_sizes(piece: sp.Basic, size: sp.Basic, argument: sp.Basic) -> list[sp.
     return sizes
 
 
+def _across_the_zeros_of_a_polynomial(head: sp.Basic) -> Candidate | None:
+    """An antiderivative of an integrand with `ABS(p)` or `SIGN(p)`, where `p` is a
+    polynomial of degree 2 or more in the variable whose real zeros can be written, or
+    None.
+
+    Wherever `p` is nonzero, `SIGN(p)` is `s`, the product of the signs of its factors
+    of odd multiplicity that have real zeros, times a constant sign, and `ABS(p)` is
+    `p*s`. So the integrand is `A + s*B` with `A` and `B` free of steps, and for an
+    antiderivative `G` of `B`, `s*G` is one of `s*B` between the zeros. At a zero `r`
+    of odd multiplicity, `s` changes from `-s_r` to `s_r`, so where `G` is continuous
+    `s*G` jumps by `2*s_r*G(r)`, and `s*G - s_r*G(r)*SIGN(x - r)` doesn't. `G` is
+    shifted to vanish at one zero, which drops its term: `INT(ABS(x^2 + 5*x + 6), x)`
+    is `SIGN(x + 3)*((2*x^3 + 15*x^2 + 36*x + 28)*SIGN(x + 2) + 1)/6`, as Derive has it.
+
+    Zeros that move with a parameter may meet, and where they do, their terms vanish.
+    Where they meet at the zero `G` vanishes at, `s*G` is continuous, but elsewhere a
+    jump is left. So where a zero moves, at most two real zeros are taken, both simple,
+    and a moving one only of a linear factor with a numeric slope, which is real and
+    finite for every value.
+    """
+    if len(head.limits) != 1 or len(head.limits[0]) != 1:
+        return None
+    variable, integrand = head.limits[0][0], head.function
+    if variable.is_real is not True:
+        return None
+    steps = {step for step in integrand.atoms(sp.Abs, sp.sign) if step.has(variable)}
+    arguments = {step.args[0] for step in steps}
+    if len(arguments) != 1:
+        return None
+    (argument,) = arguments
+    degree = attempt(argument, lambda a: sp.Integer(sp.Poly(a, variable).degree()))
+    if degree is None or degree < 2:
+        return None
+    found = _real_zeros(argument, variable)
+    if found is None:
+        return None
+    sign, zeros = found
+    # `ABS(p)^n` and `SIGN(p)^n` are `p^n*s^n` and `s^n`, and `s^2` is 1.
+    held = sp.Dummy("s")
+    written = integrand.xreplace(
+        {sp.Abs(argument): argument * held, sp.sign(argument): held}
+    )
+    written = written.replace(
+        lambda e: e.is_Pow and e.base == held and e.exp.is_integer,
+        lambda e: held ** (e.exp % 2),
+    )
+    signed = sp.diff(written, held)
+    if signed.has(held) or signed == 0:
+        return None
+    unsigned = written.subs(held, 0)
+    base = integral(sp.Integral(signed, variable))
+    if base.has(sp.Integral):
+        return None
+    rest = sp.S.Zero
+    if unsigned != 0:
+        rest = integral(sp.Integral(unsigned, variable))
+        if rest.has(sp.Integral):
+            return None
+    at = []
+    polynomial = base.is_polynomial(variable)
+    for zero, factor, _, _ in zeros:
+        if not unbroken(base, variable, zero - 1, zero + 1):
+            return None
+        # A polynomial is first reduced by the factor, which shortens its value at an
+        # irrational zero.
+        reduced = base
+        if polynomial:
+            reduced = attempt(base, lambda b: sp.rem(b, factor, variable))
+        if reduced is None:
+            return None
+        value = attempt(
+            reduced, lambda b: sp.radsimp(sp.expand(b.subs(variable, zero)))
+        )
+        # Past a zero where the antiderivative isn't real the integrand isn't either,
+        # and the jump there would add an imaginary constant on the real side.
+        if value is None or value.is_extended_real is not True:
+            return None
+        at.append(value)
+    spellings = []
+    for shift in at:
+        jumps = [
+            side * (value - shift) * sp.sign(kink)
+            for (_, _, kink, side), value in zip(zeros, at)
+        ]
+        shifted = base - shift
+        for spell in (sp.factor, sp.expand):
+            spellings.append(
+                attempt(
+                    shifted,
+                    lambda s: folded_signs(
+                        sign * spell(s) - sp.Add(*[spell(j) for j in jumps])
+                    ),
+                )
+            )
+    value = min(
+        (spelling for spelling in spellings if spelling is not None),
+        key=sp.count_ops,
+        default=None,
+    )
+    if value is None:
+        return None
+    return Candidate(value + rest, trusted=True, tabled=True)
+
+
+def _real_zeros(
+    polynomial: sp.Basic, variable: sp.Basic
+) -> tuple[sp.Basic, list[tuple[sp.Basic, sp.Basic, sp.Basic, sp.Basic]]] | None:
+    """`(s, zeros)` for `_across_the_zeros_of_a_polynomial`, or None if the real zeros
+    can't all be written, or may meet.
+
+    `s` is the sign of the polynomial away from its zeros, as a constant sign times the
+    signs of the factors of odd multiplicity that have real zeros. For each real zero
+    `r` of such a factor `f`, `zeros` has `(r, f, k, c)`: `k` is a linear polynomial
+    zero at `r`, `f` itself if it is linear, and `c` is the sign `s` takes just right of
+    `r` times the sign of `k`'s slope, so that `c*SIGN(k)` is `s_r*SIGN(x - r)`.
+    """
+    try:
+        constant, factors = sp.factor_list(polynomial, variable)
+    except Exception:
+        return None
+    # The sign of the constant factor and of the factors without real zeros.
+    fixed = sp.sign(constant)
+    # Factors of odd multiplicity with real zeros, each with its zeros.
+    kinks: list[tuple[sp.Basic, list[tuple[sp.Basic, sp.Basic]]]] = []
+    # The number of real zeros with multiplicity, whether any moves with a parameter,
+    # and whether all are simple.
+    count, moving, simple = 0, False, True
+    for factor, multiplicity in factors:
+        poly = sp.Poly(factor, variable)
+        if poly.degree() == 0:
+            fixed *= sp.sign(factor) ** multiplicity
+            continue
+        if poly.degree() == 1:
+            slope, offset = poly.all_coeffs()
+            if not (slope.is_number and slope.is_zero is False):
+                return None
+            roots = [(-offset / slope, factor)]
+        elif factor.free_symbols - {variable}:
+            return None
+        else:
+            try:
+                real = poly.count_roots()
+                if real == 0:
+                    solved = {}
+                else:
+                    solved = sp.roots(poly, trig=True)
+            except Exception:
+                return None
+            if real == 0:
+                if multiplicity % 2:
+                    fixed *= sp.sign(poly.LC())
+                continue
+            roots = [(root, variable - root) for root in solved if root.is_real]
+            if len(roots) != real:
+                return None
+        count += len(roots) * multiplicity
+        moving = moving or any(root.free_symbols for root, _ in roots)
+        simple = simple and multiplicity == 1
+        if multiplicity % 2:
+            kinks.append((factor, roots))
+    if moving and (count > 2 or not simple):
+        return None
+    zeros = []
+    for factor, roots in kinks:
+        for root, kink in roots:
+            # Just right of `r`, `SIGN(f)` is the sign of `f'(r)` and the others are
+            # their values.
+            right = fixed * sp.diff(factor, variable).subs(variable, root)
+            for other, _ in kinks:
+                if other != factor:
+                    right *= other.subs(variable, root)
+            side = attempt(right, lambda r: sp.sign(sp.radsimp(sp.expand(r))))
+            if side is None:
+                return None
+            if side.is_number and side not in (1, -1):
+                return None
+            slope = sp.Poly(kink, variable).LC()
+            zeros.append((root, factor, kink, side * sp.sign(slope)))
+    if not zeros:
+        return None
+    return fixed * sp.Mul(*[sp.sign(factor) for factor, _ in kinks]), zeros
+
+
 def _by_derivative_divides(head: sp.Basic) -> Candidate | None:
     """An antiderivative by `u = g(x)`, where the integrand is `h(g(x))*g'(x)` and
     contains a power with a symbolic exponent or an unevaluated integral, or None.
@@ -2578,6 +2761,7 @@ _METHODS: tuple[Method, ...] = (
     _of_an_exponential_times_a_wave,
     _between_the_ends_of_a_kink,
     _on_each_side_of_a_kink,
+    _across_the_zeros_of_a_polynomial,
     _by_derivative_divides,
     _as_logarithms,
     _by_products_as_sums,

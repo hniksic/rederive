@@ -1713,6 +1713,37 @@ def test_a_function_in_pieces_is_integrated_with_its_own_arguments(integrand):
     assert not re.search(r"(SIN|COS)\([^()]*ABS", answer)
 
 
+POLYNOMIAL_KINKS = [
+    # Each zero of odd multiplicity is a kink, where the antiderivative of the integrand
+    # with the sign taken out is joined continuously.
+    ("INT(ABS(x^2 + 5*x + 6), x)", "((2*x^2 + 11*x + 14)*ABS(x + 2) + 1)*SIGN(x + 3)/6"),
+    ("INT(ABS(x^2 - 1), x)", "((x^2 + x - 2)*ABS(x - 1) + 4)*SIGN(x + 1)/3"),
+    (
+        "INT(ABS(x^2 - 2), x)",
+        "(x^3/3 - 2*x - 4*SQRT(2)/3)*SIGN(x^2 - 2) + 8*SQRT(2)*SIGN(x - SQRT(2))/3",
+    ),
+    ("INT(SIGN(x^2 - 1), x)", "SIGN(x + 1)*ABS(x - 1) - 2*SIGN(x + 1)"),
+    ("INT(x*ABS(x^2 - 1), x)", "(x + 1)*(x - 1)*ABS(x - 1)*ABS(x + 1)/4"),
+    # The zeros meet at `a = 0`, where `x^2` has no kink.
+    (
+        "INT(ABS(x^2 - a^2), x)",
+        "((x^2 + a*x - 2*a^2)*ABS(a - x) + 4*a^3*SIGN(a))*SIGN(x + a)/3",
+    ),
+    # The zeros can't be written exactly.
+    ("INT(ABS(x^5 - x - 1), x)", "INT(ABS(-x^5 + x + 1), x)"),
+    # `x = a` meets `x = 1` at `a = 1`, away from `x = -1`, where the antiderivative of
+    # `(x - a)*(x^2 - 1)` would vanish, and that leaves a jump.
+    ("INT(ABS((x - a)*(x^2 - 1)), x)", "INT(ABS((a - x)*(x^2 - 1)), x)"),
+]
+
+
+@pytest.mark.parametrize(("text", "expected"), POLYNOMIAL_KINKS, ids=str)
+def test_an_absolute_value_of_a_polynomial_is_integrated_across_its_zeros(
+    text, expected
+):
+    assert simp(text) == expected
+
+
 @pytest.mark.parametrize(
     ("integrand", "low", "high"),
     [
@@ -1731,6 +1762,11 @@ def test_a_function_in_pieces_is_integrated_with_its_own_arguments(integrand):
         (f"{_PIECES}*COS(x)", "-1", "1"),
         (f"{_PIECES}*COS(x)", "1", "3"),
         (f"{_PIECES}*COS(x)", "3", "6"),
+        ("ABS(x^2 + 5*x + 6)", "-4", "1"),
+        ("ABS(x^2 - 2)", "-3", "5/2"),
+        ("ABS(x^4 - 5*x^2 + 4)", "-3", "3"),
+        ("ABS(x^2 - 1)^3", "-2", "3/2"),
+        ("COS(x)*ABS(x^2 - 1)", "-2", "3"),
         ("FLOOR(x)", "-37/3", "52/7"),
         ("x*FLOOR(x)", "-5/2", "100/3"),
     ],
