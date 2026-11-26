@@ -50,7 +50,7 @@ from rederive.engine import notation
 from rederive.engine.approximation import is_approximation
 from rederive.engine.context import Context, Notation
 from rederive.engine.ordering import main_order
-from rederive.model.expr import VARIADIC, Kind, Node
+from rederive.model.expr import FOLDING_LEFT, VARIADIC, Kind, Node
 from rederive.syntax.lexer import numeral_value
 from rederive.syntax.names import (
     BUILTIN_FUNCTIONS,
@@ -1813,7 +1813,7 @@ class TreePrinter(Printer):
             operands = logical_order(operands, self.context.order)
         kind = _LOGICAL_KINDS[word]
         nodes = self._arguments(operands)
-        if word in ("IMP", "IFF"):
+        if kind in FOLDING_LEFT:
             node = nodes[0]
             for other in nodes[1:]:
                 node = _node(kind, (node, other))

@@ -19,7 +19,7 @@ from collections.abc import Callable
 
 from rederive.display import glyphs
 from rederive.display.boxes import Box, Placed, centered, fenced, rail, row, text
-from rederive.model.expr import Kind, Node
+from rederive.model.expr import FOLDING_LEFT, Kind, Node
 
 # The precedence ladder, loosest first. It describes how tightly a rendering binds as
 # read on screen, which doesn't always match the grammar: `-x*y` parses as `-(x·y)`, but
@@ -178,6 +178,19 @@ def needs_fences(node: Node, required: int, after: int) -> bool:
     # operator to the right binding at least as tightly, or a prefix as tight as `√`.
     # Looser prefixes, such as unary minus or `2·`, are fine.
     return after >= body or required >= POW
+
+
+def logical_operands(node: Node) -> tuple[int, int]:
+    """The precedence the left and right operands of a logical operator need.
+
+    The side the operator associates toward takes its own precedence and the other side
+    one more, so `a OR b OR c` and `a IMP b IMP c` are drawn as they are read, and
+    `(a OR b) OR c` and `a IMP (b IMP c)` keep their parentheses.
+    """
+    own = precedence(node)
+    if node.kind in FOLDING_LEFT:
+        return own, own + 1
+    return own + 1, own
 
 
 def fenced_in_run(node: Node, child: Node) -> bool:

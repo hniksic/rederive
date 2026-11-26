@@ -127,7 +127,7 @@ class _Typesetter:
             case Kind.NOT:
                 return latex.negation(self.operand(node.children[0], level, forms.NOT))
             case Kind.AND | Kind.OR | Kind.XOR | Kind.IMP | Kind.IFF:
-                return self._binary(node, level, latex.logical(node.kind))
+                return self._logical(node, level)
             case Kind.INFIX:
                 return self._infix(node, level)
             case Kind.ASSIGN:
@@ -228,8 +228,16 @@ class _Typesetter:
         second = self.operand(right, level, forms.MUL)
         return self.latex.infix(first, self.latex.DOT_PRODUCT, second)
 
+    def _logical(self, node: Node, level: int) -> str:
+        """A logical connective, fenced as `layout.Engine._logical` fences it."""
+        left, right = node.children
+        first_needs, second_needs = forms.logical_operands(node)
+        first = self.operand(left, level, first_needs, forms.precedence(node))
+        second = self.operand(right, level, second_needs)
+        return self.latex.infix(first, self.latex.logical(node.kind), second)
+
     def _binary(self, node: Node, level: int, operator: str) -> str:
-        """A left-associative operator: a set operation or a logical connective."""
+        """A set operation, left-associative like the grammar."""
         own = forms.precedence(node)
         left, right = node.children
         first = self.operand(left, level, own, own)

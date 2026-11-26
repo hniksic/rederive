@@ -30,7 +30,7 @@ it. That is how the engine's answers get their text.
 
 from __future__ import annotations
 
-from rederive.model.expr import VARIADIC, Kind, Node, is_chain
+from rederive.model.expr import FOLDING_LEFT, VARIADIC, Kind, Node, is_chain
 from rederive.syntax.names import GREEK_NAMES
 
 # The parser's precedence levels, loosest first. These differ from the display's levels,
@@ -93,9 +93,6 @@ _LOGICAL_PRECEDENCE = {
     Kind.IMP: IMP,
     Kind.IFF: IFF,
 }
-
-#: The logical operators that associate to the left.
-_FOLDING_LEFT = frozenset((Kind.IMP, Kind.IFF))
 
 
 def write_expression(node: Node) -> str:
@@ -519,7 +516,7 @@ class _Writer:
         start = self.at
         own = _LOGICAL_PRECEDENCE[node.kind]
         word = _WORD_OPERATORS[node.kind]
-        left, right = own + 1, own + 1 if node.kind in _FOLDING_LEFT else own
+        left, right = own + 1, own + 1 if node.kind in FOLDING_LEFT else own
         first, second = node.children
         one = self.operand(first, left)
         self.put(f" {word} ")

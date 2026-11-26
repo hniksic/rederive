@@ -521,10 +521,10 @@ class Engine:
 
     def _logical(self, node: Node, level: int, budget: int | None) -> Box:
         word = _WORD_OPERATORS[node.kind]
-        own = forms.precedence(node)
         left, right = node.children
-        first = self.operand(left, level, budget, own, own)
-        second = self.operand(right, level, budget, own + 1)
+        first_needs, second_needs = forms.logical_operands(node)
+        first = self.operand(left, level, budget, first_needs, forms.precedence(node))
+        second = self.operand(right, level, budget, second_needs)
         return row([first, text(f" {word} "), second], node, (first, second))
 
     # -- applications -------------------------------------------------------

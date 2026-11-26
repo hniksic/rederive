@@ -228,6 +228,11 @@ def test_relations_and_logic():
     assert latex("x <= y AND x /= 0") == r"x \le y \land x \ne 0"
     assert latex("a AND NOT b OR c XOR d") == r"a \land \lnot b \lor c \veebar d"
     assert latex("a IMP b IFF c") == r"a \Rightarrow b \Leftrightarrow c"
+    assert latex("a OR b OR c") == r"a \lor b \lor c"
+    assert latex("(a OR b) OR c") == r"(a \lor b) \lor c"
+    assert latex("a AND b AND c") == r"a \land b \land c"
+    assert latex("(a IMP b) IMP c") == r"a \Rightarrow b \Rightarrow c"
+    assert latex("a IMP (b IMP c)") == r"a \Rightarrow (b \Rightarrow c)"
     assert latex("a SUBSET b") == r"a \subseteq b"
 
 

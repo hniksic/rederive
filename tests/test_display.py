@@ -595,6 +595,17 @@ SINGLE_ROW = [
     ("3+-2", "3 + -2"),
     ("a=b<c", "a = b < c"),
     ("x>=1 AND NOT y<2", "x ≥ 1 AND NOT y < 2"),
+    # `AND`, `OR` and `XOR` associate to the right, `IMP` and `IFF` to the left, so a
+    # chain is drawn flat and only the other nesting keeps its parentheses.
+    ("x=1 OR x=2 OR x=3", "x = 1 OR x = 2 OR x = 3"),
+    ("(x=1 OR x=2) OR x=3", "(x = 1 OR x = 2) OR x = 3"),
+    ("a AND b AND c", "a AND b AND c"),
+    ("(a AND b) AND c", "(a AND b) AND c"),
+    ("a XOR b XOR c", "a XOR b XOR c"),
+    ("a IMP b IMP c", "a IMP b IMP c"),
+    ("(a IMP b) IMP c", "a IMP b IMP c"),
+    ("a IMP (b IMP c)", "a IMP (b IMP c)"),
+    ("a IFF (b IFF c)", "a IFF (b IFF c)"),
     ('"hello"', '"hello"'),
     ("5%+x", "5% + x"),
     ("x:epsilon Real [0,inf)", "x :ε Real [0, ∞)"),

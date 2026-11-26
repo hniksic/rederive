@@ -103,6 +103,10 @@ class Node:
 #: The `value` of the `PARAMS` of a variadic head.
 VARIADIC = "variadic"
 
+#: The logical operators that associate to the left; `AND`, `OR` and `XOR` associate to
+#: the right.
+FOLDING_LEFT = frozenset((Kind.IMP, Kind.IFF))
+
 #: The chain operators of `INFIX`, which bind like `SUB`.
 CHAIN_WORDS = frozenset(("ROW", "COL"))
 
