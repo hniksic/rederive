@@ -151,23 +151,45 @@ def logical_order(operands, order: Sequence[str]) -> list[sp.Basic]:
     return sorted(operands, key=lambda operand: _logical_key(operand, order))
 
 
-def _logical_key(operand: sp.Basic, order: Sequence[str]) -> tuple:
+def written_order(operands, order: Sequence[str]) -> list[sp.Basic]:
+    """The operands of a conjunction or disjunction that remembers how it was written.
+
+    Logical variables are sorted as `logical_order` sorts them, but relations aren't
+    sorted, as in Derive: `y = 1 OR x = 2` and the solutions `x = 3 OR x = 1` stay as
+    they are. In a mix the relations come first, `x = 1 OR a`, and an operand that
+    joins both is placed by its variables, `x = 2 AND a OR y = 1 AND b`.
+    """
+    return sorted(operands, key=lambda operand: _logical_key(operand, order, True))
+
+
+def _logical_key(operand: sp.Basic, order: Sequence[str], written: bool = False) -> tuple:
     """The sort key of one operand: its literals, in order, each with its sign.
 
     Always a tuple of literal keys, even for a single literal, so any two operands
-    compare.
+    compare. With `written`, only logical variables count as literals, so operands
+    without any share the empty key, which sorts first.
     """
     if isinstance(operand, (sp.And, sp.Or, sp.Xor)):
         return tuple(
             sorted(
                 literal
                 for argument in operand.args
-                for literal in _logical_key(argument, order)
+                for literal in _logical_key(argument, order, written)
             )
         )
     negated = isinstance(operand, sp.Not)
     inner = operand.args[0] if negated else operand
+    if written and not isinstance(inner, sp.Symbol):
+        return ()
     return ((_variable_key(inner, order), 0 if negated else 1),)
+
+
+def _ordering(expr: sp.Basic):
+    """What sorts the operands of the conjunction or disjunction `expr` for writing, or
+    None if they are written in the order they have."""
+    if getattr(expr, "in_order", False):
+        return None
+    return written_order if getattr(expr, "keeps_order", False) else logical_order
 
 
 def _variable_key(operand: sp.Basic, order: Sequence[str]) -> tuple:
@@ -1766,8 +1788,7 @@ class TreePrinter(Printer):
         chained = self._chain(expr)
         if chained is not None:
             return chained
-        order = not getattr(expr, "in_order", False)
-        return self._infix("AND", expr.args, order=order)
+        return self._infix("AND", expr.args, order=_ordering(expr))
 
     def _chain(self, expr) -> Node | None:
         """Two bounds on one variable as the chain `-2 < x < 2`, as the original writes a
@@ -1783,15 +1804,14 @@ class TreePrinter(Printer):
         return _relation(upper, inner, self._print(high))
 
     def _print_Or(self, expr) -> Node:
-        order = not getattr(expr, "in_order", False)
-        return self._infix("OR", expr.args, order=order)
+        return self._infix("OR", expr.args, order=_ordering(expr))
 
     def _print_Xor(self, expr) -> Node:
         return self._infix("XOR", expr.args)
 
     def _print_Implies(self, expr) -> Node:
         # `IMP` isn't commutative, so its operands keep their order.
-        return self._infix("IMP", expr.args, order=False)
+        return self._infix("IMP", expr.args, order=None)
 
     def _print_Equivalent(self, expr) -> Node:
         if len(expr.args) != 2:
@@ -1800,17 +1820,18 @@ class TreePrinter(Printer):
                 sp.Equivalent(first, second, evaluate=False)
                 for first, second in zip(expr.args, expr.args[1:], strict=False)
             ]
-            return self._infix("AND", links, order=False)
-        return self._infix("IFF", expr.args, order=False)
+            return self._infix("AND", links, order=None)
+        return self._infix("IFF", expr.args, order=None)
 
     def _print_Not(self, expr) -> Node:
         return _node(Kind.NOT, (self._print(expr.args[0]),))
 
-    def _infix(self, word: str, operands, order: bool = True) -> Node:
+    def _infix(self, word: str, operands, order=logical_order) -> Node:
         """The operands joined by the logical operator `word`, which associates as it is
-        read: `IMP` and `IFF` to the left, the others to the right."""
-        if order:
-            operands = logical_order(operands, self.context.order)
+        read: `IMP` and `IFF` to the left, the others to the right. `order` sorts them,
+        or is None for operands that keep their order."""
+        if order is not None:
+            operands = order(operands, self.context.order)
         kind = _LOGICAL_KINDS[word]
         nodes = self._arguments(operands)
         if kind in FOLDING_LEFT:
@@ -1933,7 +1954,7 @@ class TreePrinter(Printer):
         operands = expr.args[1:]
         if len(operands) == 1:
             return _node(Kind.NOT, (self._print(operands[0]),))
-        return self._infix(word, operands, order=False)
+        return self._infix(word, operands, order=None)
 
     def _print_Assign(self, expr) -> Node:
         target, operator, *value = expr.args

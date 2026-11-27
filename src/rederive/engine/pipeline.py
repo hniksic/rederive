@@ -126,11 +126,13 @@ from rederive.engine.to_sympy import (
     authored_conditionals,
     connected,
     digit_count,
+    in_written_order,
     is_statement,
     floors_as_residues,
     is_simple,
     simple_constants,
     residues_as_floors,
+    unwritten,
 )
 from rederive.engine.vocabulary import INVERSE_HYPERBOLIC, in_vocabulary
 from rederive.model.expr import Kind, Node
@@ -997,10 +999,14 @@ def _boolean(expression: Boolean, context: Context, decide: bool) -> sp.Basic:
     `true`, and a conjunct common to every disjunct is factored out. The result keeps
     its shape, with its operands simplified.
 
-    The equations of a system's solution keep their order, that of its variables.
+    The equations of a system's solution keep their order, that of its variables. A
+    statement the user wrote keeps the order of its operands where the algebra leaves
+    them standing; where it rewrites them, the result has sympy's order.
     """
     if getattr(expression, "in_order", False):
         return expression.func(*(_transform(a, context, decide) for a in expression.args))
+    written = expression if getattr(expression, "keeps_order", False) else None
+    expression = unwritten(expression)
     solved = _reduced(expression)
     if solved is not None:
         return solved
@@ -1009,12 +1015,30 @@ def _boolean(expression: Boolean, context: Context, decide: bool) -> sp.Basic:
         # An atom (`p OR NOT p` -> `true`, `p AND (p OR q)` -> `p`) has nothing left
         # to simplify, and passing it to `_transform` would just loop back here.
         return expression
+    if written is not None and _standing(expression, written):
+        try:
+            return in_written_order(
+                type(expression),
+                [_transform(a, context, decide) for a in written.args],
+            )
+        except Exception:
+            return written
     try:
         return expression.func(
             *(_transform(a, context, decide) for a in expression.args)
         )
     except Exception:
         return expression
+
+
+def _standing(expression: Boolean, written: Boolean) -> bool:
+    """Whether `expression`, what the algebra made of `written`, has the same operands,
+    so that they can keep the order they were written in."""
+    if type(expression) not in (sp.And, sp.Or):
+        return False
+    if not isinstance(written, type(expression)):
+        return False
+    return set(expression.args) == {unwritten(operand) for operand in written.args}
 
 
 def _algebra(expression: Boolean) -> sp.Basic:

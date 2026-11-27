@@ -34,6 +34,7 @@ from rederive.engine.to_sympy import (
     Taylor,
     Transposed,
     Vector,
+    Written,
     integer_root,
 )
 from rederive.model.expr import Kind
@@ -281,19 +282,22 @@ def test_a_relation_chain_is_the_conjunction_it_means():
     """`1 <= a <= b` constrains `a` on both sides, as the shipped library intends.
     Nesting it as the grammar does would compare the truth value of `1 <= a` with `b`.
 
-    The links are canonicalized, because a conjunction stores its operands in a set:
-    `1 <= a` and `a >= 1` must be the same object, or the order of the pair would depend
-    on which spelling was written."""
+    The links are canonicalized, so that `1 <= a` and `a >= 1` are the same object and
+    the two spellings of the pair one statement. They keep the order of the chain."""
     a, b, c = sp.symbols("a b c", real=True)
-    assert convert("1 <= a <= b") == sp.And(sp.Ge(a, 1), sp.Le(a, b))
+    assert convert("1 <= a <= b") == Written(sp.Ge(a, 1), sp.Le(a, b))
     assert convert("a >= 1 AND a <= b") == convert("1 <= a <= b")
-    assert convert("a < b < c") == sp.And(sp.Lt(a, b), sp.Lt(b, c))
-    assert convert("a = b = c") == sp.And(sp.Eq(a, b), sp.Eq(b, c))
+    assert convert("a < b < c") == Written(sp.Lt(a, b), sp.Lt(b, c))
+    assert convert("a = b = c") == Written(sp.Eq(a, b), sp.Eq(b, c))
 
 
 def test_a_boolean_operator_on_booleans_is_boolean():
     assert convert("NOT NOT p") == sp.Symbol("p", real=True)
-    assert convert("p AND q") == sp.And(*sp.symbols("p q", real=True))
+    p, q = sp.symbols("p q", real=True)
+    assert convert("p AND q") == Written(p, q)
+    # The operands keep the order they are written in, which sympy's own don't have.
+    assert convert("q OR p").args == (q, p)
+    assert convert("q OR p OR q").args == (q, p)
 
 
 @pytest.mark.parametrize(

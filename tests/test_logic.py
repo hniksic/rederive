@@ -388,6 +388,24 @@ LOGIC = [
     ("s AND r OR q AND p", "p AND q OR r AND s"),
     ("c OR b AND a", "a AND b OR c"),
     ("p AND q OR NOT p AND r", "NOT p AND r OR p AND q"),
+    # Relations aren't sorted: Derive 4.11 simplifies each of the next five to itself.
+    # They stay in the order written, the first of two alike kept.
+    ("x = 3 OR x = 1 OR x = 2", "x = 3 OR x = 1 OR x = 2"),
+    ("y = 1 OR x = 2", "y = 1 OR x = 2"),
+    ("x = 1 OR y = 2 OR x = 3", "x = 1 OR y = 2 OR x = 3"),
+    ("y > 1 AND x > 2", "y > 1 AND x > 2"),
+    ("x > 3 OR x < 1", "x > 3 OR x < 1"),
+    ("x = 1 OR x = 2 OR x = 1", "x = 1 OR x = 2"),
+    ("x = 2 + #i OR x = 2 - #i OR x = -1", "x = 2 + #i OR x = 2 - #i OR x = -1"),
+    ("(y = 2 OR x = 1) AND a", "(y = 2 OR x = 1) AND a"),
+    # Beside logical variables the relations come first, as in Derive, which gives the
+    # second of these too.
+    ("x = 1 OR a", "x = 1 OR a"),
+    ("b AND y = 1 OR a AND x = 2", "x = 2 AND a OR y = 1 AND b"),
+    ("z = 1 OR b OR y = 2 OR a", "z = 1 OR y = 2 OR a OR b"),
+    # Operands the algebra rewrites have no order to keep.
+    ("x = 1 AND x = 2", "false"),
+    ("x = 2 OR x = 1 + 1", "x = 2"),
     # With six variables the algebra isn't worth it: both normal forms come from a
     # truth table, and here they are longer than the input.
     ("a XOR b XOR c XOR d XOR e XOR f", "a XOR b XOR c XOR d XOR e XOR f"),

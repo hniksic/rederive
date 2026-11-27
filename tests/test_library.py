@@ -2064,11 +2064,11 @@ LIBRARY_CASES = [
         "AreaUnderCurve",
         (
             "AreaUnderCurve(x^2, x, 0, 1, y)",
-            "[x^2, x >= 0 AND x <= 1 AND y < x^2 AND y > 0]",
+            "[x^2, x >= 0 AND x <= 1 AND y > 0 AND y < x^2]",
         ),
         (
             "AreaUnderCurve(x^2, x, 0, 1)",
-            "[x^2, x >= 0 AND x <= 1 AND y < x^2 AND y > 0]",
+            "[x^2, x >= 0 AND x <= 1 AND y > 0 AND y < x^2]",
         ),
     ),
     (
@@ -2097,13 +2097,13 @@ LIBRARY_CASES = [
         "PlotInt",
         (
             "PlotInt(x, x, 0, 1, y)",
-            "[x, x >= 0 AND x <= 1 AND x > y AND y > 0, x >= 0 AND x <= 1 AND x < "
+            "[x, x >= 0 AND x <= 1 AND y > 0 AND x > y, x >= 0 AND x <= 1 AND x < "
             "y AND y < 0]",
         ),
         (
             "PlotInt(x, x, 1, 0, y)",
-            "[x, x >= 0 AND x <= 1 AND x < y AND y < 0, x >= 0 AND x <= 1 AND x > "
-            "y AND y > 0]",
+            "[x, x >= 0 AND x <= 1 AND x < y AND y < 0, x >= 0 AND x <= 1 AND y > "
+            "0 AND x > y]",
         ),
     ),
     (

@@ -119,6 +119,8 @@ __all__ = [
     "Antidifference",
     "Antiquotient",
     "Approx",
+    "Written",
+    "WrittenOr",
     "Assign",
     "Converter",
     "Declare",
@@ -654,6 +656,64 @@ class InOrderOr(sp.Or):
         disjunction = sp.Basic.__new__(cls, *args)
         disjunction._argset = frozenset(args)
         return disjunction
+
+
+class Written(InOrder):
+    """A conjunction that remembers the order its operands were written in. Unlike an
+    `InOrder` it is simplified as any conjunction is, and keeps the order only while
+    simplifying leaves its operands standing: `y > 1 AND x > 2` stays as written and
+    `x > 1 AND x > 2` is `x > 2`."""
+
+    in_order = False
+
+    #: Tells the printer to leave relations in their order, and the simplifier to keep
+    #: the order of operands it doesn't rewrite.
+    keeps_order = True
+
+
+class WrittenOr(InOrderOr):
+    """A disjunction that remembers the order its operands were written in, as
+    `Written` does: approximating `x = pi OR x = #e` lists the values in that order."""
+
+    in_order = False
+
+    #: As on `Written`.
+    keeps_order = True
+
+
+_KEEPING_ORDER = {sp.And: Written, sp.Or: WrittenOr}
+
+
+def in_written_order(head: type, operands: Sequence[sp.Basic]) -> sp.Basic:
+    """The conjunction or disjunction (`head` is `sp.And` or `sp.Or`) of `operands`, in
+    their order if sympy makes nothing else of them.
+
+    An operand of the same kind is spliced in, so a chain is one run of operands. Where
+    sympy decides or shortens the statement (`p OR NOT p`), its answer stands and the
+    order is dropped.
+    """
+    flat: list[sp.Basic] = []
+    for operand in operands:
+        flat.extend(operand.args if isinstance(operand, head) else (operand,))
+    plain = head(*(unwritten(operand) for operand in flat))
+    if type(plain) is not head or len(plain.args) != len(set(flat)):
+        return plain
+    return _KEEPING_ORDER[head](*flat)
+
+
+def unwritten(expression: sp.Basic) -> sp.Basic:
+    """`expression` with every conjunction and disjunction in it sympy's own, whose
+    operands have no order. Relations are left alone."""
+    if isinstance(expression, (Written, WrittenOr)):
+        head = sp.And if isinstance(expression, sp.And) else sp.Or
+        return head(*(unwritten(operand) for operand in expression.args))
+    if isinstance(expression, BooleanFunction) and not isinstance(
+        expression, (InOrder, InOrderOr)
+    ):
+        operands = [unwritten(operand) for operand in expression.args]
+        if any(new is not old for new, old in zip(operands, expression.args)):
+            return expression.func(*operands)
+    return expression
 
 
 class Logical(sp.Function):
@@ -1864,7 +1924,7 @@ class Converter:
         if len(links) == 1:
             return links[0]
         try:
-            return sp.And(*(_settled(link) for link in links))
+            return in_written_order(sp.And, [_settled(link) for link in links])
         except Exception:
             return Logical(sp.Symbol("AND"), *links)
 
@@ -8129,6 +8189,8 @@ def connected(word: str, operands: list[sp.Basic]) -> sp.Basic:
     A `false` operand decides a conjunction and a `true` one a disjunction, whatever the
     others are: `1/2 AND false` is `false`, as in Derive. Beside a truth value or a
     statement, a number `u` is the test `u = 0`.
+
+    A conjunction or disjunction remembers the order of its operands (see `Written`).
     """
     crossed = _SET_OPERATIONS.get(word)
     if crossed is not None and all(
@@ -8162,10 +8224,17 @@ def connected(word: str, operands: list[sp.Basic]) -> sp.Basic:
     if head is not None and not any(isinstance(each, sp.Number) for each in operands):
         # A number beside a statement is no truth value: sympy would read `p IFF 3`
         # as `p`.
+        settled = [_settled(operand) for operand in operands]
         try:
-            return head(*(_settled(operand) for operand in operands))
+            joined = head(*settled)
         except Exception:
             pass
+        else:
+            if type(joined) not in _KEEPING_ORDER:
+                return joined
+            # The operands in the order given, where that is all the difference.
+            ordered = in_written_order(type(joined), settled)
+            return ordered if unwritten(ordered) == unwritten(joined) else joined
     return Logical(sp.Symbol(word), *operands)
 
 

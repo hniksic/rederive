@@ -47,6 +47,20 @@ def test_a_single_root_of_a_polynomial_approximates_to_that_root():
     )
 
 
+def test_approximating_the_solutions_of_an_equation_keeps_their_order():
+    """Each approximation stands where its exact solution does, so the two lines can be
+    read side by side and `RHS` of both selects the same solutions."""
+    solved = simp("SOLVE(x^3 + 15*x^2 + 111*x + 442, x)")
+    assert simp(solved) == solved
+    assert approx(parse(solved), Context(), 10).text == (
+        "x = -3.484198573 - 6.549271860*#i OR x = -3.484198573 + 6.549271860*#i "
+        "OR x = -8.031602853"
+    )
+    assert approx(parse("x = pi OR x = #e OR x = 1/3"), Context(), 6).text == (
+        "x = 3.14159 OR x = 2.71828 OR x = 0.333333"
+    )
+
+
 def test_a_special_function_typed_in_lower_case_approximates():
     assert approx(parse("erfi(1)"), Context(), 6).text == "1.65042"
 

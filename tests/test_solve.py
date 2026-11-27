@@ -1436,7 +1436,7 @@ SETTLED_CONDITIONS = [
     ("SOLUTIONS(1 = 2, x, 1, 3)", "[]"),
     # Every value in the bounds is a solution there, which no vector lists.
     ("SOLUTIONS(a = b, x, 1, 3)", "SOLUTIONS(a = b, x, 1, 3)"),
-    ("SOLUTIONS(a = b OR x = 2, x, 1, 3)", "SOLUTIONS(x = 2 OR a = b, x, 1, 3)"),
+    ("SOLUTIONS(a = b OR x = 2, x, 1, 3)", "SOLUTIONS(a = b OR x = 2, x, 1, 3)"),
     ("SOLUTIONS(x^2 = a, x, 1, 2)", "[IF(SQRT(a) >= 1 AND SQRT(a) <= 2, SQRT(a))]"),
     (
         "SOLUTIONS(x^2 = a, x, -2, -1)",
@@ -1612,10 +1612,11 @@ def test_an_assigned_third_argument_is_read_for_its_value():
 
 
 SIDES = [
-    # The operands count in the order they are written out: `x = 2 + #i OR x = 2 - #i`.
-    ("RHS(x = 2 - #i OR x = 2 + #i)", "x = 2 - #i"),
-    ("RHS(RHS(x = 2 - #i OR x = 2 + #i))", "2 - #i"),
-    ("LHS(x = 2 - #i OR x = 2 + #i)", "x = 2 + #i"),
+    # The operands count in the order they are written.
+    ("RHS(x = 2 - #i OR x = 2 + #i)", "x = 2 + #i"),
+    ("RHS(RHS(x = 2 - #i OR x = 2 + #i))", "2 + #i"),
+    ("LHS(x = 2 - #i OR x = 2 + #i)", "x = 2 - #i"),
+    ("LHS(x = 3 OR x = 1 OR x = 2)", "x = 3"),
     ("RHS(x = 1 OR x = 2 OR x = 3)", "x = 2 OR x = 3"),
     ("RHS(p = 1/6 AND q = 3/4 AND s = 4)", "q = 3/4 AND s = 4"),
     ("RHS(q = 3/4 AND s = 4)", "s = 4"),
@@ -1627,7 +1628,7 @@ SIDES = [
     # A disjunction has no elements to select, and the selection that stands may be an
     # equation, so its sides stand too.
     ("RHS((SOLVE(x^2 = 4, x)) SUB 1)", "RHS((x = -2 OR x = 2) SUB 1)"),
-    ("LHS(ELEMENT(x = 2 OR x = -2, 1))", "LHS(ELEMENT(x = -2 OR x = 2, 1))"),
+    ("LHS(ELEMENT(x = 2 OR x = -2, 1))", "LHS(ELEMENT(x = 2 OR x = -2, 1))"),
 ]
 
 

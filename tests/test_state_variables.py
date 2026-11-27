@@ -414,7 +414,7 @@ async def test_approx_of_relations_and_of_exact_values():
         ("APPROX(SQRT(2)^2 = 2)", "true"),
         (
             "APPROX(x = 1/2 - SQRT(5)/2 OR x = SQRT(5)/2 + 1/2 OR x = -1/2 OR x = -2)",
-            "x = -2 OR x = -0.6180339887 OR x = -0.5 OR x = 1.618033988",
+            "x = -0.6180339887 OR x = 1.618033988 OR x = -0.5 OR x = -2",
         ),
         ("APPROX(LIM((TAN(x) - 1)/(SIN(x) - 1/SQRT(2)), x, pi/4))", "2.828427124"),
         ("APPROX(SIN(10^11), 10)", "0.9286936604"),
