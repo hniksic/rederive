@@ -2,7 +2,7 @@
 
 import sys
 
-__version__ = "2.1.0"
+__version__ = "2.1.1"
 
 # CPython refuses int <-> decimal conversions beyond 4300 digits, as a defense against
 # untrusted input. A CAS has no untrusted input, and `5000!` alone has 16326 digits.
