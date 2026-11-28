@@ -76,19 +76,20 @@ async def test_the_opening_notice_stands_across_the_empty_pane(app):
             "R E D E R I V E",
             "A Mathematical Assistant",
             f"Version {__version__}",
-            "Press Enter to type an expression",
-            "H for help  \N{MIDDLE DOT}  T D for demos",
+            "Press Enter to Author an expression, then try",
+            "S to Simplify (evaluate), X to approXimate, L to soLve or P to Plot it",
+            "Press H for help  \N{MIDDLE DOT}  T D for demos",
         ]
         # Centered, with blank rows at the top and bottom.
         width = app.query_one("#panes").size.width
         assert all(line == line.strip().center(width).rstrip() for line in shown if line)
         assert shown[0] == "" and shown[-1] == ""
-        # The name block sits high and the two help lines low, with more than one
-        # blank row between them.
+        # The name block sits high and the basics low, with the help line set off
+        # below them and more than one blank row between the two blocks.
         rows = [at for at, line in enumerate(shown) if line]
-        assert rows[0] < len(shown) // 3 < rows[-2]
-        assert rows[-1] - rows[-2] == 1
-        assert rows[-2] - rows[-3] > 1
+        assert rows[0] < len(shown) // 3 < rows[3]
+        assert rows[4] - rows[3] == 1 and rows[5] - rows[4] == 2
+        assert rows[3] - rows[2] > 1
 
 
 async def test_the_opening_notice_gives_the_pane_up_for_the_first_expression(app):

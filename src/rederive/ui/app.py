@@ -521,19 +521,24 @@ STILL_FETCHING = "{name} is still on its way; the next one can be asked for afte
 
 #: The opening notice, shown until something else is drawn. Derive's included an
 #: address, fax number and a copying warning; this keeps the name, description and
-#: version, with the help hint at the bottom, spaced like Derive's title page.
+#: version, with the basics and the help hint at the bottom, spaced like Derive's title
+#: page.
 GREETING = (
     "R E D E R I V E",
     "A Mathematical Assistant",
     "",
     f"Version {__version__}",
 )
-#: The notice's footer lines. They say how to start typing, for users who don't know
-#: Derive's menu (Enter invokes Author, the highlighted word), and mention the demos,
-#: which nothing else on screen would.
+#: The notice's footer lines. They give the basics, for users who don't know Derive:
+#: its menu doesn't say that Enter starts a line (it invokes Author, the highlighted
+#: word), or that an entered expression stays as typed until Simplify is asked for,
+#: which is one word among twenty. They also mention the demos, which nothing else on
+#: screen would.
 GREETING_FOOTER = (
-    "Press Enter to type an expression",
-    "H for help  \N{MIDDLE DOT}  T D for demos",
+    "Press Enter to Author an expression, then try",
+    "S to Simplify (evaluate), X to approXimate, L to soLve or P to Plot it",
+    "",
+    "Press H for help  \N{MIDDLE DOT}  T D for demos",
 )
 
 
